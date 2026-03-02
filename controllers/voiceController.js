@@ -125,8 +125,12 @@ export const synthesizeSpeech = async (req, res) => {
         if (req.subscriptionMeta) {
             const { usage, usageKey } = req.subscriptionMeta;
             if (usage && usageKey) {
-                const { default: subscriptionService } = await import('../services/subscriptionService.js');
-                await subscriptionService.incrementUsage(usage, usageKey);
+                try {
+                    const { default: subscriptionService } = await import('../services/subscriptionService.js');
+                    await subscriptionService.incrementUsage(usage, usageKey);
+                } catch (subErr) {
+                    console.error("⚠️ [VoiceController] Usage increment failed (non-blocking):", subErr.message);
+                }
             }
         }
 
@@ -161,11 +165,11 @@ export const synthesizeFile = async (req, res) => {
 
     try {
         const { fileData, mimeType, languageCode: reqLangCode = 'en-US', gender = 'FEMALE', introText } = req.body;
-        const debugInfo = `[${new Date().toISOString()}] body: fileData? ${!!fileData}, mimeType: ${mimeType}, introText? ${!!introText}\n`;
-        fs.appendFileSync(path.join(__dirname, '../voice_debug.log'), debugInfo);
+
+        console.log(`[VoiceController] Request: fileData? ${!!fileData}, mimeType: ${mimeType}, introText? ${!!introText}`);
 
         if (!fileData && !introText) {
-            fs.appendFileSync(path.join(__dirname, '../voice_debug.log'), "❌ Missing required fields\n");
+            console.error("❌ Missing required fields");
             return res.status(400).json({ error: 'Either fileData or introText is required' });
         }
 
@@ -222,8 +226,7 @@ export const synthesizeFile = async (req, res) => {
             .trim();
 
         if (!textToRead || textToRead.length < 2) {
-            const extractErr = `❌ No text extracted! length: ${textToRead?.length}, MIME: ${mimeType}\n`;
-            fs.appendFileSync(path.join(__dirname, '../voice_debug.log'), extractErr);
+            console.error(`❌ No text extracted! length: ${textToRead?.length}, MIME: ${mimeType}`);
             return res.status(400).json({
                 error: 'Could not extract enough readable text from this file.',
                 details: `Extracted length: ${textToRead?.length || 0}. MIME type: ${mimeType || 'unknown'}`
@@ -292,8 +295,12 @@ export const synthesizeFile = async (req, res) => {
         if (req.subscriptionMeta) {
             const { usage, usageKey } = req.subscriptionMeta;
             if (usage && usageKey) {
-                const { default: subscriptionService } = await import('../services/subscriptionService.js');
-                await subscriptionService.incrementUsage(usage, usageKey);
+                try {
+                    const { default: subscriptionService } = await import('../services/subscriptionService.js');
+                    await subscriptionService.incrementUsage(usage, usageKey);
+                } catch (subErr) {
+                    console.error("⚠️ [VoiceController] Usage increment failed (non-blocking):", subErr.message);
+                }
             }
         }
 
