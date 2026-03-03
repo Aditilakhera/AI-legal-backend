@@ -18,6 +18,8 @@ const __dirname = path.dirname(__filename);
 
 import chatRoute from './routes/chat.routes.js';
 import knowledgeRoute from './routes/knowledge.routes.js';
+// import aibaseRoutes from './routes/aibaseRoutes.js'; // Removed
+// import * as aibaseService from './services/aibaseService.js'; // Removed
 
 import notificationRoutes from "./routes/notificationRoutes.js";
 import supportRoutes from './routes/supportRoutes.js';
@@ -33,9 +35,13 @@ import memoryRoutes from './routes/memoryRoutes.js';
 import { startPlanExpiryService } from './services/planExpiryService.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 
+// End of standard imports
+
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+
 
 // Connect to Database
 connectDB().then(async () => {
@@ -44,6 +50,7 @@ connectDB().then(async () => {
     const { initializeFromDB } = await import('./services/ai.service.js');
     await initializeFromDB();
     console.log("✅ AI Services (Embeddings & Vector Store) pre-initialized.");
+    // Start daily plan expiry + warning-email service
     startPlanExpiryService();
     console.log('✅ Plan Expiry Service started.');
   } catch (err) {
@@ -53,85 +60,80 @@ connectDB().then(async () => {
   console.error("Database connection failed during startup:", error);
 });
 
+
 // Middleware
+
 app.use(cors({
-  origin: true,
+  origin: true, // Allow any origin in development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-device-fingerprint'],
   exposedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(cookieParser())
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+// app.use(fileUpload()); // Removed to avoid conflict with Multer (New AIBASE)
 
-// ---------------- ROOT ROUTE ADDED ----------------
-app.get("/", (req, res) => {
-  res.status(200).send(`
-    <html>
-      <head>
-        <title>AISA24</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background: #0f172a;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            flex-direction: column;
-          }
-          h1 { font-size: 40px; margin-bottom: 10px; }
-          p { font-size: 18px; opacity: 0.8; }
-        </style>
-      </head>
-      <body>
-        <h1>🚀 AISA24 Backend is Live</h1>
-        <p>Secure connection established successfully 🔒</p>
-      </body>
-    </html>
-  `);
-});
-// --------------------------------------------------
+app.get("/ping-top", (req, res) => {
+  res.send("Top ping works");
+})
 
-// Health Check
+// (Static serving removed for separate frontend deployment)
+// app.use(express.static(path.join(__dirname, 'public')));
+
+// API Health Check (moved from root)
 app.get("/api/health", (req, res) => {
   res.send("All working")
-});
-
-// Debug Middleware
+})
+// Global Debug middleware
 app.use((req, res, next) => {
   console.log(`[REQUEST] ${req.method} ${req.url}`);
   next();
 });
 
-// Routes
+// --- API Routes Registration ---
+
+// Auth & User
 app.use('/api/auth/verify-email', emailVerification);
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoute);
+
+// Intelligence Features
 app.use('/api/chat', chatRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/image', imageRoutes);
 app.use('/api/video', videoRoutes);
+
+// Utility & Support
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/personal-assistant', personalTaskRoutes);
 app.use('/api/memory', memoryRoutes);
+
+// Business & Dashboard
 app.use('/api/payment', paymentRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', dashboardRoutes);
+
+// Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+
+// AIBASE (V3) - Cleaned up
 app.use('/api/aibase/chat', chatRoute);
 app.use('/api/aibase/knowledge', knowledgeRoute);
+// app.use('/api/aibase', aibaseRoutes); // Removed unused route
 
-// 404 Handler
+// --- End of Routes ---
+
+// (SPA Catch-all removed for separate frontend deployment)
+// app.get('*', ...);
+
+// Catch-all 404 for API routes
 app.use((req, res) => {
   console.warn(`[404 NOT MATCHED] ${req.method} ${req.originalUrl}`);
   res.status(404).json({
@@ -147,9 +149,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start Server
+// Start listening
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`AISA Backend running on http://0.0.0.0:${PORT}`);
+  console.log("Razorpay Config Check:", {
+    KeyID: process.env.RAZORPAY_KEY_ID ? `${process.env.RAZORPAY_KEY_ID.substring(0, 8)}...` : "MISSING",
+    Secret: process.env.RAZORPAY_KEY_SECRET ? "PRESENT" : "MISSING"
+  });
 });
 
-setInterval(() => { }, 1000 * 60 * 60);
+// Keep process alive for local development
+setInterval(() => { }, 1000 * 60 * 60); // Keep alive process
