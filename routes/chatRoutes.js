@@ -11,7 +11,7 @@ import mammoth from "mammoth";
 import { detectMode, getModeSystemInstruction } from "../utils/modeDetection.js";
 import { detectIntent, extractReminderDetails, detectLanguage, getVoiceSystemInstruction } from "../utils/voiceAssistant.js";
 import Reminder from "../models/Reminder.js";
-import { requiresWebSearch, extractSearchQuery, processSearchResults, getWebSearchSystemInstruction } from "../utils/webSearch.js";
+import { requiresWebSearch, extractSearchQuery, processSearchResults, getWebSearchSystemInstruction, getCachedSearch, setCachedSearch } from "../utils/webSearch.js";
 import { performWebSearch } from "../services/searchService.js";
 import { convertFile } from "../utils/fileConversion.js";
 import { generateVideoFromPrompt } from "../controllers/videoController.js";
@@ -59,28 +59,21 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       return res.status(403).json({ error: "LIMIT_REACHED", reason: limitCheck.reason });
     }
 
-    // --- SUBSCRIPTION PLAN CHECKS ---
-    let usageResult = null;
+    // --- SUBSCRIPTION PLAN & CREDIT CHECKS ---
+    let toolsRequested = ['chat']; 
+    if (mode === 'DEEP_SEARCH' || mode === 'web_search' || requiresWebSearch(content)) toolsRequested = ['deep_search'];
+    if (mode === 'CODE_WRITER') toolsRequested = ['code_writer'];
+    if (document) toolsRequested.push('convert_document');
+
     if (req.user) {
       try {
-        let feature = 'chat';
-        if (mode === 'DEEP_SEARCH' || requiresWebSearch(content)) feature = 'deepSearch';
-        else if (mode === 'CODE_WRITER') feature = 'codeWriter';
-        else if (mode === 'DOCUMENT_CONVERT' || mode === 'FILE_CONVERSION' || document) feature = 'document';
-        
-        usageResult = await subscriptionService.checkLimit(req.user.id, feature);
+        await subscriptionService.checkCredits(req.user.id, toolsRequested);
       } catch (subError) {
-        if (subError.code === "PLAN_LIMIT_REACHED") {
-          return res.status(403).json({ 
-            success: false, 
-            code: "PLAN_LIMIT_REACHED", 
-            message: subError.message,
-            plan: subError.plan,
-            feature: subError.feature,
-            limit: subError.limit
-          });
-        }
-        console.error("Subscription check error:", subError);
+        return res.status(403).json({ 
+          success: false, 
+          code: "PLAN_LIMIT_REACHED", 
+          message: "Insufficient credits. Please upgrade your plan."
+        });
       }
     }
 
@@ -299,8 +292,11 @@ User's Name is "${req.user.name}".
 
     // Use mode-specific system instruction, or fallback to provided systemInstruction
     // CRITICAL: Merge with official branding from vertex.js to prevent hallucination
+    const currentDateLong = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+    const dateContext = `### CURRENT DATE & TIME:\nToday is ${currentDateLong} (India Standard Time). (Aaj ki date aur samay: ${currentDateLong})\n`;
+
     let baseInstruction = systemInstruction || modeSystemInstruction;
-    let finalSystemInstruction = `${systemInstructionText}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
+    let finalSystemInstruction = `${systemInstructionText}\n${dateContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
 
     if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
       finalSystemInstruction = modeSystemInstruction;
@@ -483,21 +479,33 @@ MANDATORY MEDIA RULES:
     let webSearchInstruction = '';
     const isDeepSearch = systemInstruction && systemInstruction.includes('DEEP SEARCH MODE ENABLED');
 
-    if (requiresWebSearch(content) || isDeepSearch) {
+    if (requiresWebSearch(content) || isDeepSearch || detectedMode === 'web_search') {
       console.log(`[WEB SEARCH] Query requires real-time information${isDeepSearch ? ' (Forced by Deep Search)' : ''}`);
       try {
         const searchQuery = extractSearchQuery(content);
-        console.log(`[WEB SEARCH] Searching for: "${searchQuery}"`);
+        
+        // Check Cache
+        searchResults = getCachedSearch(searchQuery);
 
-        const rawSearchData = await performWebSearch(searchQuery, isDeepSearch ? 10 : 5);
-        if (rawSearchData) {
-          const limit = isDeepSearch ? 10 : 5;
-          searchResults = processSearchResults(rawSearchData, limit);
-          console.log(`[WEB SEARCH] Found ${searchResults.snippets.length} results`);
+        if (!searchResults) {
+          console.log(`[WEB SEARCH] Searching for: "${searchQuery}"`);
+          const rawSearchData = await performWebSearch(searchQuery, isDeepSearch ? 10 : 5);
+          if (rawSearchData) {
+            const limit = isDeepSearch ? 10 : 5;
+            searchResults = processSearchResults(rawSearchData, limit);
+            if (searchResults) setCachedSearch(searchQuery, searchResults);
+          }
+        }
 
+        if (searchResults) {
+          console.log(`[WEB SEARCH] Using results for: "${searchQuery}"`);
           webSearchInstruction = getWebSearchSystemInstruction(searchResults, language || 'English', isDeepSearch);
-          parts.push({ text: `[WEB SEARCH RESULTS]:\n${JSON.stringify(searchResults.snippets)}` });
-          parts.push({ text: `[SEARCH INSTRUCTION]: ${webSearchInstruction}` });
+          
+          // Inject search results and instructions directly into system instruction for maximum priority
+          finalSystemInstruction += `\n\n${webSearchInstruction}`;
+          
+          // Also keep in parts for context history
+          parts.push({ text: `[REAL-TIME SEARCH RESULTS]:\n${JSON.stringify(searchResults.snippets)}` });
         }
       } catch (error) {
         console.error('[WEB SEARCH ERROR]', error);
@@ -746,6 +754,17 @@ MANDATORY MEDIA RULES:
       detectedMode,
       language: detectedLanguage || language || 'English'
     };
+
+    // --- CREDIT DEDUCTION AFTER SUCCESS ---
+    if (req.user) {
+      // Re-detect tools based on AI action if any
+      let finalTools = [...toolsRequested];
+      if (reply.includes('"action": "generate_image"')) finalTools.push('generate_image');
+      if (reply.includes('"action": "generate_video"')) finalTools.push('generate_video');
+      
+      // Deduct Credits
+      await subscriptionService.deductCredits(req.user.id, finalTools, sessionId || 'chat-' + Date.now());
+    }
 
     // Check for Media (Video/Image) Generation Action
     // Check for Media (Video/Image) Generation Action
@@ -1071,10 +1090,17 @@ MANDATORY MEDIA RULES:
       }
     }
 
-    if (req.user && usageResult) {
+    if (req.user) {
       extractUserMemory(content, history).then(mem => updateMemory(req.user.id, mem, detectedMode));
-      // Increment usage
-      subscriptionService.incrementUsage(usageResult.usage, usageResult.usageKey);
+    }
+
+    // Add Real-Time metadata
+    if (searchResults) {
+      finalResponse.isRealTime = true;
+      finalResponse.sources = (searchResults.snippets || []).map(s => ({
+        title: s.title,
+        url: s.link
+      }));
     }
 
     return res.status(200).json(finalResponse);

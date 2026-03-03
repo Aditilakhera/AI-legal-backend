@@ -20,6 +20,14 @@ const ConversationSchema = new mongoose.Schema({
             type: String,
             required: true
         },
+        isRealTime: {
+            type: Boolean,
+            default: false
+        },
+        sources: [{
+            title: String,
+            url: String
+        }],
         timestamp: {
             type: Date,
             default: Date.now

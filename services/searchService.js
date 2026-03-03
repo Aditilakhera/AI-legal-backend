@@ -1,4 +1,5 @@
 import axios from 'axios';
+import google from 'googlethis';
 
 /**
  * Search Service for AISA
@@ -13,20 +14,37 @@ const SEARCH_PROVIDER = process.env.SEARCH_PROVIDER || 'google'; // google, serp
  * Perform web search using configured provider
  */
 export async function performWebSearch(query, maxResults = 5) {
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Search timeout")), 10000));
     try {
         console.log(`[SEARCH] Performing web search for: "${query}"`);
+        const searchTask = (async () => {
+            if (SEARCH_PROVIDER === 'google' && SEARCH_API_KEY && SEARCH_ENGINE_ID) {
+                return await googleCustomSearch(query, maxResults);
+            } else if (SEARCH_PROVIDER === 'serpapi' && SEARCH_API_KEY) {
+                return await serpApiSearch(query, maxResults);
+            }
 
-        if (SEARCH_PROVIDER === 'google' && SEARCH_API_KEY && SEARCH_ENGINE_ID) {
-            return await googleCustomSearch(query, maxResults);
-        } else if (SEARCH_PROVIDER === 'serpapi' && SEARCH_API_KEY) {
-            return await serpApiSearch(query, maxResults);
-        } else {
-            // Fallback: return mock data for testing
-            console.warn('[SEARCH] No API key configured, using mock data');
-            return getMockSearchResults(query);
-        }
+            console.log('[SEARCH] Using scraper-based search (googlethis)...');
+            const options = { page: 0, safe: true, additional_params: { hl: 'en' } };
+            const response = await google.search(query, options);
+            if (!response || !response.results || !Array.isArray(response.results)) {
+                console.warn(`[SEARCH] googlethis returned no results for: ${query}`);
+                return null;
+            }
+
+            return {
+                results: response.results.slice(0, maxResults).map(item => ({
+                    title: item.title,
+                    snippet: item.description || item.snippet || '',
+                    link: item.url || item.link,
+                    source: extractDomain(item.url || item.link)
+                }))
+            };
+        })();
+
+        return await Promise.race([searchTask, timeoutPromise]);
     } catch (error) {
-        console.error('[SEARCH] Error performing web search:', error);
+        console.error('[SEARCH] Error or Timeout performing web search:', error.message);
         return null;
     }
 }
@@ -101,20 +119,5 @@ function extractDomain(url) {
     }
 }
 
-/**
- * Mock search results for testing (when no API key)
- */
-function getMockSearchResults(query) {
-    return {
-        results: [
-            {
-                title: `Latest information about ${query}`,
-                snippet: `This is a mock search result for "${query}". Configure SEARCH_API_KEY and SEARCH_ENGINE_ID in .env to enable real web search.`,
-                link: 'https://example.com',
-                source: 'example.com'
-            }
-        ]
-    };
-}
 
 export { SEARCH_API_KEY, SEARCH_ENGINE_ID, SEARCH_PROVIDER };

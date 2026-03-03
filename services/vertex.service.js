@@ -7,10 +7,17 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         let { systemInstruction, images, documents } = options;
 
         // Inject Brand Identity if no specific instructions provided
+        const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+        const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
+
         if (!systemInstruction) {
             systemInstruction = `You are AISA™, the official AI assistant of the AISA™ platform.
+${dateContext}
             
 ${BRAND_SYSTEM_RULES}`;
+        } else {
+            // Append date context even to custom instructions for reference
+            systemInstruction = systemInstruction + dateContext;
         }
 
         let finalPrompt = prompt;

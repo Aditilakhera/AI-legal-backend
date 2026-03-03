@@ -8,6 +8,8 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import * as vertexService from './vertex.service.js';
 import * as openaiService from './openai.service.js';
+import * as webSearchService from './webSearch.service.js';
+import { BRAND_SYSTEM_RULES } from '../utils/brandIdentity.js';
 
 
 // Initialize Groq Chat Model - REMOVED (Replaced by groq.service.js)
@@ -16,6 +18,10 @@ import * as openaiService from './openai.service.js';
 // Real RAG Storage (MongoDB Atlas)
 let vectorStore = null;
 let embeddings = null;
+
+// Web Search Cache
+const searchCache = new Map();
+const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
 
 const initializeVectorStore = async () => {
     if (!embeddings) {
@@ -85,33 +91,78 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        // Extract options
-        const { systemInstruction, mode, images, documents, userName } = options;
+        const { systemInstruction, mode, images, documents, userName, language } = options;
+
+        // PRIORITY 0: REAL-TIME WEB SEARCH
+        // - Skip web search if images or formal docs are present for specific tasks (like image editing / pdf processing)
+        if (message.length > 5 && !images?.length && !documents?.length && !activeDocContent?.length) {
+
+            // Check Cache First
+            const cacheKey = message.toLowerCase().trim();
+            if (searchCache.has(cacheKey)) {
+                const cached = searchCache.get(cacheKey);
+                if (Date.now() - cached.timestamp < CACHE_TTL) {
+                    logger.info(`[WebSearch] Cache HIT for: ${message}`);
+                    return { text: cached.result.summary, isRealTime: true, sources: cached.result.sources };
+                }
+            }
+
+            const isForcedSearch = mode === 'web_search' || mode === 'DEEP_SEARCH';
+            const needsSearch = isForcedSearch || await webSearchService.shouldSearch(message);
+            if (needsSearch) {
+                logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
+                const searchResults = await webSearchService.performSearch(message);
+                if (searchResults && searchResults.length > 0) {
+                    const finalResult = await webSearchService.summarizeResults(message, searchResults, language || 'English');
+
+                    // Cache the result
+                    searchCache.set(cacheKey, { result: finalResult, timestamp: Date.now() });
+
+                    return { text: finalResult.summary, isRealTime: true, sources: finalResult.sources };
+                } else {
+                    logger.warn("[WebSearch] Search yielded no results. Falling back to base AI.");
+                    // FALLBACK: Get normal AI response but prepend a note
+                    const systemMsg = options.systemInstruction || "You are AISA, a helpful AI assistant.";
+                    const fallbackResponse = await openaiService.askOpenAI(message, activeDocContent, {
+                        systemInstruction: systemMsg,
+                        mode,
+                        documents,
+                        userName
+                    });
+                    return {
+                        text: `⚠️ **Note: Live data unavailable.**\n(Abhi live data uplabdh nahi hai, isliye main apne base knowledge se jawab de raha hoon.)\n\n${fallbackResponse}`,
+                        isRealTime: false,
+                        sources: []
+                    };
+                }
+            }
+        }
+
 
         // PRIORITY 1: Chat-Uploaded Document and System Instructions
         // If we have specific system instructions (like Conversion Mode), we prioritize passing them.
         if (systemInstruction || (activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
             logger.info("[Chat Routing] Using Custom Request (System Instruction / Active Doc / Images).");
 
-            // If images are present, we use Vertex (as it's the media engine)
-            // If it's just text/docs, we use OpenAI as per user request
             if (images && images.length > 0) {
                 logger.info("[Chat Routing] Image(s) detected. Routing to Vertex.");
-                return await vertexService.askVertex(message, activeDocContent, {
+                const vertexResponse = await vertexService.askVertex(message, activeDocContent, {
                     systemInstruction,
                     mode,
                     images,
                     documents
                 });
+                return { text: vertexResponse, isRealTime: false };
             }
 
             logger.info("[Chat Routing] Text/Doc detected. Routing to OpenAI.");
-            return await openaiService.askOpenAI(message, activeDocContent, {
+            const openaiResponse = await openaiService.askOpenAI(message, activeDocContent, {
                 systemInstruction,
                 mode,
                 documents,
                 userName
             });
+            return { text: openaiResponse, isRealTime: false };
         }
 
 
@@ -162,7 +213,8 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 contextText = "SOURCE: COMPANY KNOWLEDGE BASE\nIMPORTANT: The information below is retrieved from the company knowledge base (UWO/AI Mall). ONLY use this information if the user's question specifically relates to the company, its products, or services. If the user asks a general question (e.g. coding help, definitions, general knowledge), IGNORE this context and answer generally. Do NOT mention the company or this context if it is irrelevant to the user's query.\n\n" + contextText;
 
                 // PRIORITY 2: Answer from Company RAG - Routing to OpenAI
-                return await openaiService.askOpenAI(message, contextText, { userName });
+                const ragResponse = await openaiService.askOpenAI(message, contextText, { userName });
+                return { text: ragResponse, isRealTime: false };
 
 
             } else {
@@ -172,13 +224,12 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
 
         // PRIORITY 3: Answer from General Knowledge (Explicit No Context) - Routing to OpenAI
         logger.info("[Chat Routing] Answering from General Knowledge (OpenAI).");
-        return await openaiService.askOpenAI(message, null, { userName });
-
-
+        const aiResponse = await openaiService.askOpenAI(message, null, { userName });
+        return { text: aiResponse, isRealTime: false };
 
     } catch (error) {
         logger.error(`Chat Handling Error: ${error.message}`);
-        return "I'm having trouble connecting to my brain right now. Please try again later.";
+        return { text: "I'm having trouble connecting to my brain right now. Please try again later.", error: true };
     }
 };
 

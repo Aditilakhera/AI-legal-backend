@@ -1,189 +1,77 @@
-/**
- * ════════════════════════════════════════════════════════
- *  SECURE SUBSCRIPTION MIDDLEWARE
- *  All plan logic is enforced SERVER-SIDE only.
- *  Frontend cannot override limits.
- *  Usage is counted per EMAIL (not per device).
- * ════════════════════════════════════════════════════════
- */
-
-import MonthlyUsage from '../models/MonthlyUsage.js';
 import User from '../models/User.js';
-import { PLAN_LIMITS, getUsageKey, normalisePlan } from '../config/planLimits.js';
+import * as creditManager from '../utils/creditManager.js';
+import Subscription from '../models/Subscription.js';
 
-// ─────────────────────────────────────────────────────────
-//  HELPER: Check & handle plan expiry
-//  Returns the final normalised plan string (may downgrade)
-// ─────────────────────────────────────────────────────────
-const handlePlanExpiry = async (user) => {
-    const plan = normalisePlan(user.plan);
-
-    if (plan !== 'basic' && user.planEndDate) {
-        const now = new Date();
-        if (now > new Date(user.planEndDate)) {
-            // ── Plan has expired → downgrade to basic ──
-            user.plan = 'basic';
-            user.isExpired = true;
-            user.planExpiredAt = now;
-            await user.save();
-            return { plan: 'basic', expired: true };
-        }
-    }
-
-    return { plan, expired: false };
-};
-
-// ─────────────────────────────────────────────────────────
-//  MAIN MIDDLEWARE FACTORY
-//  Usage: checkSubscriptionLimit('image')
-// ─────────────────────────────────────────────────────────
+/**
+ * NEW CREDIT-BASED SUBSCRIPTION MIDDLEWARE
+ */
 export const checkSubscriptionLimit = (feature) => {
     return async (req, res, next) => {
         try {
-            // ── 1. Identity comes ONLY from the verified JWT ──
             const userId = req.user?.id || req.user?._id;
-            const jwtEmail = req.user?.email;
-
-            if (!userId || !jwtEmail) {
-                return res.status(401).json({
-                    success: false,
-                    code: 'UNAUTHORIZED',
-                    message: 'Authentication required'
-                });
+            if (!userId) {
+                return res.status(401).json({ success: false, message: 'Authentication required' });
             }
 
-            // ── 2. Always fetch fresh user data from DB ──
-            //    Never trust frontend-sent plan / usage values
-            const user = await User.findById(userId).select(
-                'email plan planEndDate planStartDate isExpired isBlocked isActive'
-            );
+            const user = await User.findById(userId);
+            if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+            if (user.isBlocked) return res.status(403).json({ success: false, message: 'Account blocked' });
 
-            if (!user) {
-                return res.status(404).json({ success: false, message: 'User not found' });
-            }
+            // Map frontend features to tool costs
+            const keyMap = {
+                'image': 'generate_image',
+                'video': 'generate_video',
+                'deepSearch': 'deep_search',
+                'audio': 'convert_audio',
+                'document': 'convert_document',
+                'codeWriter': 'code_writer',
+                'chat': 'chat'
+            };
+            const tool = keyMap[feature] || feature;
 
-            // ── 3. Security: email in token must match DB record ──
-            if (user.email.toLowerCase() !== jwtEmail.toLowerCase()) {
-                console.error(`[SECURITY] Token email mismatch! Token: ${jwtEmail}, DB: ${user.email}`);
-                return res.status(403).json({
-                    success: false,
-                    code: 'TOKEN_EMAIL_MISMATCH',
-                    message: 'Security violation detected'
-                });
-            }
-
-            // ── 4. Check if account is blocked ──
-            if (user.isBlocked) {
-                return res.status(403).json({
-                    success: false,
-                    code: 'ACCOUNT_BLOCKED',
-                    message: 'Your account has been suspended. Please contact support.'
-                });
-            }
-
-            // ── 5. Handle plan expiry (auto-downgrade to basic) ──
-            const { plan, expired } = await handlePlanExpiry(user);
-
-            if (expired) {
-                return res.status(403).json({
-                    success: false,
-                    code: 'PLAN_EXPIRED',
-                    message: 'Your plan has expired. You have been moved to the Basic plan.',
-                    currentPlan: 'basic'
-                });
-            }
-
-            // ── 6. Resolve limits for this plan ──
-            const limits = PLAN_LIMITS[plan] || PLAN_LIMITS['basic'];
-            const usageKey = getUsageKey(feature);
-            const limit = limits[usageKey];
-
-            // ── 7. Fetch/create this month's usage record (keyed by userId, NOT device) ──
-            const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
-            let usage = await MonthlyUsage.findOne({ userId, month: currentMonth });
-
-            if (!usage) {
-                usage = await MonthlyUsage.create({ userId, month: currentMonth });
-            }
-
-            const currentCount = usage[usageKey] || 0;
-
-            // ── 8. Enforce the limit (skip if unlimited) ──
-            if (limit !== Infinity && currentCount >= limit) {
+            const hasCredits = await creditManager.checkCredits(userId, [tool]);
+            if (!hasCredits) {
                 return res.status(403).json({
                     success: false,
                     code: 'PLAN_LIMIT_REACHED',
-                    message: `You've used all ${limit} ${feature}s on your ${plan} plan this month.`,
-                    feature,
-                    currentPlan: plan,
-                    currentUsage: currentCount,
-                    limit,
+                    message: `Insufficient credits for ${feature}. Please upgrade.`,
                     upgradeRequired: true
                 });
             }
 
-            // ── 9. Attach meta — usage is incremented AFTER success ──
-            req.subscriptionMeta = {
-                userId,
-                userEmail: user.email,
-                plan,
-                usageKey,
-                usage,        // MonthlyUsage document
-                unlimited: (limit === Infinity)
-            };
-
+            // Attach for incrementUsage
+            req.subscriptionMeta = { userId, tool };
             next();
 
         } catch (error) {
-            console.error(`[SUBSCRIPTION] checkSubscriptionLimit error for feature "${feature}":`, error.message);
-            res.status(500).json({ success: false, message: 'Internal server error during subscription check' });
+            console.error(`[SUBSCRIPTION] Middleware error:`, error.message);
+            res.status(500).json({ success: false, message: 'Internal server error' });
         }
     };
 };
 
-// ─────────────────────────────────────────────────────────
-//  INCREMENT USAGE  (call after the feature executes OK)
-//  Place at end of your controller: await incrementUsage(req)
-// ─────────────────────────────────────────────────────────
+/**
+ * Deduct credits after successful execution
+ */
 export const incrementUsage = async (req) => {
     try {
         const meta = req.subscriptionMeta;
         if (!meta) return;
 
-        const { usage, usageKey } = meta;
-        if (!usage || !usageKey) return;
-
-        usage[usageKey] = (usage[usageKey] || 0) + 1;
-        await usage.save();
+        const { userId, tool } = meta;
+        await creditManager.deductCredits(userId, [tool], 'req-' + Date.now());
 
     } catch (error) {
-        // Non-blocking: log but don't crash the response
         console.error('[SUBSCRIPTION] incrementUsage error:', error.message);
     }
 };
 
-// ─────────────────────────────────────────────────────────
-//  EXPIRY GUARD  (standalone middleware — no feature check)
-//  Use on any route that needs a valid non-expired plan
-// ─────────────────────────────────────────────────────────
 export const requireActivePlan = async (req, res, next) => {
-    try {
-        const userId = req.user?.id || req.user?._id;
-        if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
-
-        const user = await User.findById(userId).select('plan planEndDate isExpired isBlocked');
-        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-        if (user.isBlocked) return res.status(403).json({ success: false, code: 'ACCOUNT_BLOCKED', message: 'Account suspended' });
-
-        const { plan, expired } = await handlePlanExpiry(user);
-        req.userPlan = plan;
-        req.planExpired = expired;
-
-        next();
-    } catch (err) {
-        console.error('[SUBSCRIPTION] requireActivePlan error:', err.message);
-        res.status(500).json({ success: false, message: 'Internal server error' });
+    const userId = req.user?.id;
+    const sub = await Subscription.findOne({ userId });
+    if (!sub || sub.status !== 'active' || (sub.expiry_date && new Date() > sub.expiry_date)) {
+        // If expired, reset to free
+        await creditManager.createOrResetFreePlan(userId);
     }
+    next();
 };
-
-export { handlePlanExpiry };

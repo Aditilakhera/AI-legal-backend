@@ -3,6 +3,32 @@
  * Handles intelligent web search decision logic and result processing
  */
 
+// Simple in-memory cache for search results (3-minute TTL)
+const searchCache = new Map();
+const CACHE_TTL = 3 * 60 * 1000;
+
+/**
+ * Get cached search results if available and not expired
+ */
+export function getCachedSearch(query) {
+    const cached = searchCache.get(query);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+        console.log(`[CACHE] Found cached results for: "${query}"`);
+        return cached.data;
+    }
+    return null;
+}
+
+/**
+ * Set search results in cache
+ */
+export function setCachedSearch(query, data) {
+    searchCache.set(query, {
+        timestamp: Date.now(),
+        data: data
+    });
+}
+
 // Keywords that trigger web search
 const REAL_TIME_KEYWORDS = [
     // News & Events
@@ -18,10 +44,12 @@ const REAL_TIME_KEYWORDS = [
     'release', 'launch', 'premiere',
 
     // Weather & Time-sensitive
-    'weather', 'forecast', 'temperature', 'rain',
+    'weather', 'forecast', 'temperature', 'rain', 'date', 'time', 'clock',
+    'samay', 'din', 'waqt', 'tareekh', 'dinank',
 
     // Hindi/Hinglish equivalents
-    'aaj', 'abhi', 'taaza', 'naya', 'khabar', 'samachar'
+    'aaj', 'abhi', 'taaza', 'naya', 'khabar', 'samachar', 'bhav', 'rate',
+    'आज', 'अभी', 'ताजा', 'खबर', 'समाचार', 'भाव', 'समय', 'दिन', 'वक्त', 'तारीख', 'दिनांक'
 ];
 
 const GENERAL_KNOWLEDGE_INDICATORS = [
@@ -81,14 +109,25 @@ export function extractSearchQuery(message) {
 }
 
 /**
- * Process web search results
+ * Process web search results with prioritization for trusted domains
  */
 export function processSearchResults(searchData, limit = 5) {
     if (!searchData || !searchData.results || searchData.results.length === 0) {
         return null;
     }
 
-    const results = searchData.results.slice(0, limit); // Dynamic limit
+    const TRUSTED_DOMAINS = ['.gov', '.org', 'reuters.com', 'bbc.com', 'bloomberg.com', 'finance.yahoo.com', 'espn.com', 'wikipedia.org'];
+
+    // Sort: Trusted domains first
+    const sorted = [...searchData.results].sort((a, b) => {
+        const aTrusted = TRUSTED_DOMAINS.some(d => a.link.includes(d));
+        const bTrusted = TRUSTED_DOMAINS.some(d => b.link.includes(d));
+        if (aTrusted && !bTrusted) return -1;
+        if (!aTrusted && bTrusted) return 1;
+        return 0;
+    });
+
+    const results = sorted.slice(0, limit);
 
     return {
         snippets: results.map(r => ({
@@ -140,51 +179,45 @@ export function formatSources(snippets) {
  * Generate web search system instruction
  */
 export function getWebSearchSystemInstruction(searchResults, language = 'English', isDeepSearch = false) {
-    const responseLanguage = language === 'Hindi' || language === 'Hinglish' ? 'Hinglish' : 'English';
-
-    // Deep Search specific instructions
-    const deepSearchInstructions = isDeepSearch ? `
-    DEEP SEARCH MODE: ACTIVATED
-    - You must provide a HIGHLY DETAILED, COMPREHENSIVE, AND EXTENSIVE answer.
-    - Break down complex topics into clear sections.
-    - Provide in-depth analysis, background context, and future implications if applicable.
-    - The user specifically requested a "Deep Search", so a short answer is a failure.
-    - Aim for a thorough explanation (minimum 4-5 paragraphs if the topic allows).
-    - If the search results are limited or MOCK data is detected, use your internal knowledge to supplement the answer extensively, but clearly distinguish between search data and internal knowledge.
-    ` : `
-    - Clear and concise
-    - Professional tone
-    - Natural source citations
-    `;
+    const responseLanguage = language === 'Hindi' || language === 'Hinglish' ? 'Hindi' : 'English';
+    const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
 
     return `You are AISA™, an AI Super Assistant with real-time information awareness.
 
+TODAY'S DATE & TIME: ${currentDate} (India Standard Time)
+
 WEB SEARCH DATA PROVIDED:
-The following web search results have been provided for this query:
+${searchResults.snippets.map((s, i) => `${i + 1}. [${s.source}] ${s.title}: ${s.snippet} (Link: ${s.link})`).join('\n\n')}
 
-${searchResults.snippets.map((s, i) => `${i + 1}. ${s.title}
-   ${s.snippet}
-   Source: ${s.source}`).join('\n\n')}
+CRITICAL INSTRUCTION:
+You MUST follow the "Google-like" response system format EXACTLY. 
+- Use the language: ${responseLanguage}.
+- If user writes in Hindi, search results (provided in English) must be translated and summarized in Hindi.
+- Highlight numbers, prices, and dates in **bold**.
+- Be precise and direct. AVOID long unnecessary explanations.
 
-CRITICAL INSTRUCTIONS:
-- Base your answer primarily on the provided web search results.
-- ${isDeepSearch ? 'For Deep Search, you MAY use internal knowledge to expand on the search results to ensure a comprehensive answer.' : 'Do NOT use general knowledge or assumptions unless necessary to make sense of the search results.'}
-- Provide a clear, direct answer.
-- ALWAYS mention sources naturally in your response.
-- If sources conflict, mention the variation.
+MANDATORY RESPONSE STRUCTURE:
+--------------------------------------------------
+🔎 Query: [Insert original user question here]
 
-RESPONSE LANGUAGE: ${responseLanguage}
+🌐 Real-Time Result:
+[Direct, clear, short answer in first 2–3 lines. Like a Google Featured Snippet.]
 
-ANSWER STRUCTURE:
-1. Direct answer to the question
-2. ${isDeepSearch ? 'Detailed Explanation & Analysis (Long Form)' : 'Brief explanation'}
-3. ${isDeepSearch ? 'Key Takeaways or Context' : ''}
-4. Source attribution (mention source names naturally)
+📊 Key Details:
+- [Critical point 1 - Detailed and factual]
+- [Critical point 2 - Detailed and factual]
+- [Critical point 3 - Detailed and factual]
 
-OUTPUT STYLE:
-${deepSearchInstructions}
+📰 Sources:
+${searchResults.snippets.slice(0, 3).map((s, i) => `${i+1}. ${s.source} – ${s.link}`).join('\n')}
+--------------------------------------------------
 
-Example: "According to BBC News and Reuters, the current price is..."`;
+RULES:
+1. NEVER use placeholders like "[Data loading...]".
+2. If search results are missing or contain mock data, use the fallback message: "⚠ Live data currently unavailable. Showing best available information."
+3. Prioritize .gov, .org, official sports sites, and reputed news portals.
+4. Do NOT include any text outside the structure above.
+`;
 }
 
 export { REAL_TIME_KEYWORDS, GENERAL_KNOWLEDGE_INDICATORS };

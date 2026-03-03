@@ -18,14 +18,17 @@ export const askOpenAI = async (prompt, context = null, options = {}) => {
         let messages = [];
 
         // 1. Add System Instruction if provided
+        const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+        const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
+
         if (systemInstruction) {
-            messages.push({ role: 'system', content: systemInstruction });
+            messages.push({ role: 'system', content: systemInstruction + dateContext });
         } else {
             const nameContext = userName ? `User's Name is "${userName}". ` : "";
             messages.push({
                 role: 'system',
                 content: `You are AISA™, the official AI assistant of the AISA™ platform. ${nameContext}
-
+${dateContext}
 ${BRAND_SYSTEM_RULES}
 
 You must automatically understand the user’s interests, expertise level, and topic preference ONLY from their messages.

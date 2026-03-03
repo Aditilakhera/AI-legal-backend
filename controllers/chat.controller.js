@@ -29,13 +29,15 @@ export const chat = async (req, res, next) => {
         }
 
         // 1. Get AI Response (Pass detailed context)
-        const responseText = await aiService.chat(message, activeDocContent, {
+        const chatResponse = await aiService.chat(message, activeDocContent, {
             systemInstruction,
             mode,
             images: image,
             documents: document,
             userName
         });
+
+        const { text: responseText, isRealTime, sources } = chatResponse;
 
 
         // 2. Persist to DB
@@ -53,13 +55,20 @@ export const chat = async (req, res, next) => {
         }
 
         conversation.messages.push({ role: 'user', text: message });
-        conversation.messages.push({ role: 'assistant', text: responseText });
+        conversation.messages.push({
+            role: 'assistant',
+            text: responseText,
+            isRealTime: isRealTime || false,
+            sources: sources || []
+        });
         conversation.lastMessageAt = Date.now();
         await conversation.save();
 
         res.status(200).json({
             success: true,
             data: responseText,
+            isRealTime: isRealTime || false,
+            sources: sources || [],
             conversationId: conversation._id
         });
     } catch (error) {
