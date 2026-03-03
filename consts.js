@@ -1,1 +1,1 @@
-export const dashboardUrl ="http://localhost:5173/dashboard"
+export const dashboardUrl = "https://aisa24.com/dashboard"

@@ -60,7 +60,7 @@ export const sendAdminNotification = async (ticket) => {
                     </div>
                     
                     <div style="text-align: center; margin-top: 30px;">
-                        <a href="http://localhost:5173/dashboard/admin" style="display: inline-block; background: #4f46e5; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold;">View in Admin Dashboard</a>
+                        <a href="https://aisa24.com/dashboard/admin" style="display: inline-block; background: #4f46e5; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold;">View in Admin Dashboard</a>
                     </div>
                 </div>
                 
