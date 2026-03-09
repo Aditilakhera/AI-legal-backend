@@ -13,8 +13,21 @@ const userSchema = new mongoose.Schema({
     },
     password: {
         type: String,
-        required: true
+        required: function () { return !this.providerId; } // Only required for email/password login
     },
+    provider: {
+        type: String,
+        default: 'local'
+    },
+    providerId: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    socialLinks: [{
+        provider: String,
+        providerId: String
+    }],
     isVerified: {
         type: Boolean,
         default: false

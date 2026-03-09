@@ -29,3 +29,6 @@ dist-ssr
 *.sw?
 geminiService1.js
 oldGeminiService.js
+gcp-key.json
+*-service-account*.json
+*-key*.json

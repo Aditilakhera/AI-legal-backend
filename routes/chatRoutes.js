@@ -1054,40 +1054,14 @@ MANDATORY MEDIA RULES:
                 if (limitUsageData) subscriptionService.incrementUsage(limitUsageData.usage, limitUsageData.usageKey);
               }
             } catch (imgError) {
-              console.warn(`[IMAGE GEN] Vertex failed. Falling back to Pollinations.`);
-              const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?width=1024&height=1024&model=flux&seed=${Math.floor(Math.random() * 1000000)}`;
-              finalResponse.imageUrl = pollinationsUrl;
-              finalResponse.reply = (reply && reply.trim()) ? reply : (isAisaRelatedRequest ? `Yeh raha AISA™ ke liye branded image! 🚀` : `I've generated this image for you.`);
-              if (limitUsageData) subscriptionService.incrementUsage(limitUsageData.usage, limitUsageData.usageKey);
+              console.error(`[IMAGE GEN] Vertex AI generation failed: ${imgError.message}`);
+              finalResponse.reply = `Sorry, I couldn't generate the image right now. Please try again.`;
             }
           }
         }
       }
 
-      // 2. Check for Markdown Image triggers (Support frontend instructions)
-      if (!finalResponse.imageUrl) {
-        const mdImageRegex = /!\[Image\]\((https:\/\/image\.pollinations\.ai\/prompt\/([^?)]+)[^)]*)\)/;
-        const mdMatch = reply.match(mdImageRegex);
-        if (mdMatch) {
-          console.log("[MEDIA GEN] Found Pollinations markdown trigger.");
-          let canGenerate = true;
-          let limitUsageData = null;
-          if (req.user) {
-            try { limitUsageData = await subscriptionService.checkLimit(req.user.id, 'image'); }
-            catch (limitErr) { canGenerate = false; }
-          }
-
-          if (!canGenerate) {
-            reply = reply.replace(mdMatch[0], '').trim();
-            finalResponse.reply = `Sorry, you have reached your monthly Image generation limit.`;
-          } else {
-            finalResponse.imageUrl = mdMatch[1];
-            reply = reply.replace(mdMatch[0], '').trim();
-            finalResponse.reply = (reply && reply.trim()) ? reply : "Here is the image you requested.";
-            if (limitUsageData) subscriptionService.incrementUsage(limitUsageData.usage, limitUsageData.usageKey);
-          }
-        }
-      }
+      // Note: Pollinations markdown trigger removed — all images go through Vertex AI
 
       // Final cleanup: Remove backticks if the model output the JSON inside a code block
       reply = reply.replace(/```json\s*```|```\s*```/g, '').trim();

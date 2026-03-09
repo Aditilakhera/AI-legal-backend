@@ -34,6 +34,7 @@ import memoryRoutes from './routes/memoryRoutes.js';
 import pricingRoutes from './routes/pricingRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
+import magicEditRoutes from './routes/magicEdit.routes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -104,6 +105,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/image', imageRoutes);
+app.use('/api/edit-image', magicEditRoutes);
 app.use('/api/video', videoRoutes);
 
 // Utility & Support

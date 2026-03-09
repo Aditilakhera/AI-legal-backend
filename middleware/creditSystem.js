@@ -16,7 +16,7 @@ export const creditMiddleware = async (req, res, next) => {
     if (url.includes('/api/chat/realtime')) { cost = 15; isPremiumEndpoint = true; }
     else if (url.includes('/api/aibase/chat') || url.includes('/api/aibase/knowledge')) { cost = 10; isPremiumEndpoint = true; }
     else if (url.includes('/api/video')) { cost = 25; isPremiumEndpoint = true; }
-    else if (url.includes('/api/image')) { cost = 20; isPremiumEndpoint = true; }
+    else if (url.includes('/api/image') || url.includes('/api/edit-image')) { cost = 20; isPremiumEndpoint = true; }
     else if (url.includes('/api/chat')) cost = 0; // Normal chat is FREE
 
     // Fast pass if no cost
