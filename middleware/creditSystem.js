@@ -15,8 +15,27 @@ export const creditMiddleware = async (req, res, next) => {
 
     if (url.includes('/api/chat/realtime')) { cost = 15; isPremiumEndpoint = true; }
     else if (url.includes('/api/aibase/chat') || url.includes('/api/aibase/knowledge')) { cost = 10; isPremiumEndpoint = true; }
-    else if (url.includes('/api/video')) { cost = 25; isPremiumEndpoint = true; }
-    else if (url.includes('/api/image')) { cost = 20; isPremiumEndpoint = true; }
+    else if (url.includes('/api/video')) {
+        const duration = req.body?.duration || 5;
+        const modelId = req.body?.modelId || 'veo-3.1-fast-generate-001';
+        const resolution = req.body?.resolution || '1080p';
+
+        // Base pricing on GCP cost + 20% margin
+        let multiplier = 500;
+        if (modelId === 'veo-3.1-fast-generate-001') {
+            multiplier = resolution === '4k' ? 438 : 188;       // $0.35/s -> 438, $0.15/s -> 188
+        } else if (modelId === 'veo-3.1-generate-001') {
+            multiplier = resolution === '4k' ? 750 : 500;       // $0.60/s -> 750, $0.40/s -> 500 
+        }
+
+        cost = multiplier * duration;
+        isPremiumEndpoint = true;
+    }
+    else if (url.includes('/api/image')) {
+        const modelId = req.body?.modelId || 'imagen-3.0-generate-001';
+        cost = modelId === 'imagen-4.0-ultra-generate-001' ? 58 : 38;
+        isPremiumEndpoint = true;
+    }
     else if (url.includes('/api/chat')) cost = 0; // Normal chat is FREE
 
     // Fast pass if no cost
