@@ -6,12 +6,13 @@ const KnowledgeSchema = new mongoose.Schema({
         required: true
     },
     cloudinaryUrl: {
-        type: String,
-        required: true
+        type: String
     },
     cloudinaryId: {
-        type: String, // Public ID
-        required: true
+        type: String // Public ID
+    },
+    gcsUri: {
+        type: String
     },
     mimetype: {
         type: String

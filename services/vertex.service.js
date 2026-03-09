@@ -1,6 +1,129 @@
 import { generativeModel, genAIInstance, modelName } from '../config/vertex.js';
 import { HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { BRAND_SYSTEM_RULES } from '../utils/brandIdentity.js';
+import axios from 'axios';
+import { GoogleAuth } from 'google-auth-library';
+import logger from '../utils/logger.js';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const auth = new GoogleAuth({
+    scopes: 'https://www.googleapis.com/auth/cloud-platform'
+});
+
+// Cached Corpus ID - used to avoid redundant listings
+let cachedCorpusId = null;
+
+/**
+ * Find the aisa_Knowlege_Base corpus or create it if missing
+ */
+const findOrCreateCorpus = async () => {
+    // Debugging logs to see what's actually in process.env
+    const envCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
+    const envLocation = process.env.GCP_LOCATION;
+
+    logger.info(`[RAG DEBUG] ENV LOCATION: ${envLocation || 'NOT SET'}`);
+    logger.info(`[RAG DEBUG] ENV CORPUS_ID: ${envCorpusId || 'NOT SET'}`);
+
+    // Priority 1: Use .env variable if provided
+    if (envCorpusId) {
+        cachedCorpusId = envCorpusId;
+        return cachedCorpusId;
+    }
+
+    // Priority 2: Check cache
+    if (cachedCorpusId) return cachedCorpusId;
+
+    try {
+        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const location = process.env.GCP_LOCATION || 'asia-south1';
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora`;
+
+        logger.info(`[Vertex RAG] Checking corpora in ${location}...`);
+        const res = await axios.get(listUrl, {
+            headers: { Authorization: `Bearer ${token.token}` }
+        });
+
+        const corpora = res.data.ragCorpora || [];
+        const existingCorpus = corpora.find(c => c.displayName === 'aisa_knowledge_base');
+
+        if (existingCorpus) {
+            cachedCorpusId = existingCorpus.name.split('/').pop();
+            logger.info(`[Vertex RAG] Found existing Corpus: ${cachedCorpusId}`);
+            return cachedCorpusId;
+        }
+
+        // Create if not found
+        logger.info(`[Vertex RAG] Creating new Corpus 'aisa_knowledge_base' in ${location}`);
+        const createRes = await axios.post(listUrl, { displayName: 'aisa_knowledge_base' }, {
+            headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' }
+        });
+        cachedCorpusId = createRes.data.name.split('/').pop();
+        return cachedCorpusId;
+    } catch (err) {
+        logger.error(`[Vertex RAG] Corpus management failed: ${err.response?.data?.error?.message || err.message}`);
+        return null;
+    }
+};
+
+/**
+ * Retrieve search results from Vertex RAG Corpus
+ */
+export const retrieveContextFromRag = async (query, topK = 8) => {
+    try {
+        const corpusId = await findOrCreateCorpus();
+        if (!corpusId) {
+            logger.warn("[Vertex RAG] Retrieval skipped: No Corpus ID.");
+            return null;
+        }
+
+        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const location = process.env.GCP_LOCATION || 'asia-south1';
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        // --- STABLE V1 PLURAL RETRIEVAL ---
+        const retrieveUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}:retrieveContexts`;
+
+        const corpusName = `projects/${projectId}/locations/${location}/ragCorpora/${corpusId}`;
+
+        const payload = {
+            vertexRagStore: {
+                ragResources: [
+                    { ragCorpus: corpusName }
+                ]
+            },
+            query: {
+                text: query
+            }
+        };
+
+        logger.info(`[Vertex RAG] Querying Mumbai v1 API for corpus: ${corpusId}`);
+        const response = await axios.post(retrieveUrl, payload, {
+            headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' }
+        });
+
+        // v1 uses contexts.contexts, v1beta1 used ragContexts.contexts
+        const contexts = response.data?.contexts?.contexts || response.data?.ragContexts?.contexts || [];
+        if (contexts.length === 0) {
+            logger.info(`[Vertex RAG] No matching documents found in bucket for this query.`);
+            return null;
+        }
+
+        // Combine the context segments
+        const contextText = contexts.map(c => c.text).join('\n\n');
+        logger.info(`[Vertex RAG] Successfully retrieved ${contexts.length} context segments.`);
+        return contextText;
+
+    } catch (error) {
+        logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);
+        return null;
+    }
+};
 
 export const askVertex = async (prompt, context = null, options = {}) => {
     try {

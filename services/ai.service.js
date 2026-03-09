@@ -166,59 +166,27 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         }
 
 
-        // PRIORITY 2: Company Knowledge Base (RAG)
-        const docCount = await Knowledge.countDocuments();
+        // PRIORITY 2: Company Knowledge Base (Vertex RAG)
+        const docCount = await Knowledge.countDocuments(); // Check if we should even bother
         const hasDocs = docCount > 0;
 
-        logger.info(`[Chat Routing] No Active Chat Doc. Checking Admin RAG. Docs in KB: ${docCount}`);
-
-        let contextText = null;
+        logger.info(`[Chat Routing] Checking Vertex AI RAG. Docs tracked: ${docCount}`);
 
         if (hasDocs) {
-            // Attempt to retrieve context
-            await initializeVectorStore();
+            // Attempt to retrieve context from Vertex AI RAG Engine
+            const ragContext = await vertexService.retrieveContextFromRag(message, 4);
 
-            // Perform Similarity Search with Score
-            const resultsWithScore = await vectorStore.similaritySearchWithScore(message, 4);
+            if (ragContext) {
+                logger.info(`[Vertex RAG] Found relevant context for query.`);
 
-            console.log("========== RAG DEBUG ==========");
-            console.log("User Query:", message);
-            console.log("Total Documents in KB:", docCount);
-            console.log("Retrieved Chunks:", resultsWithScore.length);
+                // Grounding prompt for Vertex RAG results
+                const groundedContext = "SOURCE: VERTEX AI KNOWLEDGE BASE\nIMPORTANT: Use the information below ONLY if it directly answers the user's question about the company (UWO/AI Mall). If the question is general, prioritize general intelligence.\n\n" + ragContext;
 
-            resultsWithScore.forEach(([doc, score], index) => {
-                console.log(`--- Chunk ${index + 1} ---`);
-                console.log("Score:", score);
-                console.log("Source:", doc.metadata?.source || doc.metadata?.filename || "Unknown");
-                console.log("Text Preview:", doc.pageContent.slice(0, 200).replace(/\n/g, ' '));
-            });
-            console.log("================================");
-
-            // Threshold for "Relevance" (0.7 = High Similarity)
-            const THRESHOLD = 0.72;
-            const relevantDocs = resultsWithScore.filter(([doc, score]) => {
-                logger.info(`[RAG Search] Doc Score: ${score.toFixed(4)} - Content: ${doc.pageContent.substring(0, 50)}...`);
-                return score >= THRESHOLD;
-            });
-
-            if (relevantDocs.length > 0) {
-                contextText = relevantDocs
-                    .map(([doc, _]) => doc.pageContent || "")
-                    .join("\n\n");
-                logger.info(`[RAG] Found ${relevantDocs.length} RELEVANT docs (Score >= ${THRESHOLD}).`);
-
-                // IMPORTANT: If we found RAG docs, the prompt in GroqService interprets this as "Your Document".
-                // Ideally we want to distinguish "Company Documents" vs "Chat Upload".
-                // Since GroqService just has one "Context" slot, we can prepend a header to contextText.
-                contextText = "SOURCE: COMPANY KNOWLEDGE BASE\nIMPORTANT: The information below is retrieved from the company knowledge base (UWO/AI Mall). ONLY use this information if the user's question specifically relates to the company, its products, or services. If the user asks a general question (e.g. coding help, definitions, general knowledge), IGNORE this context and answer generally. Do NOT mention the company or this context if it is irrelevant to the user's query.\n\n" + contextText;
-
-                // PRIORITY 2: Answer from Company RAG - Routing to OpenAI
-                const ragResponse = await openaiService.askOpenAI(message, contextText, { userName });
+                // Answer using retrieved context - Routing to OpenAI
+                const ragResponse = await openaiService.askOpenAI(message, groundedContext, { userName });
                 return { text: ragResponse, isRealTime: false };
-
-
             } else {
-                logger.info(`[RAG] No relevant chunks found (All scores < ${THRESHOLD}). Fallback to General Knowledge.`);
+                logger.info(`[Vertex RAG] No relevant context found for this query.`);
             }
         }
 

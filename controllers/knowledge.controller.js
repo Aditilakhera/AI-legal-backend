@@ -10,6 +10,11 @@ import mammoth from 'mammoth';
 import xlsx from 'xlsx';
 import officeParser from 'officeparser';
 import Tesseract from 'tesseract.js';
+import axios from 'axios';
+import { GoogleAuth } from 'google-auth-library';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const pipeline = util.promisify(stream.pipeline);
 
@@ -27,124 +32,68 @@ export const uploadDocument = async (req, res) => {
         const mimeType = req.file.mimetype;
         const fileSize = req.file.size;
 
-        logger.info(`Processing file in memory: ${originalName} (${fileSize} bytes)`);
+        logger.info(`Received file for GCS upload: ${originalName} (${fileSize} bytes)`);
 
-        let textContent = '';
-        let cloudinaryResult = null;
-
-        // 1. Process Content (In-Memory)
-        if (mimeType === 'application/pdf') {
-            try {
-                const data = await pdf(fileBuffer);
-                textContent = data.text;
-                logger.info(`Parsed PDF with ${data.numpages} pages`);
-            } catch (pdfError) {
-                logger.error(`PDF Parsing Failed: ${pdfError.message}`);
-                textContent = "PDF parsing failed. Document stored without text context.";
-            }
-        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-            try {
-                const result = await mammoth.extractRawText({ buffer: fileBuffer });
-                textContent = result.value;
-                logger.info(`Parsed DOCX: ${textContent.length} chars.`);
-            } catch (docxError) {
-                logger.error(`DOCX Parsing Failed: ${docxError.message}`);
-                textContent = "DOCX parsing failed.";
-            }
-        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
-            try {
-                const workbook = xlsx.read(fileBuffer, { type: 'buffer' });
-                const sheetNames = workbook.SheetNames;
-                textContent = sheetNames.map(name => {
-                    const sheet = workbook.Sheets[name];
-                    return xlsx.utils.sheet_to_text(sheet);
-                }).join('\n\n');
-                logger.info(`Parsed Excel: ${sheetNames.length} sheets.`);
-            } catch (xlsxError) {
-                logger.error(`Excel Parsing Failed: ${xlsxError.message}`);
-                textContent = "Excel parsing failed.";
-            }
-        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
-            try {
-                const data = await officeParser.parse(fileBuffer);
-                // officeparser returns text directly in modern versions or requires specific handling.
-                // Assuming it returns string or object with string.
-                textContent = typeof data === 'string' ? data : JSON.stringify(data);
-                logger.info(`Parsed PPTX. Length: ${textContent.length}`);
-            } catch (pptError) {
-                logger.error(`PPTX Parsing Failed: ${pptError.message}`);
-                textContent = "PPTX parsing failed.";
-            }
-        } else if (mimeType.startsWith('image/')) {
-            try {
-                logger.info(`Starting OCR for Image...`);
-                const { data: { text } } = await Tesseract.recognize(fileBuffer, 'eng');
-                textContent = text;
-                logger.info(`OCR Complete. Extracted ${textContent.length} chars.`);
-            } catch (ocrError) {
-                logger.error(`OCR Failed: ${ocrError.message}`);
-                textContent = "Image text extraction failed.";
-            }
-        } else if (mimeType === 'text/plain') {
-            textContent = fileBuffer.toString('utf8');
-        } else {
-            logger.info('File type verification: Non-text file (Image/Video/Other). Skipping text extraction.');
-        }
-
-        // 2. Upload to Cloudinary
+        // 1. Upload to Google Cloud Storage (Vertex AI RAG bucket)
+        let gcsUri = null;
         try {
-            logger.info("Uploading to Cloudinary...");
-            cloudinaryResult = await uploadToCloudinary(fileBuffer, {
-                resource_type: 'auto',
-                public_id: originalName.split('.')[0] + '-' + Date.now()
+            logger.info("Uploading to Google Cloud Storage (aisa_knowledge_base)...");
+            const { Storage } = await import('@google-cloud/storage');
+            // Assuming GCP_PROJECT_ID is in env, or it uses Application Default Credentials
+            const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
+            const storageClient = new Storage(storageOptions);
+            const bucketName = 'aisa_knowledge_base';
+            const bucket = storageClient.bucket(bucketName);
+            const gcsFileName = `${Date.now()}-${originalName.replace(/\s+/g, '_')}`;
+            const fileRef = bucket.file(gcsFileName);
+
+            await fileRef.save(fileBuffer, {
+                contentType: mimeType,
+                resumable: false
             });
-            logger.info(`Cloudinary Upload Success: ${cloudinaryResult.secure_url}`);
-        } catch (cloudError) {
-            logger.error(`Cloudinary Upload Failed: ${cloudError.message}`);
-            return res.status(500).json({ success: false, message: 'Cloud storage failed' });
+            gcsUri = `gs://${bucketName}/${gcsFileName}`;
+            logger.info(`GCS Upload Success: ${gcsUri}`);
+        } catch (gcsError) {
+            logger.error(`GCS Upload Failed: ${gcsError.message}`);
+            // Throw the actual error so the frontend stops and reports it
+            throw new Error(`Google Cloud Storage Error: ${gcsError.message}`);
         }
 
-        // 3. Store in Node.js AI Service (Only if text content available)
-        if (textContent) {
-            // Store in Atlas Vector Search
-            const success = await aiService.storeDocument(textContent);
-            if (success) {
-                logger.info("Document text stored in Atlas Vector Store");
-            } else {
-                logger.warn("Document text storage returned false (maybe empty content or error).");
-            }
+        // 2. Dispatch Vertex AI RAG Engine Import (Run asynchronously)
+        if (gcsUri) {
+            importToVertexRag(gcsUri, originalName).catch(err => {
+                logger.error(`Background Vertex RAG error for ${originalName}: ${err.message}`);
+            });
         }
 
-        // 4. Always Store Metadata
+        // 3. Always Store Metadata (for listing)
         try {
             await Knowledge.create({
                 filename: originalName,
-                cloudinaryUrl: cloudinaryResult.secure_url,
-                cloudinaryId: cloudinaryResult.public_id,
+                gcsUri: gcsUri,
                 mimetype: mimeType,
                 size: fileSize
             });
-            logger.info(`Document metadata saved to MongoDB. RAG Enabled: ${!!textContent}`);
+            logger.info(`Document metadata saved to MongoDB for track. GCS URI: ${gcsUri}`);
         } catch (dbError) {
             logger.error(`MongoDB Save Error: ${dbError.message}`);
         }
 
         res.status(200).json({
             success: true,
-            message: 'File uploaded and processed successfully',
+            message: 'File uploaded and sent to Vertex RAG Engine',
             data: {
                 filename: originalName,
-                url: cloudinaryResult.secure_url,
+                gcsUri: gcsUri,
                 mimetype: mimeType,
                 size: fileSize,
-                parsedTextLength: textContent.length,
-                ragProcessed: !!textContent && textContent.length > 0
+                gcsSuccess: !!gcsUri
             }
         });
 
     } catch (error) {
         logger.error(`Upload Error: ${error.message}`);
-        res.status(500).json({ success: false, message: 'Server error during upload' });
+        res.status(500).json({ success: false, message: error.message || 'Server error during upload' });
     }
 };
 
@@ -188,3 +137,89 @@ export const deleteDocument = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error deleting document' });
     }
 };
+
+// --- Helper Functions ---
+
+/**
+ * Automatically creates (or finds) a Vertex AI RAG Corpus and triggers
+ * the import of a newly uploaded GCS file into that corpus.
+ */
+async function importToVertexRag(gcsUri, originalName) {
+    const projectId = process.env.GCP_PROJECT_ID;
+    const location = process.env.GCP_LOCATION || 'asia-south1';
+    let corpusId = process.env.VERTEX_RAG_CORPUS_ID;
+
+    logger.info(`[RAG IMPORT DEBUG] Project: ${projectId}, Location: ${location}, Corpus: ${corpusId}`);
+
+    if (!projectId) {
+        logger.warn("Skipping Vertex RAG ingestion: GCP_PROJECT_ID is not configured in environment.");
+        return;
+    }
+
+    try {
+        const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        // 1. Check or Create RAG Corpus
+        if (!corpusId) {
+            logger.info("VERTEX_RAG_CORPUS_ID not set. Checking for 'aisa_Knowlege_Base'...");
+            const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora`;
+
+            try {
+                const listRes = await axios.get(listUrl, {
+                    headers: { Authorization: `Bearer ${token.token}` }
+                });
+                const corpora = listRes.data.ragCorpora || [];
+                const existingCorpus = corpora.find(c => c.displayName === 'aisa_knowledge_base');
+
+                if (existingCorpus) {
+                    corpusId = existingCorpus.name.split('/').pop();
+                    logger.info(`Found existing RAG Corpus ID: ${corpusId}`);
+                } else {
+                    logger.info("Creating new RAG Corpus: 'aisa_knowledge_base'...");
+                    const createRes = await axios.post(listUrl, {
+                        displayName: 'aisa_knowledge_base'
+                    }, {
+                        headers: {
+                            Authorization: `Bearer ${token.token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    corpusId = createRes.data.name.split('/').pop();
+                    logger.info(`Created new RAG Corpus ID: ${corpusId}.`);
+                }
+            } catch (corpusErr) {
+                logger.error(`Error managing RAG Corpus: ${corpusErr.response?.data?.error?.message || corpusErr.message}`);
+                return;
+            }
+        }
+
+        // 2. Import the GCS file into the Corpus
+        const importUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles:import`;
+
+        const importData = {
+            importRagFilesConfig: {
+                gcsSource: {
+                    uris: [gcsUri]
+                }
+            }
+        };
+
+        const importRes = await axios.post(importUrl, importData, {
+            headers: {
+                Authorization: `Bearer ${token.token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        logger.info(`[Vertex RAG] Successfully triggered import for '${originalName}' (${gcsUri}) into Corpus '${corpusId}'`);
+        // The import response might contain an operation name for tracking
+        if (importRes.data?.name) {
+            logger.debug(`[Vertex RAG] Import Operation Name: ${importRes.data.name}`);
+        }
+
+    } catch (error) {
+        logger.error(`[Vertex RAG] Import Error: ${error.response?.data?.error?.message || error.message}`);
+    }
+}
