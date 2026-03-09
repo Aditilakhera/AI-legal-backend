@@ -29,7 +29,7 @@ import { refineBrandPrompt } from '../utils/brandIdentity.js';
 // Video generation using external APIs (e.g., Replicate, Runway, or similar)
 export const generateVideo = async (req, res) => {
   try {
-    let { prompt, duration = 5, quality = 'medium', aspectRatio } = req.body;
+    let { prompt, duration = 5, quality = 'medium', aspectRatio, modelId = 'veo-3.1-fast-generate-001', resolution = '1080p' } = req.body;
     const userId = req.user?.id;
 
     let finalAspectRatio = '16:9';
@@ -61,7 +61,7 @@ export const generateVideo = async (req, res) => {
 
     // Example using Replicate API for video generation
     // You can replace this with your preferred video generation service
-    const videoUrl = await generateVideoFromPrompt(prompt, duration, quality, finalAspectRatio);
+    const videoUrl = await generateVideoFromPrompt(prompt, duration, quality, finalAspectRatio, modelId, resolution);
 
     // If generateVideoFromPrompt returns null, it failed internally.
     // We can proceed to fallback logic below if videoUrl is null.
@@ -76,7 +76,7 @@ export const generateVideo = async (req, res) => {
     if (req.subscriptionMeta) {
       const { usage, usageKey } = req.subscriptionMeta;
       if (usage && usageKey) {
-        const subscriptionService = { incrementUsage: async () => {} };
+        const subscriptionService = { incrementUsage: async () => { } };
         await subscriptionService.incrementUsage(usage, usageKey);
       }
     }
@@ -104,7 +104,7 @@ export const generateVideo = async (req, res) => {
 // Removed `createImpersonatedStorageClient` and `getVideoSignedUrl` as we now upload to Cloudinary
 
 
-export const generateVideoFromPrompt = async (prompt, duration, quality, aspectRatio = '16:9') => {
+export const generateVideoFromPrompt = async (prompt, duration, quality, aspectRatio = '16:9', selectedModelId = 'veo-3.1-fast-generate-001', resolution = '1080p') => {
   const logDebug = (msg) => {
     try { fs.appendFileSync('debug_video.log', `${new Date().toISOString()} - ${msg}\n`); } catch (e) { }
   };
@@ -132,11 +132,12 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
 
     // 3. START GENERATION
     let operation = await client.models.generateVideos({
-      model: 'veo-3.1-fast-generate-001',
+      model: selectedModelId,
       prompt: prompt,
       config: {
         aspectRatio: aspectRatio,
         outputGcsUri: outputGcsUri,
+        resolution: resolution
       },
     });
 

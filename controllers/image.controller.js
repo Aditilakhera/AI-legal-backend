@@ -4,7 +4,7 @@ import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
 
 // Helper function to generate or modify image using Vertex AI
-export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1') => {
+export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'imagen-3.0-generate-001') => {
     try {
         console.log(`[VERTEX IMAGE] Triggered for: "${prompt}" (Edit: ${!!originalImage}, Ratio: ${aspectRatio})`);
 
@@ -76,7 +76,7 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         };
 
         let response;
-        let modelId = originalImage ? 'imagen-3.0-capability-001' : 'imagen-3.0-generate-001';
+        let modelId = originalImage ? 'imagen-3.0-capability-001' : selectedModelId;
 
         try {
             response = await attemptVertexEdit(modelId);
@@ -122,46 +122,12 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         const errorMsg = error.message || "Unknown error";
 
         if (originalImage) {
-            console.error(`[VERTEX IMAGE EDIT FAILED] Reason: ${errorMsg}. Cannot fallback to Pollinations for edits.`);
+            console.error(`[VERTEX IMAGE EDIT FAILED] Reason: ${errorMsg}.`);
             throw new Error(`Image modification failed: ${errorMsg}`);
         }
 
-        console.warn(`[VERTEX IMAGE FALLBACK] Reason: ${errorMsg}. Switching to Pollinations.`);
-
-        // Determine dimensions for Pollinations based on ratio
-        let pWidth = 1024;
-        let pHeight = 1024;
-        if (aspectRatio === '16:9') { pWidth = 1280; pHeight = 720; }
-        else if (aspectRatio === '4:5') { pWidth = 800; pHeight = 1000; }
-        else if (aspectRatio === '4:7') { pWidth = 800; pHeight = 1400; }
-
-        // Robust Fallback to Pollinations with Flux model
-        const safePrompt = encodeURIComponent(prompt.substring(0, 500));
-        const pollinationsUrl = `https://image.pollinations.ai/prompt/${safePrompt}?width=${pWidth}&height=${pHeight}&model=flux&seed=${Math.floor(Math.random() * 1000000)}`;
-
-        try {
-            console.log(`[PROXY DOWNLOAD] Fetching from: ${pollinationsUrl}`);
-            const resp = await axios.get(pollinationsUrl, {
-                responseType: 'arraybuffer',
-                timeout: 30000
-            });
-
-            console.log(`[PROXY UPLOAD] Uploading Pollinations result to Cloudinary...`);
-            const cloudResult = await uploadToCloudinary(Buffer.from(resp.data), {
-                folder: 'generated_images',
-                public_id: `poll_${Date.now()}`
-            });
-
-            if (cloudResult && cloudResult.secure_url) {
-                console.log(`[PROXY SUCCESS] URL: ${cloudResult.secure_url}`);
-                return cloudResult.secure_url;
-            }
-            return pollinationsUrl;
-
-        } catch (e) {
-            console.error(`[PROXY FAILED] ${e.message}. Returning direct Pollinations link.`);
-            return pollinationsUrl;
-        }
+        console.error(`[VERTEX IMAGE FAILED] Reason: ${errorMsg}.`);
+        throw new Error(`Google Vertex AI Image Generation Failed: ${errorMsg}`);
     }
 };
 
@@ -170,7 +136,7 @@ import { refineBrandPrompt } from '../utils/brandIdentity.js';
 // @desc    Generate Image
 export const generateImage = async (req, res, next) => {
     try {
-        let { prompt, aspectRatio = '1:1' } = req.body || {};
+        let { prompt, aspectRatio = '1:1', modelId = 'imagen-3.0-generate-001' } = req.body || {};
 
         if (!prompt) {
             return res.status(400).json({ success: false, message: 'Prompt is required' });
@@ -179,10 +145,10 @@ export const generateImage = async (req, res, next) => {
         // Apply Brand Identity Refinement
         prompt = refineBrandPrompt(prompt, 'image');
 
-        if (logger && logger.info) logger.info(`[Image Generation] Processing: "${prompt}" (Ratio: ${aspectRatio})`);
-        else console.log(`[Image Generation] Processing: "${prompt}" (Ratio: ${aspectRatio})`);
+        if (logger && logger.info) logger.info(`[Image Generation] Processing: "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
+        else console.log(`[Image Generation] Processing: "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
 
-        const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio);
+        const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio, modelId);
 
         if (!imageUrl) {
             throw new Error("Failed to retrieve image URL from any source.");
@@ -192,7 +158,7 @@ export const generateImage = async (req, res, next) => {
         if (req.subscriptionMeta) {
             const { usage, usageKey } = req.subscriptionMeta;
             if (usage && usageKey) {
-                const subscriptionService = { incrementUsage: async () => {} };
+                const subscriptionService = { incrementUsage: async () => { } };
                 await subscriptionService.incrementUsage(usage, usageKey);
             }
         }
@@ -262,7 +228,7 @@ export const editImage = async (req, res, next) => {
         if (req.subscriptionMeta) {
             const { usage, usageKey } = req.subscriptionMeta;
             if (usage && usageKey) {
-                const subscriptionService = { incrementUsage: async () => {} };
+                const subscriptionService = { incrementUsage: async () => { } };
                 await subscriptionService.incrementUsage(usage, usageKey);
             }
         }
