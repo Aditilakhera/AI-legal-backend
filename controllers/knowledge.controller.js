@@ -102,7 +102,7 @@ export const uploadDocument = async (req, res) => {
 // @access  Public
 export const getDocuments = async (req, res) => {
     try {
-        const documents = await Knowledge.find({}, 'filename uploadDate');
+        const documents = await Knowledge.find({}, 'filename uploadDate gcsUri mimetype size');
         res.status(200).json({
             success: true,
             data: documents
@@ -123,6 +123,31 @@ export const deleteDocument = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Document not found' });
         }
 
+        const gcsUri = document.gcsUri;
+        const originalName = document.filename;
+
+        // 1. Delete from GCS
+        if (gcsUri) {
+            try {
+                const { Storage } = await import('@google-cloud/storage');
+                const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
+                const storageClient = new Storage(storageOptions);
+                const urlParts = gcsUri.replace('gs://', '').split('/');
+                const bucketName = urlParts[0];
+                const gcsFileName = urlParts.slice(1).join('/');
+
+                await storageClient.bucket(bucketName).file(gcsFileName).delete();
+                logger.info(`Deleted file from GCS: ${gcsUri}`);
+            } catch (err) {
+                logger.error(`Failed to delete from GCS: ${err.message}`);
+            }
+
+            // 2. Delete from Vertex RAG
+            deleteFromVertexRag(gcsUri, originalName).catch(err => {
+                logger.error(`Background Vertex RAG delete error: ${err.message}`);
+            });
+        }
+
         await Knowledge.findByIdAndDelete(req.params.id);
 
         // Reload Vector Store to remove the document context
@@ -135,6 +160,43 @@ export const deleteDocument = async (req, res) => {
     } catch (error) {
         logger.error(`Delete Document Error: ${error.message}`);
         res.status(500).json({ success: false, message: 'Server error deleting document' });
+    }
+};
+
+// @desc    Download/view a document by streaming it from GCS
+// @route   GET /api/knowledge/download/:id
+// @access  Public
+export const downloadDocument = async (req, res) => {
+    try {
+        const document = await Knowledge.findById(req.params.id);
+        if (!document || !document.gcsUri) {
+            return res.status(404).send('Document not found');
+        }
+
+        const { Storage } = await import('@google-cloud/storage');
+        const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
+        const storageClient = new Storage(storageOptions);
+
+        const urlParts = document.gcsUri.replace('gs://', '').split('/');
+        const bucketName = urlParts[0];
+        const gcsFileName = urlParts.slice(1).join('/');
+
+        const file = storageClient.bucket(bucketName).file(gcsFileName);
+
+        res.setHeader('Content-Type', document.mimetype || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `inline; filename="${document.filename}"`);
+
+        file.createReadStream()
+            .on('error', (err) => {
+                logger.error(`Error reading from GCS: ${err.message}`);
+                if (!res.headersSent) {
+                    res.status(500).send('Error reading file from storage');
+                }
+            })
+            .pipe(res);
+    } catch (error) {
+        logger.error(`Download Error: ${error.message}`);
+        res.status(500).send('Server error streaming document');
     }
 };
 
@@ -221,5 +283,52 @@ async function importToVertexRag(gcsUri, originalName) {
 
     } catch (error) {
         logger.error(`[Vertex RAG] Import Error: ${error.response?.data?.error?.message || error.message}`);
+    }
+}
+
+async function deleteFromVertexRag(gcsUri, originalName) {
+    const projectId = process.env.GCP_PROJECT_ID;
+    const location = process.env.GCP_LOCATION || 'asia-south1';
+    let corpusId = process.env.VERTEX_RAG_CORPUS_ID;
+
+    if (!projectId) return;
+
+    try {
+        const { GoogleAuth } = await import('google-auth-library');
+        const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        if (!corpusId) {
+            const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora`;
+            const listRes = await axios.get(listUrl, { headers: { Authorization: `Bearer ${token.token}` } });
+            const corpora = listRes.data.ragCorpora || [];
+            const existingCorpus = corpora.find(c => c.displayName === 'aisa_knowledge_base');
+            if (existingCorpus) {
+                corpusId = existingCorpus.name.split('/').pop();
+            } else {
+                return;
+            }
+        }
+
+        const listFilesUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles`;
+        const listFilesRes = await axios.get(listFilesUrl, { headers: { Authorization: `Bearer ${token.token}` } });
+        const files = listFilesRes.data.ragFiles || [];
+
+        const gcsFileName = gcsUri.split('/').pop();
+
+        const fileToDelete = files.find(f => {
+            return f.displayName === gcsFileName || f.displayName === originalName;
+        });
+
+        if (fileToDelete) {
+            const delUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/${fileToDelete.name}`;
+            await axios.delete(delUrl, { headers: { Authorization: `Bearer ${token.token}` } });
+            logger.info(`[Vertex RAG] Deleted file ${fileToDelete.name}`);
+        } else {
+            logger.info(`[Vertex RAG] Could not find file to delete for ${gcsUri}`);
+        }
+    } catch (e) {
+        logger.error(`[Vertex RAG] Delete Error: ${e.response?.data?.error?.message || e.message}`);
     }
 }
