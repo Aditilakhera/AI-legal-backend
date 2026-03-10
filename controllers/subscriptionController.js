@@ -2,6 +2,7 @@ import Subscription from '../models/Subscription.js';
 import Plan from '../models/Plan.js';
 import CreditPackage from '../models/CreditPackage.js';
 import User from '../models/User.js';
+import CreditLog from '../models/CreditLog.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
@@ -22,6 +23,22 @@ export const getSubscriptionDetails = async (req, res) => {
             subscription,
             credits: user?.credits || 0,
             founderStatus: user?.founderStatus || false
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const getCreditLogs = async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const logs = await CreditLog.find({ userId })
+            .sort({ createdAt: -1 })
+            .limit(50);
+        
+        res.status(200).json({
+            success: true,
+            logs
         });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -84,21 +101,15 @@ export const purchasePlan = async (req, res) => {
             user.founderStatus = true;
         }
 
-        // Deactivate old active subscriptions
         await Subscription.updateMany({ userId, subscriptionStatus: 'active' }, { subscriptionStatus: 'cancelled' });
 
-        // Calculate credits adding existing remaining? Or replacing.
-        // SaaS usually replaces monthly credits or keeps rollover. For now, replace.
-        const addCredits = plan.planName === 'Founder Plan' ? plan.credits : plan.credits; // if launch offer, maybe give 50% extra?
-        // Wait, "Launch Offer: Get 50% extra credits on first purchase"
+        const addCredits = plan.credits;
         const isFirstPurchase = await Subscription.countDocuments({ userId }) === 0;
         let finalCredits = addCredits;
         if (isFirstPurchase && plan.planName !== 'Founder Plan') {
             finalCredits += finalCredits * 0.5;
         }
 
-        // Just add to user's remaining credits or replace? "Credits must automatically deduct"
-        // Usually, monthly plan resets credits or adds to balance. Let's Set to plan Credits + existing.
         user.credits = finalCredits; 
         
         const newSubscription = await Subscription.create({
@@ -113,6 +124,15 @@ export const purchasePlan = async (req, res) => {
         });
 
         await user.save();
+
+        // 📝 Log Plan Credit
+        await CreditLog.create({
+            userId,
+            action: 'plan_credit',
+            description: `Subscription: ${plan.planName}`,
+            credits: finalCredits,
+            balanceAfter: user.credits
+        });
 
         res.status(200).json({
             success: true,
@@ -136,6 +156,15 @@ export const purchaseCredits = async (req, res) => {
         const user = await User.findById(userId);
         user.credits += creditPackage.credits;
         await user.save();
+
+        // 📝 Log Credit Purchase
+        await CreditLog.create({
+            userId,
+            action: 'purchase',
+            description: `Purchased: ${creditPackage.packageName}`,
+            credits: creditPackage.credits,
+            balanceAfter: user.credits
+        });
 
         res.status(200).json({
             success: true,

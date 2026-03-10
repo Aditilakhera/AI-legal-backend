@@ -127,10 +127,12 @@ app.use('/api', dashboardRoutes);
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
 
-// AIBASE (V3) - Cleaned up
-app.use('/api/aibase/chat', chatRoute);
-app.use('/api/aibase/knowledge', knowledgeRoute);
-// app.use('/api/aibase', aibaseRoutes); // Removed unused route
+// AIBASE (V3) - With Credit System
+const { verifyToken } = await import('./middleware/authorization.js');
+const { creditMiddleware } = await import('./middleware/creditSystem.js');
+
+app.use('/api/aibase/chat', verifyToken, creditMiddleware, chatRoute);
+app.use('/api/aibase/knowledge', verifyToken, creditMiddleware, knowledgeRoute);
 
 // --- End of Routes ---
 

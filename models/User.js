@@ -138,7 +138,7 @@ const userSchema = new mongoose.Schema({
         autoDetect: { type: Boolean, default: true }
     },
 
-    credits: { type: Number, default: 100 },
+    credits: { type: Number, default: 500 },
     founderStatus: { type: Boolean, default: false },
 
     notificationsInbox: [{

@@ -69,6 +69,7 @@ router.post("/signup", async (req, res) => {
       email,
       password: hashedPassword,
       verificationCode,
+      credits: 500, // Explicitly set to match README Free Tier
       notificationsInbox: [
         {
           id: `welcome_${Date.now()}_1`,
@@ -76,23 +77,23 @@ router.post("/signup", async (req, res) => {
           desc: 'Start your journey with your Artificial Intelligence Super Assistant. Need help? Ask us anything!',
           type: 'promo',
           time: new Date()
-        },
-        {
-          id: `welcome_${Date.now()}_2`,
-          title: 'AISA v2.4.0 is here!',
-          desc: 'New features: Dynamic Accent Colors and improved Voice Synthesis are now live. Check them out in General settings.',
-          type: 'update',
-          time: new Date(Date.now() - 7200000)
-        },
-        {
-          id: `welcome_${Date.now()}_3`,
-          title: 'Plan Expiring Soon',
-          desc: 'Your "Pro" plan will end in 3 days. Renew now to keep enjoying unlimited AI access.',
-          type: 'alert',
-          time: new Date(Date.now() - 3600000)
-        },
+        }
       ]
     });
+
+    // 📝 Log Initial Free Credits
+    try {
+      const CreditLog = (await import('../models/CreditLog.js')).default;
+      await CreditLog.create({
+        userId: newUser._id,
+        action: 'bonus',
+        description: 'New User Bonus (Free Tier)',
+        credits: 500,
+        balanceAfter: 500
+      });
+    } catch (logErr) {
+      console.error('Initial CreditLog failed:', logErr.message);
+    }
 
     // Generate token cookie (planType embedded for info only — middleware re-checks DB)
     const token = generateTokenAndSetCookies(res, newUser._id, newUser.email, newUser.name, newUser.plan);
@@ -259,6 +260,7 @@ const handleSocialUser = async (profile, res) => {
           name: name || `${provider} User`,
           email: email,
           password: crypto.randomBytes(16).toString("hex"), // Secure random password
+          credits: 500, // Explicitly set to match README Free Tier
           avatar: picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'User')}&background=random`,
           isVerified: true,
           provider: provider.toLowerCase(),
@@ -274,6 +276,20 @@ const handleSocialUser = async (profile, res) => {
             }
           ]
         });
+
+        // 📝 Log Initial Free Credits
+        try {
+          const CreditLog = (await import('../models/CreditLog.js')).default;
+          await CreditLog.create({
+            userId: user._id,
+            action: 'bonus',
+            description: 'New User Bonus (Free Tier)',
+            credits: 500,
+            balanceAfter: 500
+          });
+        } catch (logErr) {
+          console.error('Social Initial CreditLog failed:', logErr.message);
+        }
       }
     } else {
         // User found - update last used provider
