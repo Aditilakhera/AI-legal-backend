@@ -35,6 +35,7 @@ import pricingRoutes from './routes/pricingRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
+import legalRoutes from './routes/legalRoutes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -99,6 +100,7 @@ app.use('/api/auth/verify-email', emailVerification);
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoute);
 app.use('/api/user', dataRoutes);  // GDPR data deletion & export
+app.use('/api/legal', legalRoutes);
 
 // Intelligence Features
 app.use('/api/chat', chatRoutes);

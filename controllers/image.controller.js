@@ -31,7 +31,7 @@ const detectEditMode = (prompt) => {
 // -------------------------------------------------------------------
 // Core Vertex AI helper — used by both chat and API endpoints
 // -------------------------------------------------------------------
-export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1') => {
+export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'imagen-3.0-generate-001') => {
     try {
         console.log(`[VERTEX IMAGE] Triggered for: "${prompt}" (Edit: ${!!originalImage}, Ratio: ${aspectRatio})`);
 
@@ -108,7 +108,7 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         // Model selection:
         //   Editing:    imagen-3.0-capability-001 only (imagegeneration@006 is EOL)
         //   Generation: imagen-3.0-generate-001, fallback → imagegeneration@006
-        const primaryModel = originalImage ? 'imagen-3.0-capability-001' : 'imagen-3.0-generate-001';
+        const primaryModel = originalImage ? 'imagen-3.0-capability-001' : selectedModelId;
         const fallbackModel = originalImage ? null : 'imagegeneration@006';
 
         let response;
@@ -158,11 +158,11 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
 
         if (originalImage) {
             console.error(`[VERTEX EDIT FAILED] ${vertexMsg}`);
-            throw new Error(`Image editing failed: ${vertexMsg}`);
+            throw new Error(`Image modification failed: ${vertexMsg}`);
         }
 
         console.error(`[VERTEX GEN FAILED] ${vertexMsg}`);
-        throw new Error(`Image generation failed: ${vertexMsg}`);
+        throw new Error(`Google Vertex AI Image Generation Failed: ${vertexMsg}`);
     }
 };
 
@@ -171,19 +171,27 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
 // -------------------------------------------------------------------
 export const generateImage = async (req, res, next) => {
     try {
-        let { prompt, aspectRatio = '1:1' } = req.body || {};
+        let { prompt, aspectRatio = '1:1', modelId = 'imagen-3.0-generate-001' } = req.body || {};
 
         if (!prompt) {
             return res.status(400).json({ success: false, message: 'Prompt is required' });
         }
 
         prompt = refineBrandPrompt(prompt, 'image');
-        logger?.info
-            ? logger.info(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio})`)
-            : console.log(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio})`);
+        if (logger && logger.info) logger.info(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
+        else console.log(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
 
-        const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio);
+        const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio, modelId);
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
+
+        // Increment usage if successful
+        if (req.subscriptionMeta) {
+            const { usage, usageKey } = req.subscriptionMeta;
+            if (usage && usageKey) {
+                const subscriptionService = (await import('../services/subscriptionService.js')).default;
+                await subscriptionService.incrementUsage(usage, usageKey);
+            }
+        }
 
         res.status(200).json({ success: true, data: imageUrl });
     } catch (error) {
@@ -199,7 +207,7 @@ export const generateImage = async (req, res, next) => {
 // -------------------------------------------------------------------
 export const editImage = async (req, res, next) => {
     try {
-        const { prompt, imageUrl, imageBase64 } = req.body || {};
+        const { prompt, imageUrl, imageBase64, modelId = 'imagen-3.0-generate-001', aspectRatio = '1:1' } = req.body || {};
 
         if (!prompt) {
             return res.status(400).json({ success: false, message: 'Editing prompt is required' });
@@ -229,8 +237,17 @@ export const editImage = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Valid image data required' });
         }
 
-        const modifiedImageUrl = await generateImageFromPrompt(prompt, imageToProcess);
+        const modifiedImageUrl = await generateImageFromPrompt(prompt, imageToProcess, aspectRatio, modelId);
         if (!modifiedImageUrl) throw new Error('Failed to retrieve modified image URL.');
+
+        // Increment usage if successful
+        if (req.subscriptionMeta) {
+            const { usage, usageKey } = req.subscriptionMeta;
+            if (usage && usageKey) {
+                const subscriptionService = (await import('../services/subscriptionService.js')).default;
+                await subscriptionService.incrementUsage(usage, usageKey);
+            }
+        }
 
         res.status(200).json({ success: true, data: modifiedImageUrl });
     } catch (error) {
