@@ -6,6 +6,7 @@ const router = express.Router();
 
 router.post('/upload', uploadMiddleware, knowledgeController.uploadDocument);
 router.get('/documents', knowledgeController.getDocuments);
+router.get('/download/:id', knowledgeController.downloadDocument);
 router.delete('/:id', knowledgeController.deleteDocument);
 
 export default router;

@@ -18,6 +18,8 @@ import { generateVideoFromPrompt } from "../controllers/videoController.js";
 import { generateImageFromPrompt } from "../controllers/image.controller.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
+import { retrieveContextFromRag } from "../services/vertex.service.js";
+import Knowledge from "../models/Knowledge.model.js";
 
 import axios from "axios";
 
@@ -92,57 +94,9 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       }
     }
 
-    // --- UWO & AISA BRANDING CHECKS (HIGH PRIORITY) ---
-    const lowerContent = content?.toLowerCase() || '';
-
-    // Check for UWO
-    const aboutUWOPatterns = [
-      /\b(uwo|unified\s+web\s+options|ai\s+mall)\b/i,
-      /what\s+is\s+uwo/i,
-      /uwo\?/i,
-      /uwo\s+kya\s+hai/i,
-      /uwo\s+ke\s+bare\s+me/i,
-      /uwo\s+batao/i
-    ];
-
-    // Check for AISA
-    const aboutAISAPatterns = [
-      /apne?\s+baare?\s+me/i,
-      /(who|what)\s+are\s+you/i,
-      /aap\s+kaun\s+ho/i,
-      /tum\s+kaun\s+ho/i
-    ];
-
-    const isAboutUWO = aboutUWOPatterns.some(pattern => pattern.test(lowerContent));
-    const isAboutAISA = aboutAISAPatterns.some(pattern => pattern.test(lowerContent));
-
-    if ((isAboutUWO || isAboutAISA) && !image && !video && !document) {
-      const isHindi = /kya|hai|he|batao|bare|me|kaun|aap|tum|apne/i.test(lowerContent);
-      let predefinedResponse = '';
-
-      if (isAboutUWO) {
-        predefinedResponse = `Unified Web Options & Services Pvt. Ltd. (UWO™) is an IT-registered technology company founded in 2020 and headquartered in Jabalpur, Madhya Pradesh
-
-UWO - Company Profile Deck
-
-. UWO specializes in AI solutions, business automation, CRM/workflow systems, AI agents & chatbots, web & app development, cloud integrations, and enterprise productivity tools. Its mission is to make AI simple, practical, and human-aligned, and its flagship project AI Mall™ is a global AI marketplace and automation ecosystem.`;
-      } else {
-        // About AISA
-        if (isHindi) {
-          predefinedResponse = `Main **AISA** hoon — ek Artificial Intelligence Super Assistant jo **UWO** ne banaya hai.
-💻 Coding, ✍️ Content writing, aur 🛠️ Technical problems solve karne me main apki help kar sakta hoon.`;
-        } else {
-          predefinedResponse = `I'm **AISA** — an Artificial Intelligence Super Assistant created by **UWO**.
-💻 I can help you with coding, ✍️ content writing, and 🛠️ solving technical problems.`;
-        }
-      }
-
-      return res.status(200).json({
-        reply: predefinedResponse,
-        detectedMode: 'NORMAL_CHAT',
-        language: isHindi ? 'Hindi' : 'English'
-      });
-    }
+    // --- UWO & AISA BRANDING CHECKS (DISABLED - HANDLED BY RAG) ---
+    // Previously, a hardcoded block here was returning early and preventing RAG from working.
+    // I have removed the early return so the AI can use the Vertex RAG documents instead.
 
     // --- MULTI-MODEL DISPATCHER ---
     if (model && !model.startsWith('gemini')) {
@@ -305,13 +259,45 @@ User's Name is "${req.user.name}".
       }
     }
 
+    // --- VERTEX AI RAG INTEGRATION (COMPANY KNOWLEDGE) ---
+    let ragContext = "";
+    try {
+      // Check if we have documents in DB OR if a manual Corpus ID is set
+      const docCount = await Knowledge.countDocuments().catch(() => 0);
+      const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
+
+      if ((docCount > 0 || manualCorpusId) && content) {
+        console.log(`[RAG] Checking Knowledge Base (Vertex RAG) for: "${content.substring(0, 30)}..."`);
+        const retrieved = await retrieveContextFromRag(content, 8); // TopK=8 as per expert guideline
+        if (retrieved) {
+          console.log("[RAG] Relevant context FOUND and injected.");
+          ragContext = `
+[TRUSTED COMPANY KNOWLEDGE BASE]:
+The following information is retrieved from the official UWO/AISA Knowledge Base. 
+
+### GROUNDING RULES:
+1.  **Strict Compliance**: Use only the context below to answer questions about UWO, AISA, founders, services, or pricing.
+2.  **No Hallucinations**: If the answer is NOT in the context, do not imagine details about company history or people. Instead, politely state that you can't find that specific detail in the company profile.
+3.  **Proactive Assistance**: If the information is missing, offer to find it from public sources (searching the web) or suggest contacting the help desk.
+
+### CONTEXT:
+${retrieved}
+\n`;
+        } else {
+          console.log("[RAG] No relevant context found for this query.");
+        }
+      }
+    } catch (ragError) {
+      console.error("[RAG ERROR]", ragError.message);
+    }
+
     // Use mode-specific system instruction, or fallback to provided systemInstruction
     // CRITICAL: Merge with official branding from vertex.js to prevent hallucination
     const currentDateLong = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
     const dateContext = `### CURRENT DATE & TIME:\nToday is ${currentDateLong} (India Standard Time). (Aaj ki date aur samay: ${currentDateLong})\n`;
 
     let baseInstruction = systemInstruction || modeSystemInstruction;
-    let finalSystemInstruction = `${systemInstructionText}\n${dateContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
+    let finalSystemInstruction = `${systemInstructionText}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
 
     if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
       finalSystemInstruction = modeSystemInstruction;
@@ -541,6 +527,9 @@ MANDATORY MEDIA RULES:
       }
     }
     console.log("[DEBUG] Web Search check complete.");
+
+    // --- VERTEX AI RAG INTEGRATION (ALREADY PROCESSED ABOVE) ---
+
 
     // File Conversion: Check if this is a conversion request
     let conversionResult = null;
