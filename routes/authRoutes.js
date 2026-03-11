@@ -219,7 +219,7 @@ router.post("/login", async (req, res) => {
 /**
  * Common handler to find or create a user after any social authentication
  */
-const handleSocialUser = async (profile, res) => {
+const handleSocialUser = async (profile, res, isRedirect = true) => {
   const { email, name, picture, provider, providerId } = profile;
 
   if (!email) {
@@ -228,11 +228,11 @@ const handleSocialUser = async (profile, res) => {
 
   try {
     // 1. Check if user already has this specific social account linked
-    let user = await UserModel.findOne({ 
-        $or: [
-            { "socialLinks.provider": provider, "socialLinks.providerId": providerId },
-            { provider, providerId }
-        ]
+    let user = await UserModel.findOne({
+      $or: [
+        { "socialLinks.provider": provider, "socialLinks.providerId": providerId },
+        { provider, providerId }
+      ]
     });
 
     if (!user) {
@@ -243,7 +243,7 @@ const handleSocialUser = async (profile, res) => {
         console.log(`[Social Auth] Linking ${provider.toUpperCase()} account to existing user: ${email}`);
         if (!user.socialLinks) user.socialLinks = [];
         user.socialLinks.push({ provider, providerId });
-        
+
         // Update user properties if they are missing
         if (!user.avatar || user.avatar === '/User.jpeg') user.avatar = picture;
         user.provider = provider.toLowerCase();
@@ -251,9 +251,6 @@ const handleSocialUser = async (profile, res) => {
         user.isVerified = true;
         await user.save();
       } else {
-        // Construct the backend auth URL safely
-        // We removed the ?email param to avoid confusion between providers
-        const backendAuthUrl = apis.logIn.replace('/login', `/${provider.toLowerCase()}`);
         // 3. Create new user
         console.log(`[Social Auth] Creating new user via ${provider.toUpperCase()}: ${email}`);
         user = await UserModel.create({
@@ -292,116 +289,134 @@ const handleSocialUser = async (profile, res) => {
         }
       }
     } else {
-        // User found - update last used provider
-        user.provider = provider.toLowerCase();
-        await user.save();
+      // User found - update last used provider
+      user.provider = provider.toLowerCase();
+      await user.save();
     }
 
-    // Generate JWT and redirect to frontend
+    // Generate JWT
     const token = generateTokenAndSetCookies(res, user._id, user.email, user.name, user.plan);
-    
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-    const redirectUrl = `${frontendUrl}/login?social_auth=true&token=${token}&userId=${user._id}&userName=${encodeURIComponent(user.name)}&userEmail=${user.email}&provider=${provider.toLowerCase()}`;
-    
-    return res.redirect(redirectUrl);
+
+    if (isRedirect) {
+      const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+      const redirectUrl = `${frontendUrl}/login?social_auth=true&token=${token}&userId=${user._id}&userName=${encodeURIComponent(user.name)}&userEmail=${user.email}&provider=${provider.toLowerCase()}`;
+      return res.redirect(redirectUrl);
+    } else {
+      return res.status(200).json({
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        message: "Social Login Successfully",
+        token: token,
+        role: user.role,
+        plan: user.plan,
+        notifications: user.notificationsInbox,
+        provider: user.provider
+      });
+    }
   } catch (err) {
     console.error(`[Social Auth Error] ${provider}:`, err);
-    return res.redirect(`${process.env.FRONTEND_URL}/login?error=Authentication failed`);
+    if (isRedirect) {
+      const fallbackFrontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+      return res.redirect(`${fallbackFrontendUrl}/login?error=Authentication failed`);
+    } else {
+      return res.status(500).json({ error: "Authentication failed" });
+    }
   }
 };
 
 // --- Real OAuth Helpers ---
 const fetchGitHubProfile = async (code) => {
-    const response = await axios.post('https://github.com/login/oauth/access_token', {
-        client_id: process.env.GITHUB_CLIENT_ID,
-        client_secret: process.env.GITHUB_CLIENT_SECRET,
-        code
-    }, { headers: { Accept: 'application/json' } });
+  const response = await axios.post('https://github.com/login/oauth/access_token', {
+    client_id: process.env.GITHUB_CLIENT_ID,
+    client_secret: process.env.GITHUB_CLIENT_SECRET,
+    code
+  }, { headers: { Accept: 'application/json' } });
 
-    const accessToken = response.data.access_token;
-    const userRes = await axios.get('https://api.github.com/user', {
-        headers: { Authorization: `Bearer ${accessToken}` }
-    });
+  const accessToken = response.data.access_token;
+  const userRes = await axios.get('https://api.github.com/user', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
 
-    // Emails might be private, fetch separately
-    const emailRes = await axios.get('https://api.github.com/user/emails', {
-        headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    const primaryEmail = emailRes.data.find(e => e.primary)?.email || userRes.data.email;
+  // Emails might be private, fetch separately
+  const emailRes = await axios.get('https://api.github.com/user/emails', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const primaryEmail = emailRes.data.find(e => e.primary)?.email || userRes.data.email;
 
-    return {
-        provider: 'github',
-        providerId: userRes.data.id.toString(),
-        name: userRes.data.name || userRes.data.login,
-        email: primaryEmail,
-        picture: userRes.data.avatar_url
-    };
+  return {
+    provider: 'github',
+    providerId: userRes.data.id.toString(),
+    name: userRes.data.name || userRes.data.login,
+    email: primaryEmail,
+    picture: userRes.data.avatar_url
+  };
 };
 
 const fetchDiscordProfile = async (code) => {
-    const params = new URLSearchParams();
-    params.append('client_id', process.env.DISCORD_CLIENT_ID);
-    params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
-    params.append('grant_type', 'authorization_code');
-    params.append('code', code);
-    params.append('redirect_uri', `${process.env.BACKEND_URL}/api/auth/discord/callback`);
+  const params = new URLSearchParams();
+  params.append('client_id', process.env.DISCORD_CLIENT_ID);
+  params.append('client_secret', process.env.DISCORD_CLIENT_SECRET);
+  params.append('grant_type', 'authorization_code');
+  params.append('code', code);
+  params.append('redirect_uri', `${process.env.BACKEND_URL}/api/auth/discord/callback`);
 
-    const response = await axios.post('https://discord.com/api/oauth2/token', params);
-    const accessToken = response.data.access_token;
+  const response = await axios.post('https://discord.com/api/oauth2/token', params);
+  const accessToken = response.data.access_token;
 
-    const userRes = await axios.get('https://discord.com/api/users/@me', {
-        headers: { Authorization: `Bearer ${accessToken}` }
-    });
+  const userRes = await axios.get('https://discord.com/api/users/@me', {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
 
-    return {
-        provider: 'discord',
-        providerId: userRes.data.id,
-        name: userRes.data.username,
-        email: userRes.data.email,
-        picture: `https://cdn.discordapp.com/avatars/${userRes.data.id}/${userRes.data.avatar}.png`
-    };
+  return {
+    provider: 'discord',
+    providerId: userRes.data.id,
+    name: userRes.data.username,
+    email: userRes.data.email,
+    picture: `https://cdn.discordapp.com/avatars/${userRes.data.id}/${userRes.data.avatar}.png`
+  };
 };
 
 const fetchFacebookProfile = async (code) => {
-    const tokenRes = await axios.get(`https://graph.facebook.com/v12.0/oauth/access_token`, {
-        params: {
-            client_id: process.env.FACEBOOK_APP_ID,
-            client_secret: process.env.FACEBOOK_APP_SECRET,
-            redirect_uri: `${process.env.BACKEND_URL}/api/auth/facebook/callback`,
-            code
-        }
-    });
+  const tokenRes = await axios.get(`https://graph.facebook.com/v12.0/oauth/access_token`, {
+    params: {
+      client_id: process.env.FACEBOOK_APP_ID,
+      client_secret: process.env.FACEBOOK_APP_SECRET,
+      redirect_uri: `${process.env.BACKEND_URL}/api/auth/facebook/callback`,
+      code
+    }
+  });
 
-    const accessToken = tokenRes.data.access_token;
-    const userRes = await axios.get(`https://graph.facebook.com/me`, {
-        params: {
-            access_token: accessToken,
-            fields: 'id,name,email,picture.type(large)'
-        }
-    });
+  const accessToken = tokenRes.data.access_token;
+  const userRes = await axios.get(`https://graph.facebook.com/me`, {
+    params: {
+      access_token: accessToken,
+      fields: 'id,name,email,picture.type(large)'
+    }
+  });
 
-    return {
-        provider: 'facebook',
-        providerId: userRes.data.id,
-        name: userRes.data.name,
-        email: userRes.data.email,
-        picture: userRes.data.picture?.data?.url
-    };
+  return {
+    provider: 'facebook',
+    providerId: userRes.data.id,
+    name: userRes.data.name,
+    email: userRes.data.email,
+    picture: userRes.data.picture?.data?.url
+  };
 };
 
 // --- Simulation Template ---
 const devLoginTemplate = (provider, email) => {
-    const config = {
-        GitHub: { color: '#24292e', logo: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12', bg: '#f6f8fa' },
-        Facebook: { color: '#1877F2', logo: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z', bg: '#ecf3ff' },
-        Discord: { color: '#5865F2', logo: 'M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037 19.736 19.736 0 00-4.885 1.515.069.069 0 00-.032.027C.533 9.048-.32 13.572.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028 14.09 14.09 0 001.226-1.994.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128c.125-.094.252-.192.37-.294a.077.077 0 01.077-.01c3.927 1.793 8.18 1.793 12.062 0a.077.077 0 01.078.01c.12.102.246.2.373.294a.077.077 0 01-.006.127 12.298 12.298 0 01-1.873.893.077.077 0 00-.041.107 14.361 14.361 0 001.226 1.994.077.077 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03z', bg: '#36393f' },
-        Microsoft: { color: '#00A4EF', logo: 'M11.4 24H0V12.6h11.4V24zM24 24H12.6V12.6H24V24zM11.4 11.4H0V0h11.4v11.4zM24 11.4H12.6V0H24v11.4z', bg: '#e6e6e6' },
-        Apple: { color: '#000000', logo: 'M17.073 21.321c-.985.93-2.128 2.094-3.535 2.094-1.38 0-1.842-.843-3.535-.843-1.692 0-2.217.828-3.534.828-1.334 0-2.583-1.218-3.535-2.109C.951 19.33-.275 16.143.2 13.041c.212-3.087 1.859-4.739 3.655-4.739 1.153 0 1.951.725 2.91 0 1.077-.852 2.1-.852 2.91 0 1.127.76 2.062 1.488 2.441 2.268-2.693 1.15-3.136 4.757-.751 6.136.985.59 2.01.635 2.502.635 0 0 .151.01.442.012l.144-.012-.045.012c-.105.451-.629 1.831-1.365 2.968zm-3.085-15.011c0 2.243-1.859 4.072-4.148 4.072-.116 0-.256-.014-.383-.028.099-2.228 1.956-4.072 4.148-4.072.164 0 .285.014.383.028z', bg: '#000000' },
-        Twitter: { color: '#1DA1F2', logo: 'M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.84 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-74.96 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z', bg: '#15202b' },
-        LinkedIn: { color: '#0077B5', logo: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.454C23.205 24 24 23.227 24 22.271V1.729C24 .774 23.205 0 22.225 0z', bg: '#f3f6f8' }
-    }[provider] || { color: '#4285F4', logo: '', bg: '#ffffff' };
+  const config = {
+    GitHub: { color: '#24292e', logo: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12', bg: '#f6f8fa' },
+    Facebook: { color: '#1877F2', logo: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z', bg: '#ecf3ff' },
+    Discord: { color: '#5865F2', logo: 'M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037 19.736 19.736 0 00-4.885 1.515.069.069 0 00-.032.027C.533 9.048-.32 13.572.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028 14.09 14.09 0 001.226-1.994.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128c.125-.094.252-.192.37-.294a.077.077 0 01.077-.01c3.927 1.793 8.18 1.793 12.062 0a.077.077 0 01.078.01c.12.102.246.2.373.294a.077.077 0 01-.006.127 12.298 12.298 0 01-1.873.893.077.077 0 00-.041.107 14.361 14.361 0 001.226 1.994.077.077 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03z', bg: '#36393f' },
+    Microsoft: { color: '#00A4EF', logo: 'M11.4 24H0V12.6h11.4V24zM24 24H12.6V12.6H24V24zM11.4 11.4H0V0h11.4v11.4zM24 11.4H12.6V0H24v11.4z', bg: '#e6e6e6' },
+    Apple: { color: '#000000', logo: 'M17.073 21.321c-.985.93-2.128 2.094-3.535 2.094-1.38 0-1.842-.843-3.535-.843-1.692 0-2.217.828-3.534.828-1.334 0-2.583-1.218-3.535-2.109C.951 19.33-.275 16.143.2 13.041c.212-3.087 1.859-4.739 3.655-4.739 1.153 0 1.951.725 2.91 0 1.077-.852 2.1-.852 2.91 0 1.127.76 2.062 1.488 2.441 2.268-2.693 1.15-3.136 4.757-.751 6.136.985.59 2.01.635 2.502.635 0 0 .151.01.442.012l.144-.012-.045.012c-.105.451-.629 1.831-1.365 2.968zm-3.085-15.011c0 2.243-1.859 4.072-4.148 4.072-.116 0-.256-.014-.383-.028.099-2.228 1.956-4.072 4.148-4.072.164 0 .285.014.383.028z', bg: '#000000' },
+    Twitter: { color: '#1DA1F2', logo: 'M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.84 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-74.96 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z', bg: '#15202b' },
+    LinkedIn: { color: '#0077B5', logo: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.454C23.205 24 24 23.227 24 22.271V1.729C24 .774 23.205 0 22.225 0z', bg: '#f3f6f8' }
+  }[provider] || { color: '#4285F4', logo: '', bg: '#ffffff' };
 
-    return `
+  return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -557,104 +572,104 @@ const devLoginTemplate = (provider, email) => {
 // --- Main Routes ---
 
 router.get("/google", async (req, res) => {
-    // This is handled via popup on frontend usually, but if hit directly:
-    res.redirect(`${process.env.FRONTEND_URL}/login`);
+  // This is handled via popup on frontend usually, but if hit directly:
+  res.redirect(`${process.env.FRONTEND_URL}/login`);
 });
 
 router.get("/github", (req, res) => {
-    const { email } = req.query;
-    if (!process.env.GITHUB_CLIENT_ID) return res.send(devLoginTemplate('GitHub', email));
-    
-    const clientId = process.env.GITHUB_CLIENT_ID;
-    const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/github/callback`);
-    res.redirect(`https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email`);
+  const { email } = req.query;
+  if (!process.env.GITHUB_CLIENT_ID) return res.send(devLoginTemplate('GitHub', email));
+
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/github/callback`);
+  res.redirect(`https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email`);
 });
 
 router.get("/facebook", (req, res) => {
-    const { email } = req.query;
-    if (!process.env.FACEBOOK_APP_ID) return res.send(devLoginTemplate('Facebook', email));
-    
-    const appId = process.env.FACEBOOK_APP_ID;
-    const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/facebook/callback`);
-    res.redirect(`https://www.facebook.com/v12.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirectUri}&scope=email,public_profile`);
+  const { email } = req.query;
+  if (!process.env.FACEBOOK_APP_ID) return res.send(devLoginTemplate('Facebook', email));
+
+  const appId = process.env.FACEBOOK_APP_ID;
+  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/facebook/callback`);
+  res.redirect(`https://www.facebook.com/v12.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirectUri}&scope=email,public_profile`);
 });
 
 router.get("/discord", (req, res) => {
-    const { email } = req.query;
-    if (!process.env.DISCORD_CLIENT_ID) return res.send(devLoginTemplate('Discord', email));
-    
-    const clientId = process.env.DISCORD_CLIENT_ID;
-    const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/discord/callback`);
-    res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=identify%20email`);
+  const { email } = req.query;
+  if (!process.env.DISCORD_CLIENT_ID) return res.send(devLoginTemplate('Discord', email));
+
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/discord/callback`);
+  res.redirect(`https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=identify%20email`);
 });
 
 router.get("/microsoft", (req, res) => {
-    const { email } = req.query;
-    if (!process.env.MICROSOFT_CLIENT_ID) return res.send(devLoginTemplate('Microsoft', email));
-    
-    const clientId = process.env.MICROSOFT_CLIENT_ID;
-    const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/microsoft/callback`);
-    res.redirect(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&response_mode=query&scope=openid%20profile%20email`);
+  const { email } = req.query;
+  if (!process.env.MICROSOFT_CLIENT_ID) return res.send(devLoginTemplate('Microsoft', email));
+
+  const clientId = process.env.MICROSOFT_CLIENT_ID;
+  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL}/api/auth/microsoft/callback`);
+  res.redirect(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&response_mode=query&scope=openid%20profile%20email`);
 });
 
 router.get("/apple", (req, res) => {
-    const { email } = req.query;
-    // Apple always redirects to simulation until real keys provided (requires complex private key setup)
-    res.send(devLoginTemplate('Apple', email));
+  const { email } = req.query;
+  // Apple always redirects to simulation until real keys provided (requires complex private key setup)
+  res.send(devLoginTemplate('Apple', email));
 });
 
 router.get("/twitter", (req, res) => {
-    const { email } = req.query;
-    res.send(devLoginTemplate('Twitter', email));
+  const { email } = req.query;
+  res.send(devLoginTemplate('Twitter', email));
 });
 
 router.get("/linkedin", (req, res) => {
-    const { email } = req.query;
-    res.send(devLoginTemplate('LinkedIn', email));
+  const { email } = req.query;
+  res.send(devLoginTemplate('LinkedIn', email));
 });
 
 // --- Unified Callback Handler ---
 router.get("/:provider/callback", async (req, res) => {
-    const { provider } = req.params;
-    const { code, email: simEmail } = req.query;
+  const { provider } = req.params;
+  const { code, email: simEmail } = req.query;
 
-    try {
-        let profile;
+  try {
+    let profile;
 
-        // 1. Check if it's a simulation success
-        if (code === 'sim_success') {
-            profile = {
-                provider,
-                providerId: 'sim_' + Date.now(),
-                name: simEmail ? simEmail.split('@')[0].toUpperCase() : 'SIM USER',
-                email: simEmail,
-                picture: `https://ui-avatars.com/api/?name=${encodeURIComponent(simEmail)}&background=random`
-            };
-        } 
-        // 2. Real OAuth Handshake
-        else if (code) {
-            if (provider === 'github') profile = await fetchGitHubProfile(code);
-            else if (provider === 'discord') profile = await fetchDiscordProfile(code);
-            else if (provider === 'facebook') profile = await fetchFacebookProfile(code);
-            else if (provider === 'microsoft') {
-                // Microsoft logic placeholder - similar to others
-                profile = { provider, providerId: 'ms_' + Date.now(), email: req.query.email || 'ms@test.com', name: 'MS User' };
-            }
-            else throw new Error(`Handshake not implemented for ${provider}`);
-        } else {
-            throw new Error("Missing authorization code");
-        }
-
-        if (!profile) throw new Error("Could not retrieve user profile from provider");
-
-        // 3. Process User in DB & Redirect
-        return handleSocialUser(profile, res);
-
-    } catch (err) {
-        console.error(`[Callback Error] ${provider}:`, err.message);
-        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-        return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(err.message)}`);
+    // 1. Check if it's a simulation success
+    if (code === 'sim_success') {
+      profile = {
+        provider,
+        providerId: 'sim_' + Date.now(),
+        name: simEmail ? simEmail.split('@')[0].toUpperCase() : 'SIM USER',
+        email: simEmail,
+        picture: `https://ui-avatars.com/api/?name=${encodeURIComponent(simEmail)}&background=random`
+      };
     }
+    // 2. Real OAuth Handshake
+    else if (code) {
+      if (provider === 'github') profile = await fetchGitHubProfile(code);
+      else if (provider === 'discord') profile = await fetchDiscordProfile(code);
+      else if (provider === 'facebook') profile = await fetchFacebookProfile(code);
+      else if (provider === 'microsoft') {
+        // Microsoft logic placeholder - similar to others
+        profile = { provider, providerId: 'ms_' + Date.now(), email: req.query.email || 'ms@test.com', name: 'MS User' };
+      }
+      else throw new Error(`Handshake not implemented for ${provider}`);
+    } else {
+      throw new Error("Missing authorization code");
+    }
+
+    if (!profile) throw new Error("Could not retrieve user profile from provider");
+
+    // 3. Process User in DB & Redirect
+    return handleSocialUser(profile, res);
+
+  } catch (err) {
+    console.error(`[Callback Error] ${provider}:`, err.message);
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+    return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(err.message)}`);
+  }
 });
 
 router.post("/google", async (req, res) => {
@@ -673,7 +688,7 @@ router.post("/google", async (req, res) => {
       profile.providerId = userInfoRes.data.sub;
     }
 
-    return handleSocialUser(profile, res);
+    return handleSocialUser(profile, res, false);
   } catch (error) {
     res.status(500).json({ error: "Google Authentication failed" });
   }
@@ -684,7 +699,7 @@ router.post("/social-login", async (req, res) => {
   if (!provider || !providerId) {
     return res.status(400).json({ error: "Provider info is missing" });
   }
-  return handleSocialUser({ email, name, picture, provider, providerId }, res);
+  return handleSocialUser({ email, name, picture, provider, providerId }, res, false);
 });
 
 
