@@ -1,6 +1,6 @@
 import { generativeModel, genAIInstance, modelName } from '../config/vertex.js';
 import { HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
-import { BRAND_SYSTEM_RULES } from '../utils/brandIdentity.js';
+import { BRAND_SYSTEM_RULES, AISA_CONVERSATIONAL_RULES } from '../utils/brandIdentity.js';
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
 import logger from '../utils/logger.js';
@@ -134,9 +134,8 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
 
         if (!systemInstruction) {
-            systemInstruction = `You are AISA™, the official AI assistant of the AISA™ platform.
+            systemInstruction = `${AISA_CONVERSATIONAL_RULES}
 ${dateContext}
-            
 ${BRAND_SYSTEM_RULES}`;
         } else {
             // Append date context even to custom instructions for reference

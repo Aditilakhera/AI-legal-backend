@@ -50,6 +50,9 @@ const PORT = process.env.PORT || 8080;
 connectDB().then(async () => {
   console.log("Database connection attempt finished, initializing services...");
   try {
+    const { initializeConfigs } = await import('./services/configService.js');
+    await initializeConfigs();
+
     const { initializeFromDB } = await import('./services/ai.service.js');
     await initializeFromDB();
     console.log("✅ AI Services (Embeddings & Vector Store) pre-initialized.");
@@ -125,6 +128,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', dashboardRoutes);
 
 // Admin Panel (Admin only)
+import adminConfigRoutes from './routes/adminConfigRoutes.js';
+app.use('/api/admin', adminConfigRoutes);
 app.use('/api/admin', adminRoutes);
 
 // AIBASE (V3) - With Credit System

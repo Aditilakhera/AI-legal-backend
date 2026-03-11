@@ -9,7 +9,7 @@ import path from 'path';
 import * as vertexService from './vertex.service.js';
 import * as openaiService from './openai.service.js';
 import * as webSearchService from './webSearch.service.js';
-import { BRAND_SYSTEM_RULES } from '../utils/brandIdentity.js';
+
 
 
 // Initialize Groq Chat Model - REMOVED (Replaced by groq.service.js)
@@ -122,7 +122,8 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 } else {
                     logger.warn("[WebSearch] Search yielded no results. Falling back to base AI.");
                     // FALLBACK: Get normal AI response but prepend a note
-                    const systemMsg = options.systemInstruction || "You are AISA, a helpful AI assistant.";
+                    const { getDynamicSystemInstruction } = await import('../config/vertex.js');
+                    const systemMsg = options.systemInstruction || getDynamicSystemInstruction();
                     const fallbackResponse = await openaiService.askOpenAI(message, activeDocContent, {
                         systemInstruction: systemMsg,
                         mode,
@@ -180,7 +181,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 logger.info(`[Vertex RAG] Found relevant context for query.`);
 
                 // Grounding prompt for Vertex RAG results
-                const groundedContext = "SOURCE: VERTEX AI KNOWLEDGE BASE\nIMPORTANT: Use the information below ONLY if it directly answers the user's question about the company (UWO/AI Mall). If the question is general, prioritize general intelligence.\n\n" + ragContext;
+                const groundedContext = "SOURCE: VERTEX AI KNOWLEDGE BASE\nIMPORTANT: Use the information below as your PRIMARY source. If the information is not found here and it's about the company or AISA, follow the provided fallback instructions.\n\n" + ragContext;
 
                 // Answer using retrieved context - Routing to OpenAI
                 const ragResponse = await openaiService.askOpenAI(message, groundedContext, { userName });

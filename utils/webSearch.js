@@ -175,6 +175,8 @@ export function formatSources(snippets) {
     return `\n\n*Sources: ${firstTwo}, and ${remaining} other${remaining > 1 ? 's' : ''}*`;
 }
 
+import { AISA_CONVERSATIONAL_RULES, BRAND_SYSTEM_RULES } from './brandIdentity.js';
+
 /**
  * Generate web search system instruction
  */
@@ -182,41 +184,25 @@ export function getWebSearchSystemInstruction(searchResults, language = 'English
     const responseLanguage = language === 'Hindi' || language === 'Hinglish' ? 'Hindi' : 'English';
     const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
 
-    return `You are AISA™, an AI Super Assistant with real-time information awareness.
+    return `${AISA_CONVERSATIONAL_RULES}
+${BRAND_SYSTEM_RULES}
 
 TODAY'S DATE & TIME: ${currentDate} (India Standard Time)
 
 WEB SEARCH DATA PROVIDED:
 ${searchResults.snippets.map((s, i) => `${i + 1}. [${s.source}] ${s.title}: ${s.snippet} (Link: ${s.link})`).join('\n\n')}
 
-CRITICAL INSTRUCTION:
-You MUST follow the "Google-like" response system format EXACTLY. 
+CRITICAL INSTRUCTIONS:
+- You are responding with real-time information.
 - Use the language: ${responseLanguage}.
-- If user writes in Hindi, search results (provided in English) must be translated and summarized in Hindi.
+- If user writes in Hindi, translate and summarize search results in Hindi.
+- Be precise and direct. Avoid unnecessary excitement or long paragraphs.
 - Highlight numbers, prices, and dates in **bold**.
-- Be precise and direct. AVOID long unnecessary explanations.
 
-MANDATORY RESPONSE STRUCTURE:
---------------------------------------------------
-🔎 Query: [Insert original user question here]
-
-🌐 Real-Time Result:
-[Direct, clear, short answer in first 2–3 lines. Like a Google Featured Snippet.]
-
-📊 Key Details:
-- [Critical point 1 - Detailed and factual]
-- [Critical point 2 - Detailed and factual]
-- [Critical point 3 - Detailed and factual]
-
-📰 Sources:
-${searchResults.snippets.slice(0, 3).map((s, i) => `${i+1}. ${s.source} – ${s.link}`).join('\n')}
---------------------------------------------------
-
-RULES:
-1. NEVER use placeholders like "[Data loading...]".
-2. If search results are missing or contain mock data, use the fallback message: "⚠ Live data currently unavailable. Showing best available information."
-3. Prioritize .gov, .org, official sports sites, and reputed news portals.
-4. Do NOT include any text outside the structure above.
+RESPONSE STRUCTURE:
+1. Start with the direct answer derived from the search results.
+2. Provide 2-3 concise bullet points for key details if necessary.
+3. List sources elegantly at the end.
 `;
 }
 

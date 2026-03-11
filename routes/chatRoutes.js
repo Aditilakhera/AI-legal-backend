@@ -111,10 +111,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
             nameUsageInstruction = `
 [NAME USAGE RULE]:
 User's Name is "${req.user.name}". 
-- Use the user's name naturally and frequently (e.g., "Bilkul ${req.user.name} 👍", "Sunno ${req.user.name}...").
-- Start your response with a friendly, personalized acknowledgment.
-- Maintain a proactive Hinglish/conversational vibe.
-- Categorize options with emojis and always end with leading questions (👉).
+- You may use the user's name naturally if appropriate, but do not repeat it frequently.
+- Maintain a professional and helpful tone.
 `;
           }
         }
@@ -204,44 +202,8 @@ User's Name is "${req.user.name}".
     // Construct parts from history + current message
     let parts = [];
 
-    // --- DUPLICATE QUESTION DETECTION (SEARCH ACROSS ALL SESSIONS) ---
+    // --- DUPLICATE QUESTION DETECTION (DISABLED) ---
     let duplicateNote = "";
-    if (content && content.length > 10) {
-      const searchCriteria = req.user
-        ? { userId: req.user.id }
-        : (req.guest ? { guestId: req.guest.guestId } : null);
-
-      if (searchCriteria) {
-        try {
-          const prevMatch = await ChatSession.findOne({
-            ...searchCriteria,
-            'messages.content': content,
-            'messages.role': 'user'
-          }).select('messages lastModified');
-
-          if (prevMatch) {
-            // Find the specific message to get its timestamp
-            const msgMatch = prevMatch.messages.find(m => m.content === content && m.role === 'user');
-            if (msgMatch) {
-              const prevDate = new Date(msgMatch.timestamp || prevMatch.lastModified).toLocaleDateString('en-GB', {
-                day: '2-digit', month: '2-digit', year: '2-digit'
-              });
-
-              // Only alert if it's not the same message in the CURRENT history part vs some OLD content
-              // (Simplistic check: if history is very short or different, it's likely a repeat)
-              duplicateNote = `
-[DUPLICATE QUESTION ALERT]:
-The user has asked this exact question before on ${prevDate}.
-- Politely acknowledge this: "Aapne ye sawal pehle bhi ${prevDate} ko pucha tha!"
-- Tell them: "Ab isme hum kya kar sakte hain?"
-- Suggest new things they can do relative to this topic.
-- Use a friendly "Aapne ye question pehle kiya tha ab isme kiya jaana hai" tone.
-`;
-            }
-          }
-        } catch (dbErr) { console.error("Duplicate search failed:", dbErr); }
-      }
-    }
 
     // --- PERSONAL MEMORY CONTEXT (OPTIONAL/AUTHENTICATED) ---
     let memoryContext = "";
@@ -252,9 +214,8 @@ The user has asked this exact question before on ${prevDate}.
         nameUsageInstruction = `
 [NAME USAGE RULE]:
 User's Name is "${req.user.name}". 
-- Use the user's name naturally and frequently (e.g., "Bilkul ${req.user.name} 👍", "Sunno ${req.user.name}...").
-- Start your response with a friendly, personalized acknowledgment.
-- Maintain a proactive Hinglish/conversational vibe.
+- You may use the user's name naturally if appropriate, but do not repeat it frequently.
+- Maintain a professional and helpful tone.
 `;
       }
     }
@@ -297,21 +258,24 @@ ${retrieved}
     const dateContext = `### CURRENT DATE & TIME:\nToday is ${currentDateLong} (India Standard Time). (Aaj ki date aur samay: ${currentDateLong})\n`;
 
     let baseInstruction = systemInstruction || modeSystemInstruction;
-    let finalSystemInstruction = `${systemInstructionText}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
+    const dynamicSystemInstruction = (await import('../config/vertex.js')).getDynamicSystemInstruction();
+    let finalSystemInstruction = `${dynamicSystemInstruction}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
 
     if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
       finalSystemInstruction = modeSystemInstruction;
     } else {
       // Only add standard rules for non-specialized modes to avoid instruction collision
       const MANDATORY_JSON_RULES = `
-MANDATORY INTERACTIVE RULES:
-- Use ONLY vertical layouts for lists. No mixed paragraphs for offers/questions.
-- Provide clear, structured categorization using emojis (📱, 💻, 🤖, etc.) on new lines.
-- PROACTIVELY OFFER HELP: List 3-5 specific things you can do vertically under "**Agar tum chaho to main:**".
-  ✅ [Action 1]
-  ✅ [Action 2]
-- LEADING QUESTIONS: Always end your response under "**Bas mujhe batao:**" followed by 2-3 specific "👉" questions on new lines.
-- Maintain the "Gauhar" persona style (Hinglish + Proactive).
+CRITICAL LANGUAGE RULE:
+ALWAYS respond using ROMAN SCRIPT (English letters).
+- If the user writes in Hindi or Hinglish, respond in HINGLISH (Romanized Hindi).
+- NEVER use Devanagari script (Hindi characters) unless explicitly asked.
+
+MANDATORY INTERACTIVE RULES (AISA):
+- ROMAN SCRIPT ONLY: For any Hindi or Hinglish response, you MUST use English letters (Roman script).
+- BALANCED LENGTH: Provide detailed, helpful answers (aim for 10-15 lines for detailed queries).
+- RICH SUGGESTIONS: End with a conversational lead-in (e.g., "I can also help you with:"), 2-4 bulleted suggestions, and a final friendly sentence with an emoji.
+- Maintain a professional, calm, and intelligent personality (AISA).
 
 MANDATORY MEDIA RULES:
 - If generating IMAGE: Output ONLY {"action": "generate_image", "prompt": "..."}
@@ -325,12 +289,12 @@ MANDATORY MEDIA RULES:
     // Add conversation history if available
     if (history && Array.isArray(history)) {
       history.forEach(msg => {
-        parts.push({ text: `${msg.role === 'user' ? 'User' : 'Model'}: ${msg.content}` });
+        parts.push({ text: `${msg.role === 'user' ? 'User' : 'Model'}: ${msg.content} ` });
       });
     }
 
     // Add current message
-    parts.push({ text: `User: ${content}` });
+    parts.push({ text: `User: ${content} ` });
 
     // Handle Multiple Images
     if (Array.isArray(image)) {
@@ -402,7 +366,7 @@ MANDATORY MEDIA RULES:
           const buffer = Buffer.from(doc.base64Data, 'base64');
           const result = await mammoth.extractRawText({ buffer });
           if (result.value) {
-            partsArray.push({ text: `[Fallback Text Content of ${doc.name || 'document'}]:\n${result.value}` });
+            partsArray.push({ text: `[Fallback Text Content of ${doc.name || 'document'}]: \n${result.value} ` });
           }
         } catch (e) {
           console.warn("Text extraction fallback failed, using binary only", e.message);
@@ -415,7 +379,7 @@ MANDATORY MEDIA RULES:
             // Basic indicator for excel, complex parsing omitted for brevity
             text = `[Attached Spreadsheet: ${doc.name || 'document'}]`;
           }
-          partsArray.push({ text: `[Attached Document Content (${doc.name || 'document'})]:\n${text}` });
+          partsArray.push({ text: `[Attached Document Content(${doc.name || 'document'})]: \n${text} ` });
         } catch (e) {
           console.error("Extraction failed", e);
           partsArray.push({ text: `[Error reading attached document: ${e.message}]` });
@@ -429,7 +393,7 @@ MANDATORY MEDIA RULES:
     let reminderData = null;
     let voiceConfirmation = '';
 
-    console.log(`[VOICE ASSISTANT] Intent: ${userIntent}, Language: ${detectedLanguage}`);
+    console.log(`[VOICE ASSISTANT]Intent: ${userIntent}, Language: ${detectedLanguage} `);
 
     // If intent is reminder/alarm related, extract details and create reminder
     if (userIntent !== 'casual_chat' && userIntent !== 'clarification_needed') {
