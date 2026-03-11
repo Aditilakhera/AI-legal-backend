@@ -166,10 +166,11 @@ app.use((err, req, res, next) => {
 });
 
 // Start listening
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`AISA Backend running on http://localhost:${PORT}`);
-
 });
+server.timeout = 900000; // 15 mins
+
 
 // Keep process alive for local development
 setInterval(() => { }, 1000 * 60 * 60); // Keep alive process
