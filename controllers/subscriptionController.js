@@ -35,7 +35,7 @@ export const getCreditLogs = async (req, res) => {
         const logs = await CreditLog.find({ userId })
             .sort({ createdAt: -1 })
             .limit(50);
-        
+
         res.status(200).json({
             success: true,
             logs
@@ -73,9 +73,9 @@ export const createOrder = async (req, res) => {
         };
 
         const order = await razorpay.orders.create(options);
-        res.status(200).json({ 
-            success: true, 
-            order, 
+        res.status(200).json({
+            success: true,
+            order,
             key: process.env.RAZORPAY_KEY_ID || 'rzp_test_dummy'
         });
     } catch (error) {
@@ -103,22 +103,40 @@ export const purchasePlan = async (req, res) => {
 
         await Subscription.updateMany({ userId, subscriptionStatus: 'active' }, { subscriptionStatus: 'cancelled' });
 
-        const addCredits = plan.credits;
+        let finalCredits = plan.credits;
         const isFirstPurchase = await Subscription.countDocuments({ userId }) === 0;
-        let finalCredits = addCredits;
-        if (isFirstPurchase && plan.planName !== 'Founder Plan') {
+
+        // Give extra credits for the very first purchase (excluding Founder)
+        if (isFirstPurchase && !plan.planName.toLowerCase().includes('founder')) {
             finalCredits += finalCredits * 0.5;
         }
 
-        user.credits = finalCredits; 
-        
+        // Apply 12x credits if yearly is selected (except for Free and Founder Plan)
+        if (billingCycle === 'yearly' && plan.priceMonthly > 0 && !plan.planName.toLowerCase().includes('founder')) {
+            finalCredits = finalCredits * 12;
+        }
+
+        user.credits = finalCredits;
+
+        let renewalDate = new Date();
+        if (plan.planName.toLowerCase().includes('founder')) {
+            // Lifetime validity (100 years)
+            renewalDate.setFullYear(renewalDate.getFullYear() + 100);
+        } else if (billingCycle === 'yearly') {
+            // Full 1 Year (12 months) validity
+            renewalDate.setMonth(renewalDate.getMonth() + 12);
+        } else {
+            // 1 Month validity
+            renewalDate.setMonth(renewalDate.getMonth() + 1);
+        }
+
         const newSubscription = await Subscription.create({
             userId,
             planId: plan._id,
             creditsRemaining: finalCredits,
             billingCycle,
             subscriptionStart: new Date(),
-            renewalDate: new Date(new Date().setMonth(new Date().getMonth() + (billingCycle === 'yearly' ? 12 : 1))),
+            renewalDate,
             subscriptionStatus: 'active',
             paymentId: "mock_payment_id_for_now"
         });
