@@ -111,14 +111,17 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             const needsSearch = isForcedSearch || await webSearchService.shouldSearch(message);
             if (needsSearch) {
                 logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
-                const searchResults = await webSearchService.performSearch(message);
-                if (searchResults && searchResults.length > 0) {
-                    const finalResult = await webSearchService.summarizeResults(message, searchResults, language || 'English');
+                const searchResult = await webSearchService.performSearch(message, language);
 
+                if (searchResult && searchResult.summary) {
                     // Cache the result
-                    searchCache.set(cacheKey, { result: finalResult, timestamp: Date.now() });
+                    searchCache.set(cacheKey, { result: searchResult, timestamp: Date.now() });
 
-                    return { text: finalResult.summary, isRealTime: true, sources: finalResult.sources };
+                    return {
+                        text: searchResult.summary,
+                        isRealTime: true,
+                        sources: searchResult.sources
+                    };
                 } else {
                     logger.warn("[WebSearch] Search yielded no results. Falling back to base AI.");
                     // FALLBACK: Get normal AI response but prepend a note
