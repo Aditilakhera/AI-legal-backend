@@ -264,8 +264,12 @@ ${retrieved}
     if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
       finalSystemInstruction = modeSystemInstruction;
     } else {
+      // Check if the user explicitly activated image/video generation mode
+      const isImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+      const isVideoMode = mode === 'VIDEO_GEN';
+
       // Only add standard rules for non-specialized modes to avoid instruction collision
-      const MANDATORY_JSON_RULES = `
+      let MANDATORY_JSON_RULES = `
 CRITICAL LANGUAGE RULE:
 ALWAYS respond using ROMAN SCRIPT (English letters).
 - If the user writes in Hindi or Hinglish, respond in HINGLISH (Romanized Hindi).
@@ -276,10 +280,17 @@ MANDATORY INTERACTIVE RULES (AISA):
 - BALANCED LENGTH: Provide detailed, helpful answers (aim for 10-15 lines for detailed queries).
 - RICH SUGGESTIONS: End with a conversational lead-in (e.g., "I can also help you with:"), 2-4 bulleted suggestions, and a final friendly sentence with an emoji.
 - Maintain a professional, calm, and intelligent personality (AISA).
+`;
 
+      // MEDIA RULES: Only include generation actions when user explicitly asks with clear intent keywords
+      MANDATORY_JSON_RULES += `
 MANDATORY MEDIA RULES:
-- If generating IMAGE: Output ONLY {"action": "generate_image", "prompt": "..."}
-- If generating VIDEO: Output ONLY {"action": "generate_video", "prompt": "..."}
+- You can ONLY generate images or videos when the user EXPLICITLY asks you to CREATE/GENERATE/MAKE an image or video.
+- Explicit trigger words for IMAGE generation: "generate image", "create image", "make image", "draw", "banao image", "photo banao", "image generate karo", "create a picture", "make a photo"
+- Explicit trigger words for VIDEO generation: "generate video", "create video", "make video", "video banao", "video generate karo"
+- If the user sends a DESCRIPTIVE TEXT (like "A cinematic scene of...", "A beautiful sunset...", etc.) WITHOUT explicitly asking to generate/create/make an image, treat it as a NORMAL TEXT prompt and respond with TEXT ONLY. Do NOT auto-generate images for descriptive prompts.
+- If generating IMAGE (only when explicitly asked): Output ONLY {"action": "generate_image", "prompt": "..."}
+- If generating VIDEO (only when explicitly asked): Output ONLY {"action": "generate_video", "prompt": "..."}
 `;
 
       finalSystemInstruction = `${finalSystemInstruction}\n\n${MANDATORY_JSON_RULES}`;
