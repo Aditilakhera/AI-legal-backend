@@ -35,6 +35,12 @@ const messageSchema = new mongoose.Schema({
     charCount: Number
   },
   isProcessing: Boolean,
+  isRealTime: { type: Boolean, default: false },
+  sources: [{
+    title: String,
+    url: String,
+    description: String
+  }],
   agentName: String,
   agentCategory: String
 });
