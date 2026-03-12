@@ -1,4 +1,3 @@
-import google from 'googlethis';
 import logger from '../utils/logger.js';
 import axios from 'axios';
 import dotenv from 'dotenv';
@@ -9,9 +8,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 /**
  * Detects if a query requires real-time information.
+ * Uses a small model to save costs.
  */
 export const shouldSearch = async (query) => {
     try {
+        if (!OPENAI_API_KEY) return false;
+
         const response = await axios.post(
             'https://api.openai.com/v1/chat/completions',
             {
@@ -21,24 +23,8 @@ export const shouldSearch = async (query) => {
                         role: 'system',
                         content: `You are a real-time information detector. 
                         Today is ${new Date().toDateString()}.
-                        Analyze the user's query and determine if it requires up-to-date, live, or real-time information from the web.
-                        TODAY IS: ${new Date().toDateString()}
-                        
-                        EXAMPLES REQUIRING WEB SEARCH (Respond YES):
-                        - Current events/news (e.g., "Aaj ki news", "what happened in Delhi today")
-                        - Live scores or sports updates (e.g., "India vs Pak score", "IPL update")
-                        - Market data (e.g., "Gold price today", "Bitcoin price", "Stock market status")
-                        - Weather or time (e.g., "Weather in Mumbai", "Current time in NY")
-                        - Recent product releases or trending topics.
-                        - Any query containing "today", "aaj", "live", "latest", "now", "current".
-                        
-                        EXAMPLES NOT REQUIRING WEB SEARCH (Respond NO):
-                        - Code snippets or help (e.g., "Write a python script", "fix this bug")
-                        - General knowledge/History (e.g., "Who was Einstein", "definition of gravity")
-                        - Personal opinions or greetings.
-                        - Math or logic puzzles.
-
-                        Respond ONLY with "YES" or "NO". Do NOT provide any explanation.`
+                        Analyze if the query requires up-to-date, live, or real-time information.
+                        Respond ONLY "YES" or "NO".`
                     },
                     { role: 'user', content: query }
                 ],
@@ -54,7 +40,7 @@ export const shouldSearch = async (query) => {
         );
 
         const decision = response.data.choices[0].message.content.trim().toUpperCase();
-        return decision.includes('YES');
+        return decision === 'YES';
     } catch (error) {
         logger.error(`[WebSearch] Detection Error: ${error.message}`);
         return false;
@@ -62,109 +48,92 @@ export const shouldSearch = async (query) => {
 };
 
 /**
- * Performs a web search and returns top results.
+ * Performs search using OpenAI GPT-4o Search Preview.
+ * This model inherently does the search and returns a grounded response.
  */
-export const performSearch = async (query) => {
+export const performSearch = async (query, userLanguage = 'English') => {
     try {
-        logger.info(`[WebSearch] Searching for: ${query}`);
-        const options = {
-            page: 0,
-            safe: true,
-            additional_params: {
-                hl: 'en'
-            }
-        };
+        logger.info(`[WebSearch] Calling OpenAI Search for query: "${query}"`);
 
-        const response = await google.search(query, options);
-
-        if (!response || !response.results || !Array.isArray(response.results)) {
-            logger.warn(`[WebSearch] No results array found in response for: ${query}`);
-            return [];
-        }
-
-        // Filter and format results
-        const results = response.results
-            .filter(r => r && r.title && r.url)
-            .filter(r => {
-                const lowerTitle = r.title.toLowerCase();
-                const lowerUrl = r.url.toLowerCase();
-                return !lowerUrl.includes('example.com') &&
-                    !lowerUrl.includes('test.com') &&
-                    !lowerTitle.includes('mock result') &&
-                    !r.description?.toLowerCase().includes('placeholder message');
-            })
-            .filter(r => !r.title.toLowerCase().includes('low-quality') && !r.url.toLowerCase().includes('spam'))
-            .slice(0, 5)
-            .map(r => ({
-                title: r.title,
-                url: r.url,
-                description: r.description || "No description available."
-            }));
-
-        logger.info(`[WebSearch] Found ${results.length} valid results after placeholder filtering.`);
-        return results;
-    } catch (error) {
-        logger.error(`[WebSearch] Search Error: ${error.message}`);
-        return [];
-    }
-};
-
-/**
- * Summarizes search results in the requested language.
- */
-export const summarizeResults = async (query, searchResults, userLanguage = 'English') => {
-    try {
-        const resultsContext = searchResults.map((r, i) =>
-            `Source [${i + 1}]: ${r.title}\nURL: ${r.url}\nContent: ${r.description}`
-        ).join('\n\n');
-
+        const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
         const isHindi = userLanguage === 'Hindi' || /[\u0900-\u097F]/.test(query);
         const targetLang = isHindi ? 'Hindi' : 'English';
 
-        const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+        if (!OPENAI_API_KEY) {
+            logger.error('[WebSearch] OPENAI_API_KEY is missing!');
+            return null;
+        }
+
+        const modelName = 'gpt-4o-search-preview';
+        logger.info(`[WebSearch] Calling OpenAI with model: ${modelName}`);
 
         const response = await axios.post(
             'https://api.openai.com/v1/chat/completions',
             {
-                model: 'gpt-4o-mini',
+                model: modelName,
                 messages: [
                     {
                         role: 'system',
-                        content: `You are a helpful assistant that summarizes web search results.
+                        content: `You are AISA, an advanced AI with real-time web search capabilities.
                         TODAY'S DATE: ${currentDate}
                         
-                        Summarize the following search results for the user's query.
-                        - Language: ${targetLang} (If Hindi, use natural and simple Hindi).
-                        - Provide a concise yet informative answer.
-                        - IMPORTANT: Today is ${currentDate}. If search results mention a different year or date as "today", IGNORE THEM and use the absolute current date provided here.
-                        - Cite sources as [1], [2], etc. inside the text.
-                        - IF results contain only placeholders, mock data, or messages like "enable search", DISREGARD THEM and say "Mujhe abhi live market data ya live information nahi mil pa rahi hai." (I am unable to find live market data or information right now).
-                        - DO NOT invent data. If you are not sure, state it clearly.
-                        - Do NOT include a separate "Sources:" or URL list at the bottom of your text.
-                        - Handle conflicting data by mentioning both perspectives if both sources are reliable.`
+                        - Task: Provide a comprehensive, accurate answer to the user's query using your built-in search tool.
+                        - Language: ${targetLang} (Use natural, professional ${targetLang}).
+                        - Citations: Cite your sources clearly using [1], [2], etc.
+                        - Veracity: If information is conflicting, mention both sides.
+                        - Fallback: If no live data is found, state it clearly but answer based on your knowledge.
+                        
+                        Respond in a way that feels like a premium search experience.`
                     },
-                    {
-                        role: 'user',
-                        content: `Query: ${query}\n\nResults:\n${resultsContext}`
-                    }
-                ],
-                max_tokens: 1000,
-                temperature: 0.5
+                    { role: 'user', content: query }
+                ]
+                // Note: No 'tools' parameter needed for gpt-4o-search-preview as it's built-in
             },
             {
                 headers: {
                     'Authorization': `Bearer ${OPENAI_API_KEY}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 90000 // 90s timeout for search
             }
         );
 
-        return {
-            summary: response.data.choices[0].message.content,
-            sources: searchResults
-        };
+        if (response.data && response.data.choices && response.data.choices[0]) {
+            const message = response.data.choices[0].message;
+            const content = message.content;
+
+            // Extract sources from citations or sources field
+            let sources = [];
+            const rawSources = message.sources || message.citations;
+
+            if (rawSources && Array.isArray(rawSources)) {
+                sources = rawSources.map(c => ({
+                    title: c.title || "Source",
+                    url: c.url,
+                    description: c.snippet || c.description || ""
+                }));
+            }
+
+            return {
+                summary: content,
+                sources: sources
+            };
+        }
+
+        throw new Error('No response from search-preview model');
+
     } catch (error) {
-        logger.error(`[WebSearch] Summarization Error: ${error.message}`);
-        return { summary: "Live data unavailable.", sources: [] };
+        logger.error(`[WebSearch] Search Error: ${error.response?.data?.error?.message || error.message}`);
+        return null;
     }
+};
+
+/**
+ * Compatibility wrapper for existing ai.service.js calls.
+ */
+export const summarizeResults = async (query, searchResponse) => {
+    if (searchResponse && searchResponse.summary) {
+        return searchResponse;
+    }
+    return { summary: "Live search results could not be summarized.", sources: [] };
 };

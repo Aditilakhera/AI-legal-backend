@@ -20,6 +20,7 @@ import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memo
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
 import { retrieveContextFromRag } from "../services/vertex.service.js";
 import Knowledge from "../models/Knowledge.model.js";
+import * as webSearchService from "../services/webSearch.service.js";
 
 import axios from "axios";
 
@@ -94,9 +95,78 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       }
     }
 
+    // --- WEB SEARCH MAGIC TOOL (PRIORITY) ---
+    console.log("[DEBUG] Starting Web Search check...");
+    let searchResult = null;
+    let isWebSearchResponse = false;
+    let searchSources = [];
+    const isDeepSearch = (systemInstruction && systemInstruction.includes('DEEP SEARCH MODE ENABLED')) || mode === 'DEEP_SEARCH';
+
+    // Auto web search from keywords is only available to premium users
+    let hasPremium = false;
+    if (req.user) {
+      try {
+        hasPremium = await checkPremiumAccess(req.user.id || req.user._id);
+      } catch (e) {
+        console.error("Error checking premium status for search:", e);
+      }
+    }
+
+    // Determine mode for search logic - DECLARE THESE AT THE TOP
+    const allAttachments = [];
+    if (Array.isArray(image)) allAttachments.push(...image);
+    else if (image) allAttachments.push(image);
+    if (Array.isArray(document)) allAttachments.push(...document);
+    else if (document) allAttachments.push(document);
+    if (Array.isArray(video)) allAttachments.push(...video);
+    else if (video) allAttachments.push(video);
+
+    let detectedMode = mode || detectMode(content, allAttachments);
+    if (detectedMode === 'DOCUMENT_CONVERT') detectedMode = 'FILE_CONVERSION';
+
+    // FINAL DECISION: Strictly use web search ONLY if the user explicitly selected the card
+    // mode will be 'web_search' or 'DEEP_SEARCH' only if the card is active in frontend
+    const isExplicitSearchCard = (mode === 'web_search' || mode === 'DEEP_SEARCH' || detectedMode === 'web_search' || detectedMode === 'DEEP_SEARCH');
+    const shouldDoWebSearch = isDeepSearch || isExplicitSearchCard;
+
+    console.log(`[DEBUG] SEARCH DECISION: isDeepSearch=${isDeepSearch}, mode=${mode}, detectedMode=${detectedMode}, hasPremium=${hasPremium}, shouldDoWebSearch=${shouldDoWebSearch}`);
+
+    if (shouldDoWebSearch) {
+      console.log(`[WEB SEARCH] Executing real-time search for query: "${content.substring(0, 50)}..."`);
+      try {
+        searchResult = await webSearchService.performSearch(content, language || 'English');
+
+        console.log(`[DEBUG] searchResult status: ${searchResult ? 'SUCCESS' : 'FAILED/NULL'} (Summary Length: ${searchResult?.summary?.length || 0})`);
+
+        if (searchResult && searchResult.summary) {
+          console.log(`[WEB SEARCH] Search results obtained via GPT-4o.`);
+          isWebSearchResponse = true;
+          searchSources = searchResult.sources || [];
+          let searchReply = searchResult.summary;
+
+          // Return immediately if search succeeded to prevent falling through to model generation
+          const finalSearchResponse = {
+            reply: searchReply,
+            detectedMode,
+            isRealTime: true,
+            sources: searchSources,
+            language: language || 'English'
+          };
+
+          // --- CREDIT DEDUCTION ---
+          if (req.user) {
+            await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId || 'chat-' + Date.now());
+          }
+
+          return res.status(200).json(finalSearchResponse);
+        }
+      } catch (error) {
+        console.error('[WEB SEARCH ERROR]', error);
+      }
+    }
+    console.log("[DEBUG] Web Search check complete.");
+
     // --- UWO & AISA BRANDING CHECKS (DISABLED - HANDLED BY RAG) ---
-    // Previously, a hardcoded block here was returning early and preventing RAG from working.
-    // I have removed the early return so the AI can use the Vertex RAG documents instead.
 
     // --- MULTI-MODEL DISPATCHER ---
     if (model && !model.startsWith('gemini')) {
@@ -182,17 +252,6 @@ User's Name is "${req.user.name}".
         console.log(`Falling back to Gemini due to ${model} failure.`);
       }
     }
-    // Detect mode based on content and attachments
-    const allAttachments = [];
-    if (Array.isArray(image)) allAttachments.push(...image);
-    else if (image) allAttachments.push(image);
-    if (Array.isArray(document)) allAttachments.push(...document);
-    else if (document) allAttachments.push(document);
-    if (Array.isArray(video)) allAttachments.push(...video);
-    else if (video) allAttachments.push(video);
-
-    let detectedMode = mode || detectMode(content, allAttachments);
-    if (detectedMode === 'DOCUMENT_CONVERT') detectedMode = 'FILE_CONVERSION';
     const modeSystemInstruction = getModeSystemInstruction(detectedMode, language || 'English', {
       fileCount: allAttachments.length
     });
@@ -439,58 +498,6 @@ MANDATORY MEDIA RULES:
       }
     }
 
-    console.log("[DEBUG] Starting Web Search check...");
-    let searchResults = null;
-    let webSearchInstruction = '';
-    const isDeepSearch = systemInstruction && systemInstruction.includes('DEEP SEARCH MODE ENABLED');
-
-    // Auto web search from keywords is only available to premium users
-    let hasPremium = false;
-    if (req.user) {
-      try {
-        hasPremium = await checkPremiumAccess(req.user.id || req.user._id);
-      } catch (e) {
-        console.error("Error checking premium status for search:", e);
-      }
-    }
-
-    const isAutoSearch = requiresWebSearch(content);
-    // Execute search if explicitly requested (already billed) OR if auto-detected AND user has premium
-    const shouldDoWebSearch = isDeepSearch || detectedMode === 'web_search' || (isAutoSearch && hasPremium);
-
-    if (shouldDoWebSearch) {
-      console.log(`[WEB SEARCH] Query requires real-time information${isDeepSearch ? ' (Forced by Deep Search)' : ''}`);
-      try {
-        const searchQuery = extractSearchQuery(content);
-
-        // Check Cache
-        searchResults = getCachedSearch(searchQuery);
-
-        if (!searchResults) {
-          console.log(`[WEB SEARCH] Searching for: "${searchQuery}"`);
-          const rawSearchData = await performWebSearch(searchQuery, isDeepSearch ? 10 : 5);
-          if (rawSearchData) {
-            const limit = isDeepSearch ? 10 : 5;
-            searchResults = processSearchResults(rawSearchData, limit);
-            if (searchResults) setCachedSearch(searchQuery, searchResults);
-          }
-        }
-
-        if (searchResults) {
-          console.log(`[WEB SEARCH] Using results for: "${searchQuery}"`);
-          webSearchInstruction = getWebSearchSystemInstruction(searchResults, language || 'English', isDeepSearch);
-
-          // Inject search results and instructions directly into system instruction for maximum priority
-          finalSystemInstruction += `\n\n${webSearchInstruction}`;
-
-          // Also keep in parts for context history
-          parts.push({ text: `[REAL-TIME SEARCH RESULTS]:\n${JSON.stringify(searchResults.snippets)}` });
-        }
-      } catch (error) {
-        console.error('[WEB SEARCH ERROR]', error);
-      }
-    }
-    console.log("[DEBUG] Web Search check complete.");
 
     // --- VERTEX AI RAG INTEGRATION (ALREADY PROCESSED ABOVE) ---
 
@@ -705,10 +712,10 @@ MANDATORY MEDIA RULES:
       }
     };
 
-    // --- SKIP GENERATION IF CONVERSION SUCCESSFUL ---
-    if (conversionResult && conversionResult.success) {
-      console.log("[CHAT] Conversion successful, skipping text generation.");
-      reply = conversionResult.message || "Here is your converted document.";
+    // --- SKIP GENERATION IF CONVERSION OR SEARCH SUCCESSFUL ---
+    if ((conversionResult && conversionResult.success) || isWebSearchResponse) {
+      console.log(`[CHAT] ${isWebSearchResponse ? 'Search' : 'Conversion'} successful, skipping text generation.`);
+      if (!reply && conversionResult?.message) reply = conversionResult.message;
     } else {
       while (retryCount < maxRetries) {
         try {
@@ -734,6 +741,8 @@ MANDATORY MEDIA RULES:
     const finalResponse = {
       reply,
       detectedMode,
+      isRealTime: isWebSearchResponse,
+      sources: searchSources,
       language: detectedLanguage || language || 'English'
     };
 
@@ -1050,14 +1059,6 @@ MANDATORY MEDIA RULES:
       extractUserMemory(content, history).then(mem => updateMemory(req.user.id, mem, detectedMode));
     }
 
-    // Add Real-Time metadata
-    if (searchResults) {
-      finalResponse.isRealTime = true;
-      finalResponse.sources = (searchResults.snippets || []).map(s => ({
-        title: s.title,
-        url: s.link
-      }));
-    }
 
     return res.status(200).json(finalResponse);
   } catch (err) {
