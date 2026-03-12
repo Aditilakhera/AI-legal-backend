@@ -21,6 +21,7 @@ import { subscriptionService, checkPremiumAccess } from '../services/subscriptio
 import { retrieveContextFromRag } from "../services/vertex.service.js";
 import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
+import * as deepSearchService from "../services/deepSearch.service.js";
 
 import axios from "axios";
 
@@ -132,9 +133,15 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     console.log(`[DEBUG] SEARCH DECISION: isDeepSearch=${isDeepSearch}, mode=${mode}, detectedMode=${detectedMode}, hasPremium=${hasPremium}, shouldDoWebSearch=${shouldDoWebSearch}`);
 
     if (shouldDoWebSearch) {
-      console.log(`[WEB SEARCH] Executing real-time search for query: "${content.substring(0, 50)}..."`);
+      const isDeep = isDeepSearch || mode === 'DEEP_SEARCH' || detectedMode === 'DEEP_SEARCH';
+      console.log(`[SEARCH] Mode: ${isDeep ? 'DEEP RESEARCH' : 'WEB SEARCH'} | Query: "${content.substring(0, 50)}..."`);
+
       try {
-        searchResult = await webSearchService.performSearch(content, language || 'English');
+        if (isDeep) {
+          searchResult = await deepSearchService.performDeepSearch(content, language || 'English');
+        } else {
+          searchResult = await webSearchService.performSearch(content, language || 'English');
+        }
 
         console.log(`[DEBUG] searchResult status: ${searchResult ? 'SUCCESS' : 'FAILED/NULL'} (Summary Length: ${searchResult?.summary?.length || 0})`);
 
