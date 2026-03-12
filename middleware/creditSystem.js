@@ -21,22 +21,25 @@ const isFreeTierUser = async (userId) => {
 
 // Map URL → human-readable action label
 const getActionLabel = (url, body) => {
-    if (url.includes('/api/chat/realtime'))    return { action: 'realtime_chat', description: 'AISA Realtime Chat' };
+    if (url.includes('/api/chat/realtime')) return { action: 'realtime_chat', description: 'AISA Realtime Chat' };
     if (url.includes('/api/aibase/knowledge')) return { action: 'knowledge_base', description: 'AISA Knowledge Base' };
-    if (url.includes('/api/aibase/chat'))      return { action: 'agent_chat',    description: 'AISA Agent Chat' };
-    if (url.includes('/api/edit-image'))       return { action: 'edit_image',    description: 'AISA Edit Image' };
+    if (url.includes('/api/aibase/chat')) return { action: 'agent_chat', description: 'AISA Agent Chat' };
+    if (url.includes('/api/edit-image')) return { action: 'edit_image', description: 'AISA Edit Image' };
     if (url.includes('/api/image')) {
         const model = body?.modelId || '';
         const label = model.includes('ultra') ? 'AISA Image Ultra' : 'AISA Image HD';
         return { action: 'image', description: label };
     }
     if (url.includes('/api/video')) {
+        if (body?.isImageToVideo === 'true') {
+            return { action: 'video', description: 'Image to Video Magic' };
+        }
         const model = body?.modelId || '';
-        const res   = body?.resolution || '1080p';
+        const res = body?.resolution || '1080p';
         const label = model.includes('fast') ? `AISA Video Fast (${res})` : `AISA Video Pro (${res})`;
         return { action: 'video', description: label };
     }
-    if (url.includes('/api/chat'))             return { action: 'chat',          description: 'AISA Chat (Text)' };
+    if (url.includes('/api/chat')) return { action: 'chat', description: 'AISA Chat (Text)' };
     return { action: 'other', description: 'AISA Feature' };
 };
 
@@ -71,25 +74,29 @@ export const creditMiddleware = async (req, res, next) => {
     }
     // ── END FREE TIER GUARD ──────────────────────────────────────────────────
 
-    if (url.includes('/api/chat/realtime')) { 
-        cost = 15; 
-        isPremiumEndpoint = true; 
+    if (url.includes('/api/chat/realtime')) {
+        cost = 15;
+        isPremiumEndpoint = true;
     }
-    else if (url.includes('/api/aibase/chat') || url.includes('/api/aibase/knowledge')) { 
-        cost = 10; 
-        isPremiumEndpoint = true; 
+    else if (url.includes('/api/aibase/chat') || url.includes('/api/aibase/knowledge')) {
+        cost = 10;
+        isPremiumEndpoint = true;
     }
     else if (url.includes('/api/video')) {
-        const duration   = req.body?.duration || 5;
-        const modelId    = req.body?.modelId || 'veo-3.1-fast-generate-001';
-        const resolution = req.body?.resolution || '1080p';
-        let multiplier   = 800;
-        if (modelId === 'veo-3.1-fast-generate-001') {
-            multiplier = resolution === '4k' ? 700 : 300;
-        } else if (modelId === 'veo-3.1-generate-001') {
-            multiplier = resolution === '4k' ? 1200 : 800;
+        if (req.body?.isImageToVideo === 'true') {
+            cost = 50;
+        } else {
+            const duration = req.body?.duration || 5;
+            const modelId = req.body?.modelId || 'veo-3.1-fast-generate-001';
+            const resolution = req.body?.resolution || '1080p';
+            let multiplier = 800;
+            if (modelId === 'veo-3.1-fast-generate-001') {
+                multiplier = resolution === '4k' ? 700 : 300;
+            } else if (modelId === 'veo-3.1-generate-001') {
+                multiplier = resolution === '4k' ? 1200 : 800;
+            }
+            cost = multiplier * duration;
         }
-        cost = multiplier * duration;
         isPremiumEndpoint = true;
     }
     else if (url.includes('/api/image') || url.includes('/api/edit-image')) {
@@ -101,7 +108,7 @@ export const creditMiddleware = async (req, res, next) => {
     else if (url.includes('/api/chat')) {
         // Standard Text Chat (Gemini 2.5 Flash)
         // Average charge to user (50% margin): ~2 credits per message
-        cost = 2; 
+        cost = 2;
     }
 
     // Pass through if cost is still 0 (shouldn't happen for the above routes)
