@@ -6,6 +6,7 @@ const planSchema = new mongoose.Schema({
     priceMonthly: { type: Number, required: true },
     priceYearly: { type: Number, required: true },
     credits: { type: Number, required: true },
+    creditsYearly: { type: Number },
     features: [{ type: String }],
     badge: { type: String, default: "" },
     isPopular: { type: Boolean, default: false },
