@@ -103,7 +103,11 @@ export const purchasePlan = async (req, res) => {
 
         await Subscription.updateMany({ userId, subscriptionStatus: 'active' }, { subscriptionStatus: 'cancelled' });
 
-        let finalCredits = plan.credits;
+        // AWARD CREDITS: Use DB field if yearly, otherwise use monthly
+        let finalCredits = (billingCycle === 'yearly')
+            ? (plan.creditsYearly || plan.credits * 12)
+            : plan.credits;
+
         const isFirstPurchase = await Subscription.countDocuments({ userId }) === 0;
 
         // Give extra credits for the very first purchase (excluding Founder)
@@ -111,20 +115,16 @@ export const purchasePlan = async (req, res) => {
             finalCredits += finalCredits * 0.5;
         }
 
-        // Apply 12x credits if yearly is selected (except for Free and Founder Plan)
-        if (billingCycle === 'yearly' && plan.priceMonthly > 0 && !plan.planName.toLowerCase().includes('founder')) {
-            finalCredits = finalCredits * 12;
-        }
+        user.credits = Math.floor(finalCredits);
 
-        user.credits = finalCredits;
-
+        // VALIDITY: Calculate the Renewal/Expiry Date
         let renewalDate = new Date();
         if (plan.planName.toLowerCase().includes('founder')) {
             // Lifetime validity (100 years)
             renewalDate.setFullYear(renewalDate.getFullYear() + 100);
         } else if (billingCycle === 'yearly') {
             // Full 1 Year (12 months) validity
-            renewalDate.setMonth(renewalDate.getMonth() + 12);
+            renewalDate.setFullYear(renewalDate.getFullYear() + 1);
         } else {
             // 1 Month validity
             renewalDate.setMonth(renewalDate.getMonth() + 1);
@@ -133,7 +133,7 @@ export const purchasePlan = async (req, res) => {
         const newSubscription = await Subscription.create({
             userId,
             planId: plan._id,
-            creditsRemaining: finalCredits,
+            creditsRemaining: user.credits,
             billingCycle,
             subscriptionStart: new Date(),
             renewalDate,

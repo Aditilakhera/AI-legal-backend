@@ -5,6 +5,7 @@ const planSchema = new mongoose.Schema({
     planName: { type: String, required: true },
     priceMonthly: { type: Number, required: true },
     priceYearly: { type: Number, required: true },
+    priceYearlyPerMonth: { type: Number },
     credits: { type: Number, required: true },
     creditsYearly: { type: Number },
     features: [{ type: String }],
