@@ -98,7 +98,8 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
                 ]
             },
             query: {
-                text: query
+                text: query,
+                similarityTopK: topK
             }
         };
 
@@ -114,10 +115,32 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             return null;
         }
 
-        // Combine the context segments
-        const contextText = contexts.map(c => c.text).join('\n\n');
-        logger.info(`[Vertex RAG] Successfully retrieved ${contexts.length} context segments.`);
-        return contextText;
+        // Apply Confidence Logic (Filter out highly distant chunks if distance property exists)
+        // Distance is usually 0 to 1, where lower is better. We filter out chunks with distance > 0.8
+        const validContexts = contexts.filter(c => {
+            if (c.distance === undefined || c.distance === null) return true; // Keep if no distance metric
+            return c.distance < 0.8; // Reject low confidence chunks
+        });
+
+        if (validContexts.length === 0) {
+            logger.info(`[Vertex RAG] Found chunks but all were below confidence threshold.`);
+            return null;
+        }
+
+        // Extract sources and build combined text with source citing
+        const sources = [];
+        const contextText = validContexts.map((c, idx) => {
+            const sourceName = c.sourceUri ? c.sourceUri.split('/').pop() : `Document_${idx + 1}`;
+            sources.push({
+                title: sourceName,
+                url: c.sourceUri || '',
+                snippet: c.text ? c.text.substring(0, 150) + '...' : ''
+            });
+            return `[Source: ${sourceName}]\n${c.text}`;
+        }).join('\n\n');
+
+        logger.info(`[Vertex RAG] Successfully retrieved ${validContexts.length} context segments with high confidence.`);
+        return { text: contextText, sources };
 
     } catch (error) {
         logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);

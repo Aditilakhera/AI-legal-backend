@@ -66,13 +66,16 @@ export const uploadDocument = async (req, res) => {
             });
         }
 
+        const category = req.body.category || 'General';
+
         // 3. Always Store Metadata (for listing)
         try {
             await Knowledge.create({
                 filename: originalName,
                 gcsUri: gcsUri,
                 mimetype: mimeType,
-                size: fileSize
+                size: fileSize,
+                category: category
             });
             logger.info(`Document metadata saved to MongoDB for track. GCS URI: ${gcsUri}`);
         } catch (dbError) {
@@ -87,6 +90,7 @@ export const uploadDocument = async (req, res) => {
                 gcsUri: gcsUri,
                 mimetype: mimeType,
                 size: fileSize,
+                category: category,
                 gcsSuccess: !!gcsUri
             }
         });
@@ -102,7 +106,7 @@ export const uploadDocument = async (req, res) => {
 // @access  Public
 export const getDocuments = async (req, res) => {
     try {
-        const documents = await Knowledge.find({}, 'filename uploadDate gcsUri mimetype size');
+        const documents = await Knowledge.find({}, 'filename uploadDate gcsUri mimetype size category');
         res.status(200).json({
             success: true,
             data: documents
