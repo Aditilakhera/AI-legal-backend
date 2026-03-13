@@ -180,15 +180,36 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             // Attempt to retrieve context from Vertex AI RAG Engine
             const ragContext = await vertexService.retrieveContextFromRag(message, 4);
 
-            if (ragContext) {
+            if (ragContext && ragContext.text) {
                 logger.info(`[Vertex RAG] Found relevant context for query.`);
 
                 // Grounding prompt for Vertex RAG results
-                const groundedContext = "SOURCE: VERTEX AI KNOWLEDGE BASE\nIMPORTANT: Use the information below as your PRIMARY source. If the information is not found here and it's about the company or AISA, follow the provided fallback instructions.\n\n" + ragContext;
+                const groundedContext = `You are AISA, an intelligent super AI assistant.
+
+Use the provided context to answer the user's question accurately.
+
+Context may come from multiple retrieval systems such as semantic search and keyword search.
+
+Context:
+${ragContext.text}
+
+Instructions:
+- Carefully read all the provided context.
+- Combine information from multiple context sections if necessary.
+- Base your answer strictly on the provided context.
+- If multiple pieces of information are relevant, summarize them clearly.
+- If the answer is not found in the context, say:
+"I could not find this information in the available knowledge base."
+
+Response Guidelines:
+- Start with the direct answer.
+- Provide a short explanation if necessary.
+- Keep the response clear and concise.
+- Avoid unnecessary filler text.`;
 
                 // Answer using retrieved context - Routing to OpenAI
                 const ragResponse = await openaiService.askOpenAI(message, groundedContext, { userName });
-                return { text: ragResponse, isRealTime: false };
+                return { text: ragResponse, isRealTime: false, sources: ragContext.sources };
             } else {
                 logger.info(`[Vertex RAG] No relevant context found for this query.`);
             }
