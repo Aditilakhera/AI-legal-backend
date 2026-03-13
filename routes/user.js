@@ -3,6 +3,8 @@ import userModel from "../models/User.js"
 import mongoose from "mongoose";
 import { verifyToken } from "../middleware/authorization.js"
 
+import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
+
 const route = express.Router()
 
 route.get("/", verifyToken, async (req, res) => {
@@ -22,7 +24,7 @@ route.get("/", verifyToken, async (req, res) => {
             });
         }
 
-        const user = await userModel.findById(userId).lean();
+        let user = await userModel.findById(userId);
         if (!user) {
             console.warn(`[GET USER] User ${userId} not found in DB. Returning fallback user.`);
             return res.status(200).json({
@@ -33,10 +35,50 @@ route.get("/", verifyToken, async (req, res) => {
                 personalizations: {}
             });
         }
-        res.status(200).json(user);
+
+        // --- NEW: Self-healing Avatar logic ---
+        // If the avatar is currently a placeholder, try one more time to find a real one.
+        if (isGeneratedAvatar(user.avatar)) {
+            const freshAvatar = await getSmartAvatar(user.email, user.name);
+            if (freshAvatar && !isGeneratedAvatar(freshAvatar)) {
+                user.avatar = freshAvatar;
+                await user.save();
+            }
+        }
+
+        res.status(200).json(user.toObject());
     } catch (error) {
         console.error("[GET USER ERROR]", error);
         res.status(500).json({ msg: "Something went wrong", error: error.message });
+    }
+});
+
+// PUT /api/user - Update general user fields (name, avatar, etc.)
+route.put("/", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const updates = req.body;
+
+        if (!updates || Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: "No update data provided" });
+        }
+
+        // DB Down Fallback
+        if (mongoose.connection.readyState !== 1) {
+            console.log("[DB] MongoDB unreachable. Simulating user update.");
+            return res.status(200).json({
+                _id: userId,
+                ...updates
+            });
+        }
+
+        const user = await userModel.findByIdAndUpdate(userId, updates, { new: true }).select("-password");
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        res.status(200).json(user);
+    } catch (error) {
+        console.error("[UPDATE USER ERROR]", error);
+        res.status(500).json({ msg: "Failed to update user", error: error.message });
     }
 });
 
