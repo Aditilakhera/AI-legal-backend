@@ -123,11 +123,13 @@ export const purchasePlan = async (req, res) => {
             // Lifetime validity (100 years)
             renewalDate.setFullYear(renewalDate.getFullYear() + 100);
         } else if (billingCycle === 'yearly') {
-            // Full 1 Year (12 months) validity
-            renewalDate.setFullYear(renewalDate.getFullYear() + 1);
+            // Use validity from DB (default 12 months)
+            const months = plan.validityYearly || 12;
+            renewalDate.setMonth(renewalDate.getMonth() + months);
         } else {
-            // 1 Month validity
-            renewalDate.setMonth(renewalDate.getMonth() + 1);
+            // Use validity from DB (default 1 month)
+            const months = plan.validityMonthly || 1;
+            renewalDate.setMonth(renewalDate.getMonth() + months);
         }
 
         const newSubscription = await Subscription.create({
