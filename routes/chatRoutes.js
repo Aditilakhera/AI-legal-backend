@@ -296,20 +296,36 @@ User's Name is "${req.user.name}".
       if ((docCount > 0 || manualCorpusId) && content) {
         console.log(`[RAG] Checking Knowledge Base (Vertex RAG) for: "${content.substring(0, 30)}..."`);
         const retrieved = await retrieveContextFromRag(content, 8); // TopK=8 as per expert guideline
-        if (retrieved) {
+        if (retrieved && retrieved.text) {
           console.log("[RAG] Relevant context FOUND and injected.");
+          // Add sources to searchSources array for source snippet support
+          if (retrieved.sources && Array.isArray(retrieved.sources)) {
+            searchSources = [...searchSources, ...retrieved.sources];
+          }
           ragContext = `
-[TRUSTED COMPANY KNOWLEDGE BASE]:
-The following information is retrieved from the official UWO/AISA Knowledge Base. 
+You are AISA, an intelligent super AI assistant.
 
-### GROUNDING RULES:
-1.  **Strict Compliance**: Use only the context below to answer questions about UWO, AISA, founders, services, or pricing.
-2.  **No Hallucinations**: If the answer is NOT in the context, do not imagine details about company history or people. Instead, politely state that you can't find that specific detail in the company profile.
-3.  **Proactive Assistance**: If the information is missing, offer to find it from public sources (searching the web) or suggest contacting the help desk.
+Use the provided context to answer the user's question accurately.
 
-### CONTEXT:
-${retrieved}
-\n`;
+Context may come from multiple retrieval systems such as semantic search and keyword search.
+
+Context:
+${retrieved.text}
+
+Instructions:
+- Carefully read all the provided context.
+- Combine information from multiple context sections if necessary.
+- Base your answer strictly on the provided context.
+- If multiple pieces of information are relevant, summarize them clearly.
+- If the answer is not found in the context, say:
+"I could not find this information in the available knowledge base."
+
+Response Guidelines:
+- Start with the direct answer.
+- Provide a short explanation if necessary.
+- Keep the response clear and concise.
+- Avoid unnecessary filler text.
+`;
         } else {
           console.log("[RAG] No relevant context found for this query.");
         }

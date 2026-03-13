@@ -20,6 +20,10 @@ const KnowledgeSchema = new mongoose.Schema({
     size: {
         type: Number // In bytes
     },
+    category: {
+        type: String,
+        default: 'General'
+    },
     // content: { type: String } // Removed to save metadata only
     uploadDate: {
         type: Date,
