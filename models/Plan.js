@@ -8,6 +8,8 @@ const planSchema = new mongoose.Schema({
     priceYearlyPerMonth: { type: Number },
     credits: { type: Number, required: true },
     creditsYearly: { type: Number },
+    validityMonthly: { type: Number, default: 1 }, // in months
+    validityYearly: { type: Number, default: 12 }, // in months
     features: [{ type: String }],
     badge: { type: String, default: "" },
     isPopular: { type: Boolean, default: false },

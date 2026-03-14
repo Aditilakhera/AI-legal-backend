@@ -33,6 +33,7 @@ import adminRoutes from './routes/adminRoutes.js';
 import memoryRoutes from './routes/memoryRoutes.js';
 import pricingRoutes from './routes/pricingRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
+import paymentRoutes from './routes/paymentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './routes/legalRoutes.js';
@@ -128,6 +129,8 @@ app.use('/api/memory', memoryRoutes);
 // Business & Dashboard
 app.use('/api/pricing', pricingRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/payment', paymentRoutes);
+app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check" }));
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', dashboardRoutes);
 

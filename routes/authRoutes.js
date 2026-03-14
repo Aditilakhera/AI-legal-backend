@@ -8,11 +8,43 @@ import { sendVerificationEmail, sendResetPasswordEmail, sendPasswordChangeSucces
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-
+import axios from "axios";
+import { uploadToCloudinary } from "../services/cloudinary.service.js";
 import { OAuth2Client } from "google-auth-library";
+import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
+import { verifyToken } from "../middleware/authorization.js";
 
 const router = express.Router();
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// --- Avatar Helpers moved to utils/avatarHelper.js ---
+
+// --- Proxy Avatar Route ---
+router.get("/proxy-avatar", async (req, res) => {
+  const { email, name } = req.query;
+  if (!email) return res.redirect("/User.jpeg");
+  
+  const normalizedEmail = email.trim().toLowerCase();
+  const initials = name ? name.trim().split(/\s+/).map(n => n[0]).join('').toUpperCase().slice(0, 2) : normalizedEmail.slice(0, 2).toUpperCase();
+  const fallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(initials || "U")}&background=random&color=fff&size=256`;
+
+  // For real-time previews, we don't upload to Cloudinary (too slow)
+  // We just redirect to the best guess
+  const sources = [
+    normalizedEmail.endsWith('@gmail.com') ? `https://www.google.com/s2/photos/profile/${normalizedEmail}?sz=256` : null,
+    `https://www.gravatar.com/avatar/${crypto.createHash('md5').update(normalizedEmail).digest('hex')}?d=404`
+  ].filter(Boolean);
+
+  for (const source of sources) {
+    try {
+      // Check if source exists with a quick HEAD request
+      const head = await axios.head(source, { timeout: 2000 });
+      if (head.status === 200) return res.redirect(source);
+    } catch (e) {}
+  }
+
+  return res.redirect(fallback);
+});
 
 // Test routes
 router.get("/", (req, res) => {
@@ -70,6 +102,7 @@ router.post("/signup", async (req, res) => {
       password: hashedPassword,
       verificationCode,
       credits: 500, // Explicitly set to match README Free Tier
+      avatar: await getSmartAvatar(email, name),
       notificationsInbox: [
         {
           id: `welcome_${Date.now()}_1`,
@@ -95,7 +128,7 @@ router.post("/signup", async (req, res) => {
       console.error('Initial CreditLog failed:', logErr.message);
     }
 
-    // Generate token cookie (planType embedded for info only — middleware re-checks DB)
+    // Generate token cookie
     const token = generateTokenAndSetCookies(res, newUser._id, newUser.email, newUser.name, newUser.plan);
 
 
@@ -195,7 +228,11 @@ router.post("/login", async (req, res) => {
       user.notificationsInbox = user.notificationsInbox.slice(0, 50);
     }
 
-    await user.save();
+    // Proactively update avatar if it's generated/default
+    if (isGeneratedAvatar(user.avatar)) {
+      user.avatar = await getSmartAvatar(user.email, user.name);
+      await user.save();
+    }
 
     res.status(201).json({
       id: user._id,
@@ -205,6 +242,7 @@ router.post("/login", async (req, res) => {
       token: token,
       role: user.role,
       plan: user.plan,
+      avatar: user.avatar,
       notifications: user.notificationsInbox
     });
 
@@ -240,14 +278,35 @@ const handleSocialUser = async (profile, res, isRedirect = true) => {
       user = await UserModel.findOne({ email });
 
       if (user) {
-        console.log(`[Social Auth] Linking ${provider.toUpperCase()} account to existing user: ${email}`);
-        if (!user.socialLinks) user.socialLinks = [];
-        user.socialLinks.push({ provider, providerId });
+        // Always check for picture updates if current is generated
+        if (isGeneratedAvatar(user.avatar) && picture) {
+          if (picture.includes('googleusercontent.com') || picture.includes('fbcdn.net') || picture.includes('twimg.com') || picture.includes('microsoft.com')) {
+            try {
+              const avatarRes = await axios.get(picture, { responseType: 'arraybuffer', timeout: 5000 });
+              const cloudRes = await uploadToCloudinary(avatarRes.data, {
+                folder: 'user_avatars',
+                public_id: `avatar_social_${user.email.split('@')[0]}_${Date.now()}`,
+                overwrite: true
+              });
+              user.avatar = cloudRes.secure_url;
+            } catch (e) {
+              user.avatar = picture; 
+            }
+          } else {
+            user.avatar = picture;
+          }
+        }
 
-        // Update user properties if they are missing
-        if (!user.avatar || user.avatar === '/User.jpeg') user.avatar = picture;
-        user.provider = provider.toLowerCase();
-        user.providerId = providerId;
+        if (user.provider !== provider.toLowerCase()) {
+          console.log(`[Social Auth] Linking ${provider.toUpperCase()} account to existing user: ${email}`);
+          if (!user.socialLinks) user.socialLinks = [];
+          if (!user.socialLinks.some(s => s.provider === provider.toLowerCase())) {
+            user.socialLinks.push({ provider, providerId });
+          }
+          user.provider = provider.toLowerCase();
+          user.providerId = providerId;
+        }
+
         user.isVerified = true;
         await user.save();
       } else {
@@ -288,10 +347,6 @@ const handleSocialUser = async (profile, res, isRedirect = true) => {
           console.error('Social Initial CreditLog failed:', logErr.message);
         }
       }
-    } else {
-      // User found - update last used provider
-      user.provider = provider.toLowerCase();
-      await user.save();
     }
 
     // Generate JWT
@@ -299,7 +354,7 @@ const handleSocialUser = async (profile, res, isRedirect = true) => {
 
     if (isRedirect) {
       const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-      const redirectUrl = `${frontendUrl}/login?social_auth=true&token=${token}&userId=${user._id}&userName=${encodeURIComponent(user.name)}&userEmail=${user.email}&provider=${provider.toLowerCase()}`;
+      const redirectUrl = `${frontendUrl}/login?social_auth=true&token=${token}&userId=${user._id}&userName=${encodeURIComponent(user.name)}&userEmail=${user.email}&provider=${provider.toLowerCase()}&picture=${encodeURIComponent(user.avatar || "")}`;
       return res.redirect(redirectUrl);
     } else {
       return res.status(200).json({
@@ -702,6 +757,40 @@ router.post("/social-login", async (req, res) => {
   return handleSocialUser({ email, name, picture, provider, providerId }, res, false);
 });
 
+
+// MICROSOFT / OUTLOOK LOGIN SKELETON
+router.get("/microsoft", (req, res) => {
+  const clientId = process.env.MICROSOFT_CLIENT_ID;
+  if (!clientId) {
+    return res.status(400).json({ error: "Microsoft Login not configured. Please add MICROSOFT_CLIENT_ID to .env" });
+  }
+  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL || 'http://localhost:8080'}/api/auth/microsoft/callback`);
+  res.redirect(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${clientId}&response_type=code&redirect_uri=${redirectUri}&response_mode=query&scope=openid%20profile%20email`);
+});
+
+router.get("/microsoft/callback", async (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+  res.redirect(`${frontendUrl}/login?error=${encodeURIComponent("Microsoft Login is currently in beta. Please use Google Login for now.")}`);
+});
+
+// SYNC PROFILE (MANUAL TRIGGER)
+router.get("/sync-profile", verifyToken, async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const newAvatar = await getSmartAvatar(user.email, user.name);
+    if (newAvatar && !isGeneratedAvatar(newAvatar)) {
+      user.avatar = newAvatar;
+      await user.save();
+      return res.status(200).json({ message: "Profile synchronized successfully!", avatar: user.avatar });
+    }
+    
+    res.status(200).json({ message: "No new photo found. Please ensure your social profile is public or log in with Google.", avatar: user.avatar });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to sync profile" });
+  }
+});
 
 // ====================== FORGOT PASSWORD (OTP) =======================
 router.post("/forgot-password", async (req, res) => {

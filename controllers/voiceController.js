@@ -108,12 +108,12 @@ export const synthesizeSpeech = async (req, res) => {
             .trim();
 
         const voiceMap = {
-            'hi-IN': { 'FEMALE': 'hi-IN-Neural2-A', 'MALE': 'hi-IN-Neural2-B' },
-            'en-US': { 'FEMALE': 'en-US-Journey-F', 'MALE': 'en-US-Journey-D' },
+            'hi-IN': { 'FEMALE': 'hi-IN-Chirp3-HD-Kore', 'MALE': 'hi-IN-Chirp3-HD-Charon' },
+            'en-US': { 'FEMALE': 'en-US-Chirp3-HD-Aoede', 'MALE': 'en-US-Chirp3-HD-Puck' },
             'en-IN': { 'FEMALE': 'en-IN-Neural2-A', 'MALE': 'en-IN-Neural2-B' }
         };
 
-        let voiceName = voiceMap[languageCode]?.[gender] || `${languageCode}-Neural2-${gender === 'MALE' ? 'D' : 'A'}`;
+        let voiceName = voiceMap[languageCode]?.[gender] || `${languageCode}-Chirp3-HD-${gender === 'MALE' ? 'Puck' : 'Aoede'}`;
         const isNarrative = tone === 'narrative' || (tone !== 'conversational' && processedText.length > 600);
 
         const chunks = chunkText(processedText, 2500);
@@ -180,7 +180,7 @@ export const synthesizeFile = async (req, res) => {
         const isHindi = (textToRead.match(/[\u0900-\u097F]/g) || []).length > 20;
         const chunks = chunkText(textToRead, isHindi ? 1200 : 2500);
         const langCode = isHindi ? 'hi-IN' : 'en-US';
-        const voiceName = isHindi ? 'hi-IN-Neural2-D' : (gender === 'MALE' ? 'en-US-Neural2-D' : 'en-US-Neural2-F');
+        const voiceName = isHindi ? 'hi-IN-Chirp3-HD-Kore' : (gender === 'MALE' ? 'en-US-Chirp3-HD-Puck' : 'en-US-Chirp3-HD-Aoede');
 
         console.log(`📖 [VoiceController] File Synthesis: ${chunks.length} chunks, ${textToRead.length} chars`);
         const audioData = await synthesizeChunks(chunks, langCode, voiceName, gender, true);
