@@ -6,7 +6,7 @@ import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import Tesseract from 'tesseract.js';
 import officeParser from 'officeparser';
-const incrementUsage = { execute: async () => {} }; // Mock logic 
+const incrementUsage = async () => {}; // Mock logic 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,7 +60,7 @@ const chunkText = (text, maxLength = 2500) => {
 };
 
 // Generic synthesizer that handles chunks
-const synthesizeChunks = async (chunks, languageCode, voiceName, gender, isNarrative = false) => {
+const synthesizeChunks = async (chunks, languageCode, voiceName, gender, isNarrative = false, pitch = 0.0, speakingRate = 1.0) => {
     const audioBuffers = [];
     const BATCH_SIZE = 12;
 
@@ -69,12 +69,11 @@ const synthesizeChunks = async (chunks, languageCode, voiceName, gender, isNarra
         const batchPromises = batch.map(chunk => {
             const request = {
                 input: { text: chunk },
-                voice: { languageCode, name: voiceName, ssmlGender: gender },
-                audioConfig: {
-                    audioEncoding: 'MP3',
-                    speakingRate: isNarrative ? 0.92 : 1.0,
-                    pitch: 0.0,
-                    volumeGainDb: 1.5
+                voice: { languageCode, name: voiceName },
+                audioConfig: { 
+                     audioEncoding: 'MP3',
+                     pitch: pitch,
+                     speakingRate: speakingRate 
                 },
             };
             return client.synthesizeSpeech(request).then(([response]) => {
@@ -94,7 +93,7 @@ export const synthesizeSpeech = async (req, res) => {
         return res.status(403).json({ error: 'Google Cloud TTS not configured' });
     }
     try {
-        const { text, languageCode = 'en-US', gender = 'FEMALE', tone } = req.body;
+        const { text, languageCode = 'en-US', gender = 'FEMALE', tone, voiceName: reqVoiceName, pitch = 0, speakingRate = 1.0 } = req.body;
         if (!text) return res.status(400).json({ error: 'Text is required' });
 
         // Pre-processing for natural pronunciation
@@ -109,17 +108,17 @@ export const synthesizeSpeech = async (req, res) => {
 
         const voiceMap = {
             'hi-IN': { 'FEMALE': 'hi-IN-Chirp3-HD-Kore', 'MALE': 'hi-IN-Chirp3-HD-Charon' },
-            'en-US': { 'FEMALE': 'en-US-Chirp3-HD-Aoede', 'MALE': 'en-US-Chirp3-HD-Puck' },
+            'en-US': { 'FEMALE': 'en-US-Chirp3-HD-Algieba', 'MALE': 'en-US-Chirp3-HD-Puck' },
             'en-IN': { 'FEMALE': 'en-IN-Neural2-A', 'MALE': 'en-IN-Neural2-B' }
         };
 
-        let voiceName = voiceMap[languageCode]?.[gender] || `${languageCode}-Chirp3-HD-${gender === 'MALE' ? 'Puck' : 'Aoede'}`;
+        let voiceName = reqVoiceName || voiceMap[languageCode]?.[gender] || `${languageCode}-Chirp3-HD-${gender === 'MALE' ? 'Puck' : 'Algieba'}`;
         const isNarrative = tone === 'narrative' || (tone !== 'conversational' && processedText.length > 600);
 
         const chunks = chunkText(processedText, 2500);
         console.log(`📤 [VoiceController] Synthesizing ${chunks.length} chunks... narrative=${isNarrative}`);
 
-        const audioData = await synthesizeChunks(chunks, languageCode, voiceName, gender, isNarrative);
+        const audioData = await synthesizeChunks(chunks, languageCode, voiceName, gender, isNarrative, pitch, speakingRate);
 
         // Deduct Credits
         await incrementUsage(req);
@@ -136,7 +135,7 @@ export const synthesizeFile = async (req, res) => {
     if (!client) return res.status(403).json({ error: 'Google Cloud TTS not configured' });
 
     try {
-        const { fileData, mimeType, languageCode: reqLangCode = 'en-US', gender = 'FEMALE', introText } = req.body;
+        const { fileData, mimeType, languageCode: reqLangCode = 'en-US', gender = 'FEMALE', introText, pitch = 0, speakingRate = 1.0, voiceName: reqVoiceName } = req.body;
         if (!fileData && !introText) return res.status(400).json({ error: 'Input required' });
 
         let textToRead = "";
@@ -170,8 +169,11 @@ export const synthesizeFile = async (req, res) => {
 
         textToRead = textToRead
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "")
-            .replace(/™/g, " tm ")
+            .replace(/™/g, " T M ")
+            .replace(/©/g, "")
             .replace(/\btm\b/gi, "tum")
+            // Preserve . , ? ! for natural Chirp 3 HD pauses — only strip truly noise chars
+            .replace(/[;:"\\@\[\]\(\)\|_\*`~]/g, " ")
             .replace(/\s+/g, " ")
             .trim();
 
@@ -179,11 +181,11 @@ export const synthesizeFile = async (req, res) => {
 
         const isHindi = (textToRead.match(/[\u0900-\u097F]/g) || []).length > 20;
         const chunks = chunkText(textToRead, isHindi ? 1200 : 2500);
-        const langCode = isHindi ? 'hi-IN' : 'en-US';
-        const voiceName = isHindi ? 'hi-IN-Chirp3-HD-Kore' : (gender === 'MALE' ? 'en-US-Chirp3-HD-Puck' : 'en-US-Chirp3-HD-Aoede');
+        const langCode = reqLangCode || (isHindi ? 'hi-IN' : 'en-US');
+        const voiceName = reqVoiceName || (isHindi ? 'hi-IN-Chirp3-HD-Kore' : (gender === 'MALE' ? 'en-US-Chirp3-HD-Puck' : 'en-US-Chirp3-HD-Algieba'));
 
         console.log(`📖 [VoiceController] File Synthesis: ${chunks.length} chunks, ${textToRead.length} chars`);
-        const audioData = await synthesizeChunks(chunks, langCode, voiceName, gender, true);
+        const audioData = await synthesizeChunks(chunks, langCode, voiceName, gender, true, pitch, speakingRate);
 
         // Deduct Credits
         await incrementUsage(req);
