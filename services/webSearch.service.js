@@ -1,6 +1,7 @@
 import logger from '../utils/logger.js';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import * as configService from './configService.js';
 
 dotenv.config();
 
@@ -74,16 +75,9 @@ export const performSearch = async (query, userLanguage = 'English') => {
                 messages: [
                     {
                         role: 'system',
-                        content: `You are AISA, an advanced AI with real-time web search capabilities.
+                        content: configService.getConfig('WEB_SEARCH_RULES') + `
                         TODAY'S DATE: ${currentDate}
-                        
-                        - Task: Provide a comprehensive, accurate answer to the user's query using your built-in search tool.
-                        - Language: ${targetLang} (Use natural, professional ${targetLang}).
-                        - Citations: Cite your sources clearly using [1], [2], etc.
-                        - Veracity: If information is conflicting, mention both sides.
-                        - Fallback: If no live data is found, state it clearly but answer based on your knowledge.
-                        
-                        Respond in a way that feels like a premium search experience.`
+                        LANGUAGE: ${targetLang}`
                     },
                     { role: 'user', content: query }
                 ]

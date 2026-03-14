@@ -15,7 +15,12 @@ export const initializeConfigs = async () => {
         const defaultConfigs = [
             {
                 key: 'AISA_CONVERSATIONAL_RULES',
-                value: AISA_CONVERSATIONAL_RULES,
+                value: AISA_CONVERSATIONAL_RULES + `
+### CITATION & RESOURCE RULES:
+- NEVER mention internal filenames like "aisa_documentation.pdf" or "A_SERIES_DOC...".
+- If the user asks about a company project, product, or service, refer to it by name and provide its official website URL if available in the context.
+- Use the website URL as the primary source reference.
+- If only internal documentation is available, refer to it as "Official UWO Case Study" or "Internal Documentation" instead of the filename.`,
                 description: 'Core rules for AISA response style, tone, and formatting.'
             },
             {
@@ -55,6 +60,53 @@ If the user asks about AISA (e.g., "What is AISA?", "Who are you?", "Aap kaun ho
 - Add a disclaimer for medical, legal, or financial information: "⚠️ This information is for educational purposes only. Please consult a qualified professional before making any decisions."
 - Priority: Safety and professional integrity above all.`,
                 description: 'Safety and compliance instructions.'
+            },
+            {
+                key: 'WEB_SEARCH_RULES',
+                value: `### WEB SEARCH GUIDELINES:
+- Task: Provide a comprehensive, accurate answer to the user's query using the live data provided.
+- Citations: Cite your sources clearly using [1], [2], etc.
+- Veracity: If information is conflicting, mention different perspectives found.
+- Identity: You are AISA™, an advanced IT assistant created by UWO™ with real-time web search capabilities.`,
+                description: 'Specific rules for the Web Search / Deep Search feature.'
+            },
+            {
+                key: 'QUERY_REWRITE_PROMPT',
+                value: `You are an AI assistant that improves search queries for document retrieval.
+
+Rewrite the user's question into a clear and detailed search query that will help retrieve relevant documents from a knowledge base.
+
+Return only the improved search query.
+
+User Question:
+{user_question}`,
+                description: 'The prompt template used to rewrite user queries for better RAG retrieval.'
+            },
+            {
+                key: 'CONVERSATION_MEMORY_PROMPT',
+                value: `### CONTEXTUAL MEMORY:
+Use the following relevant conversation history to understand the user's current intent better.
+
+Relevant History:
+{memory_context}
+
+Current User Question:
+{user_query}
+
+Instructions:
+- Use history only if relevant to the current question.
+- Do not repeat history in your answer unless specifically asked.
+- Answer the user clearly.`,
+                description: 'Template for injecting retrieved conversation context into the final AI prompt.'
+            },
+            {
+                key: 'BEHAVIOR_INTELLIGENCE_INIT',
+                value: `### 7-DAY ADAPTIVE LEARNING RULES:
+- DAY 1-2: If you don't know the user's current work, skills, or goals, subtly ask about them during the conversation. 
+- DAY 3-4: Observe their technical level and response length. Adapt your complexity to match theirs.
+- DAY 5-7: Finalize the "User Intelligence Profile". Your responses should now be fully personalized to their motivation and learning style.
+- PERSISTENCE: Use the "ADAPTIVE RESPONSE RULES" provided in the context to refine every single answer.`,
+                description: 'Rules for the 7-day behavioral learning engine.'
             }
         ];
 
@@ -64,6 +116,12 @@ If the user asks about AISA (e.g., "What is AISA?", "Who are you?", "Aap kaun ho
             if (!existing) {
                 logger.info(`[ConfigService] Seeding default config for: ${config.key}`);
                 existing = await SystemConfig.create(config);
+            } else if (config.key === 'AISA_CONVERSATIONAL_RULES' && !existing.value.includes('RESOURCE RULES:')) {
+                // Feature push: Update existing rules to include new citation logic if missing
+                logger.info(`[ConfigService] Updating ${config.key} to include CITATION rules.`);
+                existing.value = config.value;
+                existing.lastUpdated = Date.now();
+                await existing.save();
             }
 
             configCache.set(config.key, existing.value);
@@ -98,8 +156,9 @@ export const getFullSystemInstruction = () => {
     const company = getConfig('OFFICIAL_COMPANY_DATA');
     const intro = getConfig('AISA_SELF_INTRO');
     const ethical = getConfig('ETHICAL_GUARDRAILS');
+    const intelligence = getConfig('BEHAVIOR_INTELLIGENCE_INIT');
 
-    return `${rules}\n${brand}\n\n${performance}\n\n${company}\n\n${intro}\n\n${ethical}`;
+    return `${rules}\n${brand}\n\n${performance}\n\n${company}\n\n${intro}\n\n${ethical}\n\n${intelligence}`;
 };
 
 /**

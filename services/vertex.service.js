@@ -1,10 +1,10 @@
 import { generativeModel, genAIInstance, modelName } from '../config/vertex.js';
 import { HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
-import { BRAND_SYSTEM_RULES, AISA_CONVERSATIONAL_RULES } from '../utils/brandIdentity.js';
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
 import logger from '../utils/logger.js';
 import dotenv from 'dotenv';
+import * as configService from './configService.js';
 
 dotenv.config();
 
@@ -86,16 +86,14 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
         const client = await auth.getClient();
         const token = await client.getAccessToken();
 
-        // --- STABLE V1 PLURAL RETRIEVAL ---
-        const retrieveUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}:retrieveContexts`;
+        // --- V1BETA1 RETRIEVAL ---
+        const retrieveUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}:retrieveContexts`;
 
         const corpusName = `projects/${projectId}/locations/${location}/ragCorpora/${corpusId}`;
 
         const payload = {
             vertexRagStore: {
-                ragResources: [
-                    { ragCorpus: corpusName }
-                ]
+                ragCorpora: [corpusName]
             },
             query: {
                 text: query,
@@ -103,13 +101,12 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             }
         };
 
-        logger.info(`[Vertex RAG] Querying Mumbai v1 API for corpus: ${corpusId}`);
+        logger.info(`[Vertex RAG] Querying v1beta1 API for corpus: ${corpusId}`);
         const response = await axios.post(retrieveUrl, payload, {
             headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' }
         });
 
-        // v1 uses contexts.contexts, v1beta1 used ragContexts.contexts
-        const contexts = response.data?.contexts?.contexts || response.data?.ragContexts?.contexts || [];
+        const contexts = response.data?.contexts?.contexts || [];
         if (contexts.length === 0) {
             logger.info(`[Vertex RAG] No matching documents found in bucket for this query.`);
             return null;
@@ -128,23 +125,143 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
         }
 
         // Extract sources and build combined text with source citing
+        const Knowledge = (await import('../models/Knowledge.model.js')).default;
+        
         const sources = [];
-        const contextText = validContexts.map((c, idx) => {
-            const sourceName = c.sourceUri ? c.sourceUri.split('/').pop() : `Document_${idx + 1}`;
-            sources.push({
-                title: sourceName,
-                url: c.sourceUri || '',
-                snippet: c.text ? c.text.substring(0, 150) + '...' : ''
-            });
-            return `[Source: ${sourceName}]\n${c.text}`;
-        }).join('\n\n');
+        const contextText = await Promise.all(validContexts.map(async (c, idx) => {
+            const gcsUri = c.sourceUri;
+            let sourceName = `Document_${idx + 1}`;
+            let sourceUrl = '';
 
-        logger.info(`[Vertex RAG] Successfully retrieved ${validContexts.length} context segments with high confidence.`);
-        return { text: contextText, sources };
+            if (gcsUri) {
+                const doc = await Knowledge.findOne({ gcsUri });
+                if (doc) {
+                    sourceUrl = doc.sourceUrl || '';
+                    // If we have a URL, try to use a clean title (e.g., domain name)
+                    if (sourceUrl) {
+                        try {
+                            const urlObj = new URL(sourceUrl);
+                            sourceName = urlObj.hostname.replace('www.', '');
+                        } catch (e) {
+                            sourceName = "Official Website";
+                        }
+                    } else {
+                        // Internal file with no URL - use generic brand title instead of filename
+                        sourceName = "UWO Internal Resource";
+                    }
+                } else {
+                    sourceName = "Documentation";
+                }
+            }
+
+            if (sourceUrl) {
+                sources.push({
+                    title: sourceName,
+                    url: sourceUrl || gcsUri || '',
+                    snippet: c.text ? c.text.substring(0, 150) + '...' : '',
+                    document_title: sourceName,
+                    source_type: sourceName.includes('.') ? sourceName.split('.').pop().toUpperCase() : 'URL',
+                    chunk_id: `chunk_${idx}_${Date.now()}`
+                });
+            }
+
+            const citation = sourceUrl ? `[Ref: ${sourceName}]` : `[Internal Knowledge]`;
+            return `${citation}\n${c.text}`;
+        }));
+
+        // Deduplicate sources aggressively by Title (since URLs might be internal GCS paths)
+        const uniqueSources = [];
+        const seenTitles = new Set();
+        for (const source of sources) {
+            if (!seenTitles.has(source.title)) {
+                uniqueSources.push(source);
+                seenTitles.add(source.title);
+            }
+        }
+
+        logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
+        return { text: contextText.join('\n\n'), sources: uniqueSources };
 
     } catch (error) {
         logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);
         return null;
+    }
+};
+
+/**
+ * Rewrites user message into an optimized search query using Gemini
+ */
+export const rewriteQuery = async (userQuestion) => {
+    try {
+        const rewriteTemplate = configService.getConfig('QUERY_REWRITE_PROMPT', 'Rewrite the user question for search: {user_question}');
+        const rewritePrompt = rewriteTemplate.replace('{user_question}', userQuestion);
+        
+        const rewriteResult = await AskVertexRaw(rewritePrompt, { 
+            maxOutputTokens: 200, 
+            temperature: 0.2 
+        });
+        
+        const cleanedQuery = rewriteResult.trim().replace(/^["']|["']$/g, '');
+        logger.info(`[QueryRewrite] Original: "${userQuestion}" -> Rewritten: "${cleanedQuery}"`);
+        return cleanedQuery;
+    } catch (error) {
+        logger.error(`[QueryRewrite] Error: ${error.message}`);
+        return userQuestion; // Fallback to original
+    }
+};
+
+/**
+ * Detects if the user's query specifically needs company knowledge base information
+ */
+export const detectRAGNeed = async (query) => {
+    try {
+        const lower = query.toLowerCase().trim();
+        // Fast-path: check for common conversational fillers and closings
+        const fillers = [
+            'hi', 'hello', 'thanks', 'thank you', 'okay', 'dynamic', 'great', 'awesome', 
+            'happy to help', 'see you', 'bye', 'hope this helps', 'hope this clears things up',
+            'no problem', 'you are welcome', 'got it', 'sure', 'alright'
+        ];
+        if (fillers.some(f => lower.includes(f)) || query.length < 12) {
+            logger.info(`[RAG-Detector] Fast-path NO for: "${query}"`);
+            return false;
+        }
+
+        const detectorPrompt = `You are a filter that decides if a user's message requires searching a private company database.
+
+        Respond "YES" ONLY if the user is asking about:
+        - Specific company projects, products, or services (UWO, AISA, etc.)
+        - Internal financial, technical, or procedural data.
+        - Detailed documentation questions.
+
+        Respond "NO" if the message is:
+        - A general greeting or social chat.
+        - Gratitude or simple acknowledgment.
+        - Generic knowledge easily found on the public internet.
+
+        User Message: "${query}"
+        Decision (YES/NO):`;
+
+        const result = await AskVertexRaw(detectorPrompt);
+        const decision = result.trim().toUpperCase().replace(/[^A-Z]/g, '');
+        logger.info(`[RAG-Detector] AI Decision for "${query}": ${decision}`);
+        return decision === 'YES';
+    } catch (error) {
+        logger.error(`[RAG-Detector] Error: ${error.message}`);
+        return false;
+    }
+}
+
+/**
+ * Internal helper for basic text generation
+ */
+const AskVertexRaw = async (prompt, options = {}) => {
+    try {
+        const result = await generativeModel.generateContent(prompt);
+        const response = await result.response;
+        return response.text();
+    } catch (err) {
+        throw err;
     }
 };
 
@@ -157,9 +274,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
 
         if (!systemInstruction) {
-            systemInstruction = `${AISA_CONVERSATIONAL_RULES}
-${dateContext}
-${BRAND_SYSTEM_RULES}`;
+            systemInstruction = configService.getFullSystemInstruction() + dateContext;
         } else {
             // Append date context even to custom instructions for reference
             systemInstruction = systemInstruction + dateContext;
@@ -241,5 +356,91 @@ ${BRAND_SYSTEM_RULES}`;
             return "I cannot fulfill this request due to safety guidelines.";
         }
         throw error;
+    }
+};
+
+/**
+ * Import a file from GCS into the Vertex RAG Corpus
+ */
+export const importToVertexRag = async (gcsUris, originalName = 'batch_import') => {
+    try {
+        const corpusId = await findOrCreateCorpus();
+        if (!corpusId) {
+            logger.warn("[Vertex RAG] Import skipped: No Corpus ID.");
+            return null;
+        }
+
+        const uris = Array.isArray(gcsUris) ? gcsUris : [gcsUris];
+        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const location = process.env.GCP_LOCATION || 'asia-south1';
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        const importUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles:import`;
+
+        const payload = {
+            importRagFilesConfig: {
+                gcsSource: {
+                    uris: uris
+                }
+            }
+        };
+
+        logger.info(`[Vertex RAG] Triggering import for ${uris.length} files into corpus ${corpusId}`);
+        const response = await axios.post(importUrl, payload, {
+            headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' }
+        });
+
+        logger.info(`[Vertex RAG] Import triggered successfully for ${originalName}. Operation: ${response.data.name || 'Started'}`);
+        return response.data;
+    } catch (error) {
+        logger.error(`[Vertex RAG] Import Error: ${error.response?.data?.error?.message || error.message}`);
+        throw error;
+    }
+};
+
+/**
+ * Delete a file from the Vertex RAG Corpus
+ */
+export const deleteFromVertexRag = async (gcsUri, originalName) => {
+    try {
+        const corpusId = await findOrCreateCorpus();
+        if (!corpusId) return;
+
+        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const location = process.env.GCP_LOCATION || 'asia-south1';
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+
+        // 1. List files to find the one matching GCS URI
+        const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles`;
+        
+        const res = await axios.get(listUrl, {
+            headers: { Authorization: `Bearer ${token.token}` }
+        });
+
+        const files = res.data.ragFiles || [];
+        const gcsFileName = gcsUri.split('/').pop();
+        
+        // Find by source URI or display name
+        const fileToDelete = files.find(f => 
+            f.ragFileConfig?.gcsSource?.uris?.includes(gcsUri) || 
+            f.displayName === gcsFileName || 
+            f.displayName === originalName
+        );
+
+        if (fileToDelete) {
+            logger.info(`[Vertex RAG] Deleting file ${fileToDelete.name} from corpus...`);
+            const deleteUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/${fileToDelete.name}`;
+            await axios.delete(deleteUrl, {
+                headers: { Authorization: `Bearer ${token.token}` }
+            });
+            logger.info(`[Vertex RAG] File deleted successfully: ${originalName}`);
+        } else {
+            logger.info(`[Vertex RAG] File not found in corpus for deletion: ${originalName}`);
+        }
+    } catch (error) {
+        logger.error(`[Vertex RAG] Delete Error: ${error.response?.data?.error?.message || error.message}`);
+        // Non-fatal, don't throw
     }
 };

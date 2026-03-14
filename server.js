@@ -57,6 +57,10 @@ connectDB().then(async () => {
     await initializeFromDB();
     console.log("✅ AI Services (Embeddings & Vector Store) pre-initialized.");
 
+    // Initialize Automatic Knowledge Update System (Crawler Scheduler)
+    const { initScheduler } = await import('./services/scheduler.service.js');
+    initScheduler();
+
   } catch (err) {
     console.error("❌ Failed to pre-initialize AI services:", err.message);
   }

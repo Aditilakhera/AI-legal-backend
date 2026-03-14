@@ -51,12 +51,17 @@ export const creditMiddleware = async (req, res, next) => {
 
     // ── FREE TIER GUARD ──────────────────────────────────────────────────────
     const isPaidOnlyRoute =
-        url.includes('/api/video') ||
-        url.includes('/api/image') ||
-        url.includes('/api/edit-image') ||
-        url.includes('/api/chat/realtime') ||
-        url.includes('/api/aibase/chat') ||
-        url.includes('/api/aibase/knowledge');
+        req.method !== 'GET' && (
+            url.includes('/api/video') ||
+            url.includes('/api/image') ||
+            url.includes('/api/edit-image') ||
+            url.includes('/api/chat/realtime') ||
+            url.includes('/api/aibase/chat') ||
+            url.includes('/api/aibase/knowledge')
+        );
+
+    // Admins bypass all credit/plan checks
+    if (req.user && req.user.role === 'admin') return next();
 
     if (isPaidOnlyRoute) {
         const freeTier = await isFreeTierUser(req.user.id || req.user._id);
@@ -92,19 +97,19 @@ export const creditMiddleware = async (req, res, next) => {
         cost = multiplier * duration;
         isPremiumEndpoint = true;
     }
-    else if (url.includes('/api/image') || url.includes('/api/edit-image')) {
+    else if (req.method !== 'GET' && (url.includes('/api/image') || url.includes('/api/edit-image'))) {
         const modelId = req.body?.modelId || 'imagen-3.0-generate-001';
         // Imagen 3.0: 60 credits | Imagen 4.0 Ultra: 80 credits (50% margin)
         cost = modelId === 'imagen-4.0-ultra-generate-001' ? 80 : 60;
         isPremiumEndpoint = true;
     }
-    else if (url.includes('/api/chat')) {
+    else if (req.method !== 'GET' && url.includes('/api/chat')) {
         // Standard Text Chat (Gemini 2.5 Flash)
         // Average charge to user (50% margin): ~2 credits per message
         cost = 2; 
     }
 
-    // Pass through if cost is still 0 (shouldn't happen for the above routes)
+    // Pass through if cost is still 0 
     if (cost === 0) return next();
 
     try {

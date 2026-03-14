@@ -1,17 +1,16 @@
 import jwt from "jsonwebtoken";
 
 export const verifyToken = (req, res, next) => {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader) {
-        return res.status(401).json({ error: "No token provided" });
+    let token = null;
+    
+    if (req.headers.authorization) {
+        token = req.headers.authorization.split(" ")[1];
+    } else if (req.query.token) {
+        token = req.query.token;
     }
 
-    const token = authHeader.split(" ")[1];
-
     if (!token) {
-        req.user = null;
-        return res.status(401).json({ error: "Invalid token format" });
+        return res.status(401).json({ error: "No token provided" });
     }
 
 

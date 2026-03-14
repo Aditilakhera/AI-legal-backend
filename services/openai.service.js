@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger.js';
 import dotenv from 'dotenv';
-import { BRAND_SYSTEM_RULES, AISA_CONVERSATIONAL_RULES } from '../utils/brandIdentity.js';
+import * as configService from './configService.js';
 
 dotenv.config();
 
@@ -26,10 +26,7 @@ export const askOpenAI = async (prompt, context = null, options = {}) => {
         } else {
             messages.push({
                 role: 'system',
-                content: `${AISA_CONVERSATIONAL_RULES}
-${dateContext}
-${BRAND_SYSTEM_RULES}
-
+                content: configService.getFullSystemInstruction() + dateContext + `
 ### PERSONALIZATION:
 Understand the user's expertise level and topic preference implicitly from their messages. Adjust your language to be slightly more technical or simple as needed, while maintaining the primary goal of being direct and professional.
 `

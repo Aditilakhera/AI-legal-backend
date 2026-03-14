@@ -9,11 +9,9 @@ import path from 'path';
 import * as vertexService from './vertex.service.js';
 import * as openaiService from './openai.service.js';
 import * as webSearchService from './webSearch.service.js';
-
-
-
-// Initialize Groq Chat Model - REMOVED (Replaced by groq.service.js)
-// const model = new ChatGroq({ ... });
+import memoryService from './memory.service.js';
+import QueryLog from '../models/QueryLog.model.js';
+import userIntelligenceService from './userIntelligence.service.js';
 
 // Real RAG Storage (MongoDB Atlas)
 let vectorStore = null;
@@ -25,7 +23,6 @@ const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
 
 const initializeVectorStore = async () => {
     if (!embeddings) {
-        // Keeping a local instance for CHAT queries (low latency, single embedding)
         logger.info("Initializing Local Embeddings (Xenova/all-MiniLM-L6-v2) for Chat...");
         embeddings = new HuggingFaceTransformersEmbeddings({
             modelName: "Xenova/all-MiniLM-L6-v2",
@@ -35,9 +32,7 @@ const initializeVectorStore = async () => {
         if (mongoose.connection.readyState !== 1) {
             throw new Error("MongoDB not connected yet");
         }
-
         const collection = mongoose.connection.db.collection("knowledge_vectors");
-
         vectorStore = new MongoDBAtlasVectorSearch(embeddings, {
             collection: collection,
             indexName: "default",
@@ -48,36 +43,23 @@ const initializeVectorStore = async () => {
     }
 };
 
-// Helper: Run embedding task in worker - REMOVED
-
 export const storeDocument = async (text, docId = null) => {
     try {
         await initializeVectorStore();
-
-        // 1. Processing in Main Thread (Reverted Worker due to V8 Crash)
-        // Note: ONNX Runtime uses its own thread pool, so this is still relatively non-blocking.
-
-        // Split Text
         const splitter = new RecursiveCharacterTextSplitter({
             chunkSize: 1000,
             chunkOverlap: 200,
         });
         const docs = await splitter.createDocuments([text]);
         logger.info(`[RAG] Split into ${docs.length} chunks.`);
-
         if (docs.length === 0) {
             logger.warn("[RAG] No chunks to embed.");
             return false;
         }
-
-        // Generate Embeddings
         const vectors = await embeddings.embedDocuments(docs.map(d => d.pageContent));
         logger.info(`[RAG] Generated ${vectors.length} vectors.`);
-
-        // 3. Add to Atlas Vector Store
         await vectorStore.addVectors(vectors, docs);
         logger.info("[RAG] SUCCESSFULLY called vectorStore.addVectors().");
-
         return true;
     } catch (error) {
         logger.error(`[RAG UPLOAD ERROR] ${error.message}`);
@@ -86,139 +68,155 @@ export const storeDocument = async (text, docId = null) => {
 };
 
 export const chat = async (message, activeDocContent = null, options = {}) => {
+    let finalResponseData = { text: "" };
     try {
         if (!message || typeof message !== 'string') {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId } = options;
+
+        // --- CONVERSATION MEMORY RAG ---
+        let retrievedHistory = [];
+        if (conversationId) {
+            logger.info(`[Memory] Retrieving memory for conversation: ${conversationId}`);
+            retrievedHistory = await memoryService.retrieveMemory(conversationId, message, 5);
+        }
+        
+        // Save User Message (async)
+        if (conversationId) {
+            memoryService.saveMessageWithEmbedding(conversationId, userId, 'user', message).catch(err => {
+                logger.error(`[Memory] Failed to save user message: ${err.message}`);
+            });
+        }
+
+        // PRIORITY -1: PERSONA INJECTION (Adaptive System)
+        const personaContext = await userIntelligenceService.getPersonaInjection(userId);
+        const dynamicSystemInstruction = (systemInstruction || "") + personaContext;
+
+        // Helper to build context-aware prompt
+        const buildMemoryPrompt = (query) => {
+            if (retrievedHistory.length > 0) {
+                return memoryService.buildContext(dynamicSystemInstruction, retrievedHistory, query);
+            }
+            return query;
+        };
 
         // PRIORITY 0: REAL-TIME WEB SEARCH
-        // - Skip web search if images or formal docs are present for specific tasks (like image editing / pdf processing)
         if (message.length > 5 && !images?.length && !documents?.length && !activeDocContent?.length) {
-
-            // Check Cache First
             const cacheKey = message.toLowerCase().trim();
             if (searchCache.has(cacheKey)) {
                 const cached = searchCache.get(cacheKey);
                 if (Date.now() - cached.timestamp < CACHE_TTL) {
                     logger.info(`[WebSearch] Cache HIT for: ${message}`);
-                    return { text: cached.result.summary, isRealTime: true, sources: cached.result.sources };
+                    finalResponseData = { text: cached.result.summary, isRealTime: true, sources: cached.result.sources };
                 }
             }
 
-            const isForcedSearch = mode === 'web_search' || mode === 'DEEP_SEARCH';
-            const needsSearch = isForcedSearch || await webSearchService.shouldSearch(message);
-            if (needsSearch) {
-                logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
-                const searchResult = await webSearchService.performSearch(message, language);
+            if (!finalResponseData.text) {
+                const isForcedSearch = mode === 'web_search' || mode === 'DEEP_SEARCH';
+                const needsSearch = isForcedSearch || await webSearchService.shouldSearch(message);
+                if (needsSearch) {
+                    logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
+                    const searchResult = await webSearchService.performSearch(message, language);
 
-                if (searchResult && searchResult.summary) {
-                    // Cache the result
-                    searchCache.set(cacheKey, { result: searchResult, timestamp: Date.now() });
-
-                    return {
-                        text: searchResult.summary,
-                        isRealTime: true,
-                        sources: searchResult.sources
-                    };
-                } else {
-                    logger.warn("[WebSearch] Search yielded no results. Falling back to base AI.");
-                    // FALLBACK: Get normal AI response but prepend a note
-                    const { getDynamicSystemInstruction } = await import('../config/vertex.js');
-                    const systemMsg = options.systemInstruction || getDynamicSystemInstruction();
-                    const fallbackResponse = await openaiService.askOpenAI(message, activeDocContent, {
-                        systemInstruction: systemMsg,
-                        mode,
-                        documents,
-                        userName
-                    });
-                    return {
-                        text: `⚠️ **Note: Live data unavailable.**\n(Abhi live data uplabdh nahi hai, isliye main apne base knowledge se jawab de raha hoon.)\n\n${fallbackResponse}`,
-                        isRealTime: false,
-                        sources: []
-                    };
+                    if (searchResult && searchResult.summary) {
+                        searchCache.set(cacheKey, { result: searchResult, timestamp: Date.now() });
+                        finalResponseData = { text: searchResult.summary, isRealTime: true, sources: searchResult.sources };
+                    } else {
+                        logger.warn("[WebSearch] Search yielded no results.");
+                    }
                 }
             }
         }
 
-
-        // PRIORITY 1: Chat-Uploaded Document and System Instructions
-        // If we have specific system instructions (like Conversion Mode), we prioritize passing them.
-        if (systemInstruction || (activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
-            logger.info("[Chat Routing] Using Custom Request (System Instruction / Active Doc / Images).");
-
+        if (finalResponseData.text) {
+            // Memory save handled at end
+        } else if (dynamicSystemInstruction || (activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
+            // PRIORITY 1: Chat-Uploaded Document / Images
+            const promptWithMemory = buildMemoryPrompt(message);
             if (images && images.length > 0) {
-                logger.info("[Chat Routing] Image(s) detected. Routing to Vertex.");
-                const vertexResponse = await vertexService.askVertex(message, activeDocContent, {
-                    systemInstruction,
-                    mode,
-                    images,
-                    documents
+                const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
+                    systemInstruction: dynamicSystemInstruction, mode, images, documents
                 });
-                return { text: vertexResponse, isRealTime: false };
+                finalResponseData = { text: vertexResponse, isRealTime: false };
+            } else {
+                const openaiResponse = await openaiService.askOpenAI(promptWithMemory, activeDocContent, {
+                    systemInstruction: dynamicSystemInstruction, mode, documents, userName
+                });
+                finalResponseData = { text: openaiResponse, isRealTime: false };
             }
+        } else {
+            // PRIORITY 2: Company Knowledge Base (Vertex RAG)
+            const docCount = await Knowledge.countDocuments();
+            let ragContext = null;
+            let rewrittenQuery = message;
 
-            logger.info("[Chat Routing] Text/Doc detected. Routing to OpenAI.");
-            const openaiResponse = await openaiService.askOpenAI(message, activeDocContent, {
-                systemInstruction,
-                mode,
-                documents,
-                userName
-            });
-            return { text: openaiResponse, isRealTime: false };
-        }
+            if (docCount > 0) {
+                // Step 0: Detect Intent (Only use RAG for company-specific queries)
+                const needsRAG = await vertexService.detectRAGNeed(message);
 
-
-        // PRIORITY 2: Company Knowledge Base (Vertex RAG)
-        const docCount = await Knowledge.countDocuments(); // Check if we should even bother
-        const hasDocs = docCount > 0;
-
-        logger.info(`[Chat Routing] Checking Vertex AI RAG. Docs tracked: ${docCount}`);
-
-        if (hasDocs) {
-            // Attempt to retrieve context from Vertex AI RAG Engine
-            const ragContext = await vertexService.retrieveContextFromRag(message, 4);
+                if (needsRAG) {
+                    // Step 1: Query Rewriting
+                    rewrittenQuery = await vertexService.rewriteQuery(message);
+                    
+                    // Step 2: Retrieval using Rewritten Query
+                    ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8);
+                    
+                    // --- Step 3: Logging (Optional but requested) ---
+                    try {
+                        await QueryLog.create({
+                            user_question: message,
+                            rewritten_query: rewrittenQuery,
+                            retrieved_documents: ragContext?.sources?.map(s => ({
+                                document_title: s.document_title,
+                                source_type: s.source_type,
+                                chunk_id: s.chunk_id,
+                                snippet: s.snippet
+                            })) || [],
+                            userId: userId || 'admin'
+                        });
+                    } catch (logErr) {
+                        logger.error(`[QueryLog] Failed: ${logErr.message}`);
+                    }
+                } else {
+                    logger.info(`[RAG] Skipping retrieval. Query "${message}" is generic.`);
+                }
+            }
 
             if (ragContext && ragContext.text) {
-                logger.info(`[Vertex RAG] Found relevant context for query.`);
-
-                // Grounding prompt for Vertex RAG results
-                const groundedContext = `You are AISA, an intelligent super AI assistant.
-
-Use the provided context to answer the user's question accurately.
-
-Context may come from multiple retrieval systems such as semantic search and keyword search.
-
-Context:
-${ragContext.text}
-
-Instructions:
-- Carefully read all the provided context.
-- Combine information from multiple context sections if necessary.
-- Base your answer strictly on the provided context.
-- If multiple pieces of information are relevant, summarize them clearly.
-- If the answer is not found in the context, say:
-"I could not find this information in the available knowledge base."
-
-Response Guidelines:
-- Start with the direct answer.
-- Provide a short explanation if necessary.
-- Keep the response clear and concise.
-- Avoid unnecessary filler text.`;
-
-                // Answer using retrieved context - Routing to OpenAI
-                const ragResponse = await openaiService.askOpenAI(message, groundedContext, { userName });
-                return { text: ragResponse, isRealTime: false, sources: ragContext.sources };
+                const promptWithMemory = buildMemoryPrompt(message);
+                // Step 4: Answer Generation (Context + Original Question)
+                const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext.text, { 
+                    userName, 
+                    systemInstruction: dynamicSystemInstruction,
+                    mode: 'RAG' 
+                });
+                finalResponseData = { text: ragResponse, isRealTime: false, sources: ragContext.sources };
             } else {
-                logger.info(`[Vertex RAG] No relevant context found for this query.`);
+                // PRIORITY 3: General Knowledge
+                const promptWithMemory = buildMemoryPrompt(message);
+                const aiResponse = await openaiService.askOpenAI(promptWithMemory, null, { 
+                    userName, 
+                    systemInstruction: dynamicSystemInstruction 
+                });
+                finalResponseData = { text: aiResponse, isRealTime: false };
             }
         }
 
-        // PRIORITY 3: Answer from General Knowledge (Explicit No Context) - Routing to OpenAI
-        logger.info("[Chat Routing] Answering from General Knowledge (OpenAI).");
-        const aiResponse = await openaiService.askOpenAI(message, null, { userName });
-        return { text: aiResponse, isRealTime: false };
+        // --- Post-Processing: Trigger Intelligence Engine (Async) ---
+        userIntelligenceService.processInteraction(userId, message, 'user').catch(err => {
+            logger.error(`[Intelligence] Processing failed: ${err.message}`);
+        });
+
+        // --- Save Assistant Message to Memory ---
+        if (conversationId && finalResponseData.text) {
+            memoryService.saveMessageWithEmbedding(conversationId, userId, 'assistant', finalResponseData.text).catch(err => {
+                logger.error(`[Memory] Failed to save assistant message: ${err.message}`);
+            });
+        }
+
+        return finalResponseData;
 
     } catch (error) {
         logger.error(`Chat Handling Error: ${error.message}`);
@@ -226,13 +224,11 @@ Response Guidelines:
     }
 };
 
-// Initialize from DB (Now just a placeholder/connection check)
 export const initializeFromDB = async () => {
     try {
-        logger.info("Using MongoDB Atlas Vector Search. Persistence is handled natively.");
         await initializeVectorStore();
     } catch (error) {
-        logger.error(`Failed to initialize Vector Store: ${error.message} `);
+        logger.error(`Failed to initialize Vector Store: ${error.message}`);
     }
 };
 

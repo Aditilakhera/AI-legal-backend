@@ -34,7 +34,9 @@ export const chat = async (req, res, next) => {
             mode,
             images: image,
             documents: document,
-            userName
+            userName,
+            conversationId,
+            userId: req.user?.id || req.user?._id
         });
 
         const { text: responseText, isRealTime, sources } = chatResponse;

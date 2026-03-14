@@ -22,6 +22,7 @@ import { retrieveContextFromRag } from "../services/vertex.service.js";
 import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
 import * as deepSearchService from "../services/deepSearch.service.js";
+import memoryService from "../services/memory.service.js";
 
 import axios from "axios";
 
@@ -165,6 +166,12 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
             await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId || 'chat-' + Date.now());
           }
 
+          if (sessionId) {
+            const mUserId = req.user ? req.user.id : (req.guest ? req.guest.id : null);
+            memoryService.saveMessageWithEmbedding(sessionId, mUserId, 'user', content);
+            memoryService.saveMessageWithEmbedding(sessionId, mUserId, 'assistant', searchReply);
+          }
+
           return res.status(200).json(finalSearchResponse);
         }
       } catch (error) {
@@ -173,31 +180,46 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     }
     console.log("[DEBUG] Web Search check complete.");
 
-    // --- UWO & AISA BRANDING CHECKS (DISABLED - HANDLED BY RAG) ---
+    // --- CONVERSATION MEMORY RAG ---
+    let combinedMemoryPrompt = systemInstructionText; // Default fallback
+    let conversationHistoryMemory = [];
+    if (content && sessionId) {
+      try {
+        const userId = req.user ? req.user.id : (req.guest ? req.guest.id : null);
+        
+        // Retrieve relevant past messages BEFORE saving the current one, to avoid self-retrieval
+        conversationHistoryMemory = await memoryService.retrieveMemory(sessionId, content, 5);
+        conversationHistoryMemory = conversationHistoryMemory.filter(msg => msg.content !== content); // Prevent echo
+        
+        // Async save user message to Vector DB Memory
+        memoryService.saveMessageWithEmbedding(sessionId, userId, 'user', content);
+
+        let personalizationContext = "";
+        let nameUsageInstruction = "";
+        if (req.user) {
+          personalizationContext = await getMemoryContext(req.user.id);
+          if (req.user.name) {
+            nameUsageInstruction = `\nUser's Name is "${req.user.name}". You may use it naturally.\n`;
+          }
+        }
+        
+        // Build Full Memory-RAG System Prompt
+        const finalSystemPrompt = `${systemInstructionText}\n${personalizationContext}\n${nameUsageInstruction}\n\n${systemInstruction || ""}`;
+        combinedMemoryPrompt = memoryService.buildContext(finalSystemPrompt, conversationHistoryMemory, content);
+
+      } catch (memError) {
+        console.error("[Memory RAG] Error:", memError);
+      }
+    }
 
     // --- MULTI-MODEL DISPATCHER ---
     if (model && !model.startsWith('gemini')) {
       try {
         let reply = "";
 
-        let memoryContext = "";
-        let nameUsageInstruction = "";
-        if (req.user) {
-          memoryContext = await getMemoryContext(req.user.id);
-          if (req.user.name) {
-            nameUsageInstruction = `
-[NAME USAGE RULE]:
-User's Name is "${req.user.name}". 
-- You may use the user's name naturally if appropriate, but do not repeat it frequently.
-- Maintain a professional and helpful tone.
-`;
-          }
-        }
-        const combinedSystemInstruction = `${systemInstructionText}\n${memoryContext}\n${nameUsageInstruction}\n\n${systemInstruction || ""}`;
-
         // Standard OpenAI Format Preparation
         const formattedMessages = [
-          { role: 'system', content: combinedSystemInstruction },
+          { role: 'system', content: combinedMemoryPrompt },
 
           ...(history || []).map(msg => ({
             role: msg.role === 'model' ? 'assistant' : 'user',
@@ -239,12 +261,14 @@ User's Name is "${req.user.name}".
           const resp = await axios.post('https://api.anthropic.com/v1/messages', {
             model: 'claude-3-opus-20240229',
             max_tokens: 4096,
-            system: systemInstruction,
+            system: combinedMemoryPrompt,
             messages: claudeMsgs
           }, { headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' } });
           reply = resp.data.content[0].text;
         }
 
+        const mUserId = req.user ? req.user.id : (req.guest ? req.guest.id : null);
+        memoryService.saveMessageWithEmbedding(sessionId, mUserId, 'assistant', reply);
 
         if (req.user) {
           extractUserMemory(content, history).then(mem => updateMemory(req.user.id, mem, model));
@@ -378,9 +402,11 @@ MANDATORY MEDIA RULES:
       finalSystemInstruction = `${finalSystemInstruction}\n\n${MANDATORY_JSON_RULES}`;
     }
 
+    // Wrap with Conversation Memory RAG Service
+    let finalSystemPromptWithMemory = memoryService.buildContext(finalSystemInstruction, conversationHistoryMemory, content);
 
-    // Add conversation history if available
-    if (history && Array.isArray(history)) {
+    // Add conversation history if available (Only push if retrieved memory is empty to prevent double-context, or omit)
+    if (history && Array.isArray(history) && conversationHistoryMemory.length === 0) {
       history.forEach(msg => {
         parts.push({ text: `${msg.role === 'user' ? 'User' : 'Model'}: ${msg.content} ` });
       });
@@ -550,7 +576,7 @@ MANDATORY MEDIA RULES:
         const tempContentPayload = { role: "user", parts: parts };
         const modelForParams = genAIInstance.getGenerativeModel({
           model: primaryModelName,
-          systemInstruction: finalSystemInstruction
+          systemInstruction: finalSystemPromptWithMemory
         });
 
         const tempStreamingResult = await modelForParams.generateContent({
@@ -715,7 +741,7 @@ MANDATORY MEDIA RULES:
           // Always create fresh model instance with correct system instruction
           const model = genAIInstance.getGenerativeModel({
             model: mName,
-            systemInstruction: finalSystemInstruction
+            systemInstruction: finalSystemPromptWithMemory
           });
 
           // Add timeout to prevent hanging (increased to 60s for cold starts)
@@ -1087,6 +1113,11 @@ MANDATORY MEDIA RULES:
       } else {
         finalResponse.reply = `Conversion failed: ${conversionResult.error}`;
       }
+    }
+
+    const mUserId = req.user ? req.user.id : (req.guest ? req.guest.id : null);
+    if (finalResponse.reply) {
+      memoryService.saveMessageWithEmbedding(sessionId, mUserId, 'assistant', finalResponse.reply);
     }
 
     if (req.user) {

@@ -10,13 +10,39 @@ import mammoth from 'mammoth';
 import xlsx from 'xlsx';
 import officeParser from 'officeparser';
 import Tesseract from 'tesseract.js';
-import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
+import * as vertexService from '../services/vertex.service.js';
+import * as ingestionService from '../services/knowledgeIngestion.service.js';
+import { Storage } from '@google-cloud/storage';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const pipeline = util.promisify(stream.pipeline);
+
+const estimateChunks = async (fileBuffer, mimeType) => {
+    try {
+        let text = '';
+        if (mimeType === 'application/pdf') {
+            const data = await pdf(fileBuffer);
+            text = data.text;
+        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+           const result = await mammoth.extractRawText({ buffer: fileBuffer });
+           text = result.value;
+        } else if (mimeType === 'text/plain' || mimeType === 'text/csv') {
+            text = fileBuffer.toString();
+        } else {
+            return Math.max(1, Math.ceil(fileBuffer.length / 800));
+        }
+
+        const chunks = await ingestionService.chunkText(text);
+        return chunks.length;
+    } catch (error) {
+        logger.warn(`Chunk estimation failed: ${error.message}`);
+        return 0;
+    }
+}
 
 // @desc    Upload a document
 // @route   POST /api/knowledge/upload
@@ -38,8 +64,6 @@ export const uploadDocument = async (req, res) => {
         let gcsUri = null;
         try {
             logger.info("Uploading to Google Cloud Storage (aisa_knowledge_base)...");
-            const { Storage } = await import('@google-cloud/storage');
-            // Assuming GCP_PROJECT_ID is in env, or it uses Application Default Credentials
             const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
             const storageClient = new Storage(storageOptions);
             const bucketName = 'aisa_knowledge_base';
@@ -61,7 +85,7 @@ export const uploadDocument = async (req, res) => {
 
         // 2. Dispatch Vertex AI RAG Engine Import (Run asynchronously)
         if (gcsUri) {
-            importToVertexRag(gcsUri, originalName).catch(err => {
+            vertexService.importToVertexRag(gcsUri, originalName).catch(err => {
                 logger.error(`Background Vertex RAG error for ${originalName}: ${err.message}`);
             });
         }
@@ -70,14 +94,17 @@ export const uploadDocument = async (req, res) => {
 
         // 3. Always Store Metadata (for listing)
         try {
+            const chunks = await estimateChunks(fileBuffer, mimeType);
             await Knowledge.create({
                 filename: originalName,
                 gcsUri: gcsUri,
                 mimetype: mimeType,
                 size: fileSize,
-                category: category
+                category: category,
+                status: 'Active',
+                totalChunks: chunks
             });
-            logger.info(`Document metadata saved to MongoDB for track. GCS URI: ${gcsUri}`);
+            logger.info(`Document metadata saved to MongoDB for track. GCS URI: ${gcsUri}, Chunks: ${chunks}`);
         } catch (dbError) {
             logger.error(`MongoDB Save Error: ${dbError.message}`);
         }
@@ -106,7 +133,7 @@ export const uploadDocument = async (req, res) => {
 // @access  Public
 export const getDocuments = async (req, res) => {
     try {
-        const documents = await Knowledge.find({}, 'filename uploadDate gcsUri mimetype size category');
+        const documents = await Knowledge.find({}).sort({ uploadDate: -1 });
         res.status(200).json({
             success: true,
             data: documents
@@ -114,6 +141,69 @@ export const getDocuments = async (req, res) => {
     } catch (error) {
         logger.error(`Get Documents Error: ${error.message}`);
         res.status(500).json({ success: false, message: 'Server error fetching documents' });
+    }
+};
+
+// @desc    Get all knowledge (Documents + Web Sources)
+// @route   GET /api/knowledge/list
+// @access  Public
+export const getKnowledgeList = async (req, res) => {
+    try {
+        const documents = await Knowledge.find({}).sort({ uploadDate: -1 });
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        const sources = await KnowledgeSource.find({}).sort({ updatedAt: -1 });
+
+        // Map sources to a similar structure if needed, or just return both
+        res.status(200).json({
+            success: true,
+            data: {
+                documents,
+                sources
+            }
+        });
+    } catch (error) {
+        logger.error(`List Knowledge Error: ${error.message}`);
+        res.status(500).json({ success: false, message: 'Server error fetching knowledge list' });
+    }
+};
+
+// @desc    Re-index a document (Trigger Vertex Import again)
+// @route   POST /api/knowledge/reindex/:id
+// @access  Public
+export const reindexDocument = async (req, res) => {
+    try {
+        const document = await Knowledge.findById(req.params.id);
+        if (!document) {
+            return res.status(404).json({ success: false, message: 'Document not found' });
+        }
+
+        if (!document.gcsUri) {
+            return res.status(400).json({ success: false, message: 'Document has no GCS URI for indexing' });
+        }
+
+        document.status = 'Indexing';
+        await document.save();
+
+        // Trigger Vertex Import
+        vertexService.importToVertexRag(document.gcsUri, document.filename)
+            .then(async () => {
+                document.status = 'Active';
+                await document.save();
+                logger.info(`Re-indexed ${document.filename} successfully.`);
+            })
+            .catch(async (err) => {
+                document.status = 'Error';
+                await document.save();
+                logger.error(`Re-indexing failed for ${document.filename}: ${err.message}`);
+            });
+
+        res.status(200).json({
+            success: true,
+            message: 'Re-indexing process started'
+        });
+    } catch (error) {
+        logger.error(`Re-index error: ${error.message}`);
+        res.status(500).json({ success: false, message: 'Failed to trigger re-indexing' });
     }
 };
 
@@ -147,7 +237,7 @@ export const deleteDocument = async (req, res) => {
             }
 
             // 2. Delete from Vertex RAG
-            deleteFromVertexRag(gcsUri, originalName).catch(err => {
+            vertexService.deleteFromVertexRag(gcsUri, originalName).catch(err => {
                 logger.error(`Background Vertex RAG delete error: ${err.message}`);
             });
         }
@@ -173,11 +263,19 @@ export const deleteDocument = async (req, res) => {
 export const downloadDocument = async (req, res) => {
     try {
         const document = await Knowledge.findById(req.params.id);
-        if (!document || !document.gcsUri) {
-            return res.status(404).send('Document not found');
+        if (!document) {
+            logger.warn(`Download failed: Document ${req.params.id} not found`);
+            return res.status(404).send('Document record not found in database');
         }
 
-        const { Storage } = await import('@google-cloud/storage');
+        if (!document.gcsUri) {
+            logger.warn(`Download failed: Document ${document.filename} has no GCS URI`);
+            return res.status(404).send('Document has no associated storage location');
+        }
+
+        logger.info(`Attempting to stream document: ${document.filename} from ${document.gcsUri}`);
+
+        // Initialization using existing Storage import at top-level
         const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
         const storageClient = new Storage(storageOptions);
 
@@ -187,152 +285,222 @@ export const downloadDocument = async (req, res) => {
 
         const file = storageClient.bucket(bucketName).file(gcsFileName);
 
-        res.setHeader('Content-Type', document.mimetype || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `inline; filename="${document.filename}"`);
+        // Check if file exists in GCS first
+        const [exists] = await file.exists();
+        if (!exists) {
+            logger.error(`File not found in GCS bucket: ${document.gcsUri}`);
+            return res.status(404).send('Physical file not found in storage bucket');
+        }
 
-        file.createReadStream()
-            .on('error', (err) => {
-                logger.error(`Error reading from GCS: ${err.message}`);
-                if (!res.headersSent) {
-                    res.status(500).send('Error reading file from storage');
-                }
-            })
-            .pipe(res);
+        res.setHeader('Content-Type', document.mimetype || 'application/octet-stream');
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(document.filename)}"`);
+
+        const readStream = file.createReadStream();
+        
+        readStream.on('error', (err) => {
+            logger.error(`ReadStream Error for ${document.filename}: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(500).send('Error reading file from storage');
+            }
+        });
+
+        readStream.pipe(res);
     } catch (error) {
-        logger.error(`Download Error: ${error.message}`);
-        res.status(500).send('Server error streaming document');
+        logger.error(`Download Controller Error: ${error.message}`);
+        res.status(500).send(`Server error: ${error.message}`);
     }
 };
 
-// --- Helper Functions ---
-
-/**
- * Automatically creates (or finds) a Vertex AI RAG Corpus and triggers
- * the import of a newly uploaded GCS file into that corpus.
- */
-async function importToVertexRag(gcsUri, originalName) {
-    const projectId = process.env.GCP_PROJECT_ID;
-    const location = process.env.GCP_LOCATION || 'asia-south1';
-    let corpusId = process.env.VERTEX_RAG_CORPUS_ID;
-
-    logger.info(`[RAG IMPORT DEBUG] Project: ${projectId}, Location: ${location}, Corpus: ${corpusId}`);
-
-    if (!projectId) {
-        logger.warn("Skipping Vertex RAG ingestion: GCP_PROJECT_ID is not configured in environment.");
-        return;
-    }
-
+// @desc    Upload a URL
+// @route   POST /api/knowledge/upload-url
+// @access  Public
+// @desc    Upload a URL
+// @route   POST /api/knowledge/upload-url
+// @access  Public
+export const uploadUrl = async (req, res) => {
     try {
-        const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
-        const client = await auth.getClient();
-        const token = await client.getAccessToken();
+        const { url, category = 'Web', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
 
-        // 1. Check or Create RAG Corpus
-        if (!corpusId) {
-            logger.info("VERTEX_RAG_CORPUS_ID not set. Checking for 'aisa_Knowlege_Base'...");
-            const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora`;
-
-            try {
-                const listRes = await axios.get(listUrl, {
-                    headers: { Authorization: `Bearer ${token.token}` }
-                });
-                const corpora = listRes.data.ragCorpora || [];
-                const existingCorpus = corpora.find(c => c.displayName === 'aisa_knowledge_base');
-
-                if (existingCorpus) {
-                    corpusId = existingCorpus.name.split('/').pop();
-                    logger.info(`Found existing RAG Corpus ID: ${corpusId}`);
-                } else {
-                    logger.info("Creating new RAG Corpus: 'aisa_knowledge_base'...");
-                    const createRes = await axios.post(listUrl, {
-                        displayName: 'aisa_knowledge_base'
-                    }, {
-                        headers: {
-                            Authorization: `Bearer ${token.token}`,
-                            'Content-Type': 'application/json'
-                        }
-                    });
-                    corpusId = createRes.data.name.split('/').pop();
-                    logger.info(`Created new RAG Corpus ID: ${corpusId}.`);
-                }
-            } catch (corpusErr) {
-                logger.error(`Error managing RAG Corpus: ${corpusErr.response?.data?.error?.message || corpusErr.message}`);
-                return;
-            }
+        if (!url) {
+            return res.status(400).json({ success: false, message: 'URL is required' });
         }
 
-        // 2. Import the GCS file into the Corpus
-        const importUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles:import`;
+        logger.info(`Processing URL ingestion request: ${url}`);
 
-        const importData = {
-            importRagFilesConfig: {
-                gcsSource: {
-                    uris: [gcsUri]
-                }
-            }
-        };
+        // Validate URL
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+        } catch (e) {
+            return res.status(400).json({ success: false, message: 'Invalid URL format' });
+        }
 
-        const importRes = await axios.post(importUrl, importData, {
-            headers: {
-                Authorization: `Bearer ${token.token}`,
-                'Content-Type': 'application/json'
-            }
+        // 1. Check if source already exists, if not create it
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        let source = await KnowledgeSource.findOne({ url });
+
+        if (!source) {
+            source = await KnowledgeSource.create({
+                url: url,
+                domain: parsedUrl.hostname,
+                crawl_depth: depth,
+                max_pages: maxPages,
+                update_frequency: frequency,
+                status: 'active',
+                next_crawl_at: new Date() // Force immediate crawl
+            });
+        }
+
+        // 2. Trigger Ingestion via Service
+        const result = await ingestionService.processUrlIngestion(url, source._id, {
+            category,
+            maxDepth: depth,
+            maxPages: maxPages
         });
 
-        logger.info(`[Vertex RAG] Successfully triggered import for '${originalName}' (${gcsUri}) into Corpus '${corpusId}'`);
-        // The import response might contain an operation name for tracking
-        if (importRes.data?.name) {
-            logger.debug(`[Vertex RAG] Import Operation Name: ${importRes.data.name}`);
-        }
+        // 3. Update Source Metadata
+        const nextCrawl = new Date();
+        if (frequency === 'daily') nextCrawl.setDate(nextCrawl.getDate() + 1);
+        else if (frequency === 'weekly') nextCrawl.setDate(nextCrawl.getDate() + 7);
+        else if (frequency === 'monthly') nextCrawl.setMonth(nextCrawl.getMonth() + 1);
+        else nextCrawl.setDate(nextCrawl.getDate() + 1);
+
+        source.last_crawled_at = new Date();
+        source.next_crawl_at = nextCrawl;
+        source.pages_indexed = result.total_pages;
+        await source.save();
+
+        res.status(200).json({
+            success: true,
+            message: `Processed ${result.updated_pages} new/updated pages from ${url}`,
+            data: {
+                source_id: source._id,
+                total_pages: result.total_pages,
+                updated_pages: result.updated_pages,
+                results: result.results
+            }
+        });
 
     } catch (error) {
-        logger.error(`[Vertex RAG] Import Error: ${error.response?.data?.error?.message || error.message}`);
+        logger.error(`URL Upload Error: ${error.message}`);
+        res.status(500).json({ success: false, message: error.message || 'Server error during URL ingestion' });
     }
-}
+};
 
-async function deleteFromVertexRag(gcsUri, originalName) {
-    const projectId = process.env.GCP_PROJECT_ID;
-    const location = process.env.GCP_LOCATION || 'asia-south1';
-    let corpusId = process.env.VERTEX_RAG_CORPUS_ID;
-
-    if (!projectId) return;
-
+/**
+ * @desc    Get all active knowledge sources (websites)
+ * @route   GET /api/knowledge/sources
+ */
+export const getKnowledgeSources = async (req, res) => {
     try {
-        const { GoogleAuth } = await import('google-auth-library');
-        const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
-        const client = await auth.getClient();
-        const token = await client.getAccessToken();
-
-        if (!corpusId) {
-            const listUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora`;
-            const listRes = await axios.get(listUrl, { headers: { Authorization: `Bearer ${token.token}` } });
-            const corpora = listRes.data.ragCorpora || [];
-            const existingCorpus = corpora.find(c => c.displayName === 'aisa_knowledge_base');
-            if (existingCorpus) {
-                corpusId = existingCorpus.name.split('/').pop();
-            } else {
-                return;
-            }
-        }
-
-        const listFilesUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/${location}/ragCorpora/${corpusId}/ragFiles`;
-        const listFilesRes = await axios.get(listFilesUrl, { headers: { Authorization: `Bearer ${token.token}` } });
-        const files = listFilesRes.data.ragFiles || [];
-
-        const gcsFileName = gcsUri.split('/').pop();
-
-        const fileToDelete = files.find(f => {
-            return f.displayName === gcsFileName || f.displayName === originalName;
-        });
-
-        if (fileToDelete) {
-            const delUrl = `https://${location}-aiplatform.googleapis.com/v1beta1/${fileToDelete.name}`;
-            await axios.delete(delUrl, { headers: { Authorization: `Bearer ${token.token}` } });
-            logger.info(`[Vertex RAG] Deleted file ${fileToDelete.name}`);
-        } else {
-            logger.info(`[Vertex RAG] Could not find file to delete for ${gcsUri}`);
-        }
-    } catch (e) {
-        logger.error(`[Vertex RAG] Delete Error: ${e.response?.data?.error?.message || e.message}`);
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        const sources = await KnowledgeSource.find({}).sort({ createdAt: -1 });
+        res.status(200).json({ success: true, data: sources });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
     }
-}
+};
+
+/**
+ * @desc    Manually trigger a re-crawl
+ * @route   POST /api/knowledge/recrawl
+ */
+export const recrawlSource = async (req, res) => {
+    try {
+        const { id, url } = req.body;
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        const { triggerManualUpdate } = await import('../services/scheduler.service.js');
+
+        let sourceId = id;
+        if (!sourceId && url) {
+            const source = await KnowledgeSource.findOne({ url });
+            if (source) sourceId = source._id;
+        }
+
+        if (!sourceId) {
+            return res.status(404).json({ success: false, message: 'Source not found' });
+        }
+
+        // Trigger in background
+        triggerManualUpdate(sourceId).catch(err => logger.error(`Manual recrawl failed: ${err.message}`));
+
+        res.status(200).json({ success: true, message: 'Recrawl triggered successfully in background' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * @desc    Update source settings (status, frequency, etc.)
+ * @route   PATCH /api/knowledge/sources/:id
+ */
+export const updateSourceStatus = async (req, res) => {
+    try {
+        const { status, update_frequency, crawl_depth, max_pages } = req.body;
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        
+        const updateData = {};
+        if (status) updateData.status = status;
+        if (update_frequency) updateData.update_frequency = update_frequency;
+        if (crawl_depth) updateData.crawl_depth = crawl_depth;
+        if (max_pages) updateData.max_pages = max_pages;
+
+        const source = await KnowledgeSource.findByIdAndUpdate(req.params.id, updateData, { new: true });
+        
+        if (!source) return res.status(404).json({ success: false, message: 'Source not found' });
+        
+        res.status(200).json({ success: true, data: source });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/**
+ * @desc    Delete a knowledge source and its associated pages
+ * @route   DELETE /api/knowledge/sources/:id
+ */
+export const deleteKnowledgeSource = async (req, res) => {
+    try {
+        const KnowledgeSource = (await import('../models/KnowledgeSource.model.js')).default;
+        const source = await KnowledgeSource.findById(req.params.id);
+        
+        if (!source) return res.status(404).json({ success: false, message: 'Source not found' });
+
+        // Find all pages from this source
+        const Knowledge = (await import('../models/Knowledge.model.js')).default;
+        // 2. Find all associated crawled pages
+        const pages = await Knowledge.find({ knowledgeSourceId: source._id });
+
+        logger.info(`Deleting knowledge source ${source.url} and its ${pages.length} pages.`);
+
+        // Delete from GCS and Vertex for each page
+        const { Storage } = await import('@google-cloud/storage');
+        const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
+        const storageClient = new Storage(storageOptions);
+        const vertexService = await import('../services/vertex.service.js');
+
+        for (const page of pages) {
+            if (page.gcsUri) {
+                try {
+                    const urlParts = page.gcsUri.replace('gs://', '').split('/');
+                    const bName = urlParts[0];
+                    const fName = urlParts.slice(1).join('/');
+                    await storageClient.bucket(bName).file(fName).delete();
+                } catch (e) { logger.warn(`Delete GCS failed for ${page.sourceUrl}: ${e.message}`); }
+
+                vertexService.deleteFromVertexRag(page.gcsUri, page.filename).catch(e => {
+                    logger.warn(`Delete Vertex failed for ${page.sourceUrl}: ${e.message}`);
+                });
+            }
+            await Knowledge.findByIdAndDelete(page._id);
+        }
+
+        await KnowledgeSource.findByIdAndDelete(req.params.id);
+
+        res.status(200).json({ success: true, message: 'Source and its knowledge completely removed' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// Vertex RAG operations are handled by vertex.service.js

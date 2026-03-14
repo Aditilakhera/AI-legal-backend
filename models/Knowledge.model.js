@@ -24,7 +24,26 @@ const KnowledgeSchema = new mongoose.Schema({
         type: String,
         default: 'General'
     },
+    sourceUrl: {
+        type: String
+    },
+    contentHash: {
+        type: String
+    },
+    knowledgeSourceId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'KnowledgeSource'
+    },
     // content: { type: String } // Removed to save metadata only
+    totalChunks: {
+        type: Number,
+        default: 0
+    },
+    status: {
+        type: String,
+        enum: ['Pending', 'Indexing', 'Active', 'Error'],
+        default: 'Pending'
+    },
     uploadDate: {
         type: Date,
         default: Date.now
