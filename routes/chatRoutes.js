@@ -18,7 +18,8 @@ import { generateVideoFromPrompt } from "../controllers/videoController.js";
 import { generateImageFromPrompt } from "../controllers/image.controller.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
-import { retrieveContextFromRag } from "../services/vertex.service.js";
+import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
+import * as configService from "../services/configService.js";
 import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
 import * as deepSearchService from "../services/deepSearch.service.js";
@@ -103,6 +104,11 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     let isWebSearchResponse = false;
     let searchSources = [];
     const isDeepSearch = (systemInstruction && systemInstruction.includes('DEEP SEARCH MODE ENABLED')) || mode === 'DEEP_SEARCH';
+    
+    // Check for company keywords early to ensure sources box
+    const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web'];
+    const lowerMsgFull = content ? content.toLowerCase().trim() : "";
+    const hasCompanyKeyword = content ? companyKeywords.some(k => lowerMsgFull.includes(k)) : false;
 
     // Auto web search from keywords is only available to premium users
     let hasPremium = false;
@@ -123,15 +129,31 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     if (Array.isArray(video)) allAttachments.push(...video);
     else if (video) allAttachments.push(video);
 
-    let detectedMode = mode || detectMode(content, allAttachments);
+    // MAGIC TOOLS ENFORCEMENT: Strictly use features ONLY if the user explicitly selected the card (passed as 'mode')
+    const magicTools = [
+      'IMAGE_GEN', 'VIDEO_GEN', 'web_search', 'DEEP_SEARCH', 
+      'AUDIO_TALK', 'FILE_CONVERSION', 'CODE_WRITER', 
+      'IMAGE_EDIT', 'IMAGE_TO_VIDEO', 'CODING_HELP'
+    ];
+    
+    let detectedMode = mode;
+    if (!detectedMode) {
+      // Auto-detect only for non-Magic Tools (like FILE_ANALYSIS)
+      const autoDetected = detectMode(content, allAttachments);
+      if (magicTools.includes(autoDetected)) {
+         detectedMode = 'CHAT'; 
+      } else {
+         detectedMode = autoDetected;
+      }
+    }
+    
     if (detectedMode === 'DOCUMENT_CONVERT') detectedMode = 'FILE_CONVERSION';
 
     // FINAL DECISION: Strictly use web search ONLY if the user explicitly selected the card
-    // mode will be 'web_search' or 'DEEP_SEARCH' only if the card is active in frontend
-    const isExplicitSearchCard = (mode === 'web_search' || mode === 'DEEP_SEARCH' || detectedMode === 'web_search' || detectedMode === 'DEEP_SEARCH');
+    const isExplicitSearchCard = (mode === 'web_search' || mode === 'DEEP_SEARCH');
     const shouldDoWebSearch = isDeepSearch || isExplicitSearchCard;
 
-    console.log(`[DEBUG] SEARCH DECISION: isDeepSearch=${isDeepSearch}, mode=${mode}, detectedMode=${detectedMode}, hasPremium=${hasPremium}, shouldDoWebSearch=${shouldDoWebSearch}`);
+    console.log(`[DEBUG] MODE DECISION: mode=${mode}, detectedMode=${detectedMode}, shouldDoWebSearch=${shouldDoWebSearch}`);
 
     if (shouldDoWebSearch) {
       const isDeep = isDeepSearch || mode === 'DEEP_SEARCH' || detectedMode === 'DEEP_SEARCH';
@@ -312,21 +334,57 @@ User's Name is "${req.user.name}".
 
     // --- VERTEX AI RAG INTEGRATION (COMPANY KNOWLEDGE) ---
     let ragContext = "";
+    let isGeneralQuestion = false;
     try {
       // Check if we have documents in DB OR if a manual Corpus ID is set
       const docCount = await Knowledge.countDocuments().catch(() => 0);
       const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
 
       if ((docCount > 0 || manualCorpusId) && content) {
-        console.log(`[RAG] Checking Knowledge Base (Vertex RAG) for: "${content.substring(0, 30)}..."`);
-        const retrieved = await retrieveContextFromRag(content, 8); // TopK=8 as per expert guideline
-        if (retrieved && retrieved.text) {
-          console.log("[RAG] Relevant context FOUND and injected.");
-          // Add sources to searchSources array for source snippet support
+        // Robust Detection (Priority 1: General Phrase filtering)
+        const generalPhrases = [
+            'what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 
+            'why is', 'suggest', 'give me', 'who is', 'describe', 'difference between',
+            'how does', 'why does', 'what are', 'where is'
+        ];
+        
+        const lowerMsg = content.toLowerCase().trim();
+        const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
+        
+        let needsRAG = true;
+        if (startsWithGeneral && !hasCompanyKeyword) {
+            needsRAG = false;
+            isGeneralQuestion = true;
+            console.log(`[RAG-Logic] FORCED NO for generic question: "${content}"`);
+        } else {
+            needsRAG = await detectRAGNeed(content);
+        }
+
+        // --- NEW: FORCE COMPANY SOURCE FOR BRANDED QUERIES ---
+        if (hasCompanyKeyword) {
+            console.log(`[RAG-Logic] Branded keyword detected. Ensuring company source exists.`);
+            if (searchSources.length === 0) {
+                searchSources.push({
+                    title: "Unified Web Options",
+                    url: "https://uwo24.com/",
+                    snippet: "Official information about AISA and UWO services.",
+                    document_title: "Unified Web Options",
+                    source_type: "URL",
+                    chunk_id: `brand_${Date.now()}`
+                });
+            }
+        }
+
+        if (needsRAG) {
+          console.log(`[RAG] Checking Knowledge Base (Vertex RAG) for: "${content.substring(0, 30)}..."`);
+          const retrieved = await retrieveContextFromRag(content, 8); // TopK=8 as per expert guideline
+        if (retrieved) {
           if (retrieved.sources && Array.isArray(retrieved.sources)) {
             searchSources = [...searchSources, ...retrieved.sources];
           }
-          ragContext = `
+          if (retrieved.text) {
+            console.log("[RAG] Relevant context FOUND and injected.");
+            ragContext = `
 You are AISA, an intelligent super AI assistant.
 
 Use the provided context to answer the user's question accurately.
@@ -347,14 +405,15 @@ Instructions:
 Response Guidelines:
 - Start with the direct answer.
 - Provide a short explanation if necessary.
+- **WEBSITE CITATION**: Whenever you provide information about AISA or UWO products/services from this context, you MUST include the official website link: https://uwo24.com/
 - Keep the response clear and concise.
 - Avoid unnecessary filler text.
 `;
-        } else {
-          console.log("[RAG] No relevant context found for this query.");
+          }
         }
       }
-    } catch (ragError) {
+    }
+} catch (ragError) {
       console.error("[RAG ERROR]", ragError.message);
     }
 
@@ -364,15 +423,24 @@ Response Guidelines:
     const dateContext = `### CURRENT DATE & TIME:\nToday is ${currentDateLong} (India Standard Time). (Aaj ki date aur samay: ${currentDateLong})\n`;
 
     let baseInstruction = systemInstruction || modeSystemInstruction;
-    const dynamicSystemInstruction = (await import('../config/vertex.js')).getDynamicSystemInstruction();
+    let dynamicSystemInstruction = (await import('../config/vertex.js')).getDynamicSystemInstruction();
+    
+    if (isGeneralQuestion) {
+        // Switch to strict direct-answer mode for general questions
+        dynamicSystemInstruction = configService.getGeneralSystemInstruction(memoryContext);
+    }
+
     let finalSystemInstruction = `${dynamicSystemInstruction}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
 
     if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
       finalSystemInstruction = modeSystemInstruction;
     } else {
-      // Check if the user explicitly activated image/video generation mode
-      const isImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
-      const isVideoMode = mode === 'VIDEO_GEN';
+      // Check if the user explicitly activated magic tools via the card (mode)
+      const isActuallyImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+      const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
+      const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
+      const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
+      const isActuallyConvertMode = mode === 'FILE_CONVERSION';
 
       // Only add standard rules for non-specialized modes to avoid instruction collision
       let MANDATORY_JSON_RULES = `
@@ -384,20 +452,70 @@ ALWAYS respond using ROMAN SCRIPT (English letters).
 MANDATORY INTERACTIVE RULES (AISA):
 - ROMAN SCRIPT ONLY: For any Hindi or Hinglish response, you MUST use English letters (Roman script).
 - BALANCED LENGTH: Provide detailed, helpful answers (aim for 10-15 lines for detailed queries).
-- RICH SUGGESTIONS: End with a conversational lead-in (e.g., "I can also help you with:"), 2-4 bulleted suggestions, and a final friendly sentence with an emoji.
 - Maintain a professional, calm, and intelligent personality (AISA).
 `;
 
-      // MEDIA RULES: Only include generation actions when user explicitly asks with clear intent keywords
-      MANDATORY_JSON_RULES += `
-MANDATORY MEDIA RULES:
-- You can ONLY generate images or videos when the user EXPLICITLY asks you to CREATE/GENERATE/MAKE an image or video.
-- Explicit trigger words for IMAGE generation: "generate image", "create image", "make image", "draw", "banao image", "photo banao", "image generate karo", "create a picture", "make a photo"
-- Explicit trigger words for VIDEO generation: "generate video", "create video", "make video", "video banao", "video generate karo"
-- If the user sends a DESCRIPTIVE TEXT (like "A cinematic scene of...", "A beautiful sunset...", etc.) WITHOUT explicitly asking to generate/create/make an image, treat it as a NORMAL TEXT prompt and respond with TEXT ONLY. Do NOT auto-generate images for descriptive prompts.
-- If generating IMAGE (only when explicitly asked): Output ONLY {"action": "generate_image", "prompt": "..."}
-- If generating VIDEO (only when explicitly asked): Output ONLY {"action": "generate_video", "prompt": "..."}
+      if (isGeneralQuestion) {
+          MANDATORY_JSON_RULES += `
+- DIRECT ANSWER MODE: Provide ONLY the direct answer.
+- DO NOT provide website links, sources, citations, or bibliography in your response.
+- DO NOT provide "Suggestions", "I can also help you with", or follow-up questions.
+- END your response immediately after the answer. No closing conversational filler.
 `;
+      } else {
+          MANDATORY_JSON_RULES += `
+- RICH SUGGESTIONS: End with a conversational lead-in (e.g., "I can also help you with:"), 2-4 bulleted suggestions, and a final friendly sentence with an emoji.
+`;
+      }
+
+      // MEDIA & TOOL RULES: Strictly enforced based on current mode
+      let TOOL_RULES = "";
+      
+      if (isActuallyImageMode) {
+          TOOL_RULES += `
+MANDATORY IMAGE GENERATION RULES:
+- You are in IMAGE GENERATION MODE. 
+- Output ONLY {"action": "generate_image", "prompt": "..."} to create the image.
+- The prompt MUST be in English, highly descriptive (mention lighting, style, colors), and professional.
+`;
+      } else if (isActuallyVideoMode) {
+          TOOL_RULES += `
+MANDATORY VIDEO GENERATION RULES:
+- You are in VIDEO GENERATION MODE.
+- Output ONLY {"action": "generate_video", "prompt": "..."} to create the video.
+- The prompt MUST be in English and cinematic.
+`;
+      } else if (isActuallySearchMode) {
+          TOOL_RULES += `
+MANDATORY SEARCH RULES:
+- You are in WEB SEARCH / DEEP SEARCH MODE.
+- Use the provided search results to answer precisely.
+- Cite sources clearly.
+`;
+      } else if (isActuallyCodeMode) {
+          TOOL_RULES += `
+MANDATORY CODE WRITER RULES:
+- You are in CODE WRITER MODE.
+- Provide production-ready code with explanations.
+`;
+      } else if (isActuallyConvertMode) {
+          TOOL_RULES += `
+MANDATORY CONVERSION RULES:
+- You are in DOCUMENT CONVERSION MODE.
+- Output ONLY the JSON action for file_conversion.
+`;
+      } else {
+          // CHAT MODE - Strictly forbid JSON Magic Actions
+          TOOL_RULES += `
+MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
+- You are in NORMAL CHAT mode.
+- You are FORBIDDEN from executing magic actions (Do NOT output JSON like {"action": "..."}).
+- You SHOULD answer all "How-to" questions, general queries, and conversations using plain text.
+- If the user explicitly asks you to generate/create an image, video, search, or convert a file right now, explain that they must activate the specific tool from the "AISA Magic Tools" menu to perform the actual generation.
+`;
+      }
+
+      MANDATORY_JSON_RULES += TOOL_RULES;
 
       finalSystemInstruction = `${finalSystemInstruction}\n\n${MANDATORY_JSON_RULES}`;
     }
@@ -800,8 +918,8 @@ MANDATORY MEDIA RULES:
     // Construct final response object
     const finalResponse = {
       reply,
-      detectedMode,
-      isRealTime: isWebSearchResponse,
+      detectedMode: (searchSources.length > 0 && !isWebSearchResponse) ? 'RAG' : detectedMode,
+      isRealTime: isWebSearchResponse || searchSources.length > 0 || hasCompanyKeyword,
       sources: searchSources,
       language: detectedLanguage || language || 'English'
     };
@@ -844,7 +962,6 @@ MANDATORY MEDIA RULES:
             for (let i = startIndex; i < text.length; i++) {
               const char = text[i];
               if (escape) { escape = false; continue; }
-              if (char === '\\') { escape = true; continue; }
               if (char === '"' || char === "'") { inString = !inString; continue; } // Simplistic quote handling
 
               if (!inString) {
@@ -1044,7 +1161,7 @@ MANDATORY MEDIA RULES:
             else if (userReqLower.includes('thumbnail')) style = 'YouTube thumbnail (1280x720)';
             else if (userReqLower.includes('whatsapp')) style = 'WhatsApp status (vertical 1080x1920)';
 
-            finalImagePrompt = `A premium ultra-modern ${style} for AISA™ — Artificial Intelligence Super Assistant by UWO™. Color palette: deep purple (#6C3CE1) to electric blue (#4A90D9) gradient background. Center: Large bold futuristic white text "AISA™". Below it: tagline "Your AI Super Assistant" in clean white. Background elements: glowing AI brain / neural network lines, subtle particle effects, soft light rays. Bottom: "Powered by UWO™ | uwo24.com" in small white text. Style: Apple / Google product launch level quality. No human faces. No random photos. Pure digital graphic product poster.`;
+            finalImagePrompt = `A premium ultra-modern ${style} for AISA™ — Artificial Intelligence Super Assistant by UWO™. Color palette: deep purple (#6C3CE1) to electric blue (#4A90D9) gradient background. Center: Large bold futuristic white text "AISA™". Below it: tagline "Your AI Super Assistant" in clean white. Background elements: glowing AI brain / neural network lines, subtle particle effects, soft light rays. Bottom: "Powered by UWO™" in small white text. Style: Apple / Google product launch level quality. No human faces. No random photos. Pure digital graphic product poster.`;
             console.log(`[IMAGE GEN] ✅ AISA product image detected. Using branded prompt.`);
           } else {
             console.log(`[IMAGE GEN] Standard image request. Using AI-generated prompt.`);

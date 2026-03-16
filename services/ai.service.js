@@ -12,6 +12,8 @@ import * as webSearchService from './webSearch.service.js';
 import memoryService from './memory.service.js';
 import QueryLog from '../models/QueryLog.model.js';
 import userIntelligenceService from './userIntelligence.service.js';
+import * as configService from './configService.js';
+
 
 // Real RAG Storage (MongoDB Atlas)
 let vectorStore = null;
@@ -90,9 +92,25 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             });
         }
 
-        // PRIORITY -1: PERSONA INJECTION (Adaptive System)
+        // PRIORITY -1: PERSONA INJECTION & TOOL RESTRICTIONS
         const personaContext = await userIntelligenceService.getPersonaInjection(userId);
-        const dynamicSystemInstruction = (systemInstruction || "") + personaContext;
+        
+        const isActuallyImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT';
+        const isActuallyVideoMode = mode === 'VIDEO_GEN';
+        const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
+        
+        let toolRestrictions = "";
+        if (isActuallyImageMode) {
+            toolRestrictions = "\n\n### MODE: IMAGE GENERATION ENABLED. You can generate images using JSON action strictly if explicitly asked.";
+        } else if (isActuallyVideoMode) {
+            toolRestrictions = "\n\n### MODE: VIDEO GENERATION ENABLED. You can generate videos using JSON action strictly if explicitly asked.";
+        } else if (isActuallySearchMode) {
+            toolRestrictions = "\n\n### MODE: WEB SEARCH ENABLED. Answer based on real-time data.";
+        } else {
+            toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
+        }
+
+        const dynamicSystemInstruction = (systemInstruction || "") + personaContext + toolRestrictions;
 
         // Helper to build context-aware prompt
         const buildMemoryPrompt = (query) => {
@@ -114,9 +132,10 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             }
 
             if (!finalResponseData.text) {
-                const isForcedSearch = mode === 'web_search' || mode === 'DEEP_SEARCH';
-                const needsSearch = isForcedSearch || await webSearchService.shouldSearch(message);
-                if (needsSearch) {
+                const isForcedSearch = mode === 'web_search' || mode === 'DEEP_SEARCH' || mode === 'SEARCH';
+                // Only perform web search if explicitly requested via mode.
+                // This ensures "normal questions" go to Vertex AI without extra resources.
+                if (isForcedSearch) {
                     logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
                     const searchResult = await webSearchService.performSearch(message, language);
 
@@ -132,29 +151,50 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
 
         if (finalResponseData.text) {
             // Memory save handled at end
-        } else if (dynamicSystemInstruction || (activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
+        } else if ((activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
             // PRIORITY 1: Chat-Uploaded Document / Images
             const promptWithMemory = buildMemoryPrompt(message);
-            if (images && images.length > 0) {
-                const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
-                    systemInstruction: dynamicSystemInstruction, mode, images, documents
-                });
-                finalResponseData = { text: vertexResponse, isRealTime: false };
-            } else {
-                const openaiResponse = await openaiService.askOpenAI(promptWithMemory, activeDocContent, {
-                    systemInstruction: dynamicSystemInstruction, mode, documents, userName
-                });
-                finalResponseData = { text: openaiResponse, isRealTime: false };
-            }
+            const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
+                systemInstruction: dynamicSystemInstruction, 
+                mode, 
+                images, 
+                documents,
+                userName
+            });
+            finalResponseData = { text: vertexResponse, isRealTime: false };
         } else {
             // PRIORITY 2: Company Knowledge Base (Vertex RAG)
             const docCount = await Knowledge.countDocuments();
             let ragContext = null;
             let rewrittenQuery = message;
 
-            if (docCount > 0) {
-                // Step 0: Detect Intent (Only use RAG for company-specific queries)
-                const needsRAG = await vertexService.detectRAGNeed(message);
+            const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
+            if (docCount > 0 || manualCorpusId) {
+                // Step 0: Robust Detection (Only use RAG for company-specific queries)
+                const lowerMsg = message.toLowerCase().trim();
+                const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web'];
+                const generalPhrases = ['what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 'why is', 'suggest', 'give me', 'who is'];
+                
+                // If it looks like a general question and lacks company keywords, SKIP RAG immediately (No Resources)
+                const hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
+                const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
+                
+                logger.info(`[RAG-Logic] Msg: "${lowerMsg}" | hasKeyword: ${hasCompanyKeyword} | startsGen: ${startsWithGeneral}`);
+
+                let needsRAG = false;
+
+                if (startsWithGeneral && !hasCompanyKeyword) {
+                    // USER REQUIREMENT: Normal questions like "What is..." should NEVER trigger RAG unless brands are mentioned.
+                    needsRAG = false;
+                    logger.warn(`[RAG-Logic] FORCED NO for generic question: "${lowerMsg}"`);
+                } else if (hasCompanyKeyword) {
+                    needsRAG = true; // High confidence it's about the company
+                    logger.info(`[RAG-Logic] Decision: YES (Keyword match) for: "${lowerMsg}"`);
+                } else {
+                    // Ambiguous - ask the AI detector for a decision
+                    needsRAG = await vertexService.detectRAGNeed(message);
+                    logger.info(`[RAG-Logic] Decision: ${needsRAG ? 'YES' : 'NO'} (AI Detector) for: "${lowerMsg}"`);
+                }
 
                 if (needsRAG) {
                     // Step 1: Query Rewriting
@@ -184,21 +224,43 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 }
             }
 
-            if (ragContext && ragContext.text) {
+            if (hasCompanyKeyword || (ragContext && ragContext.text)) {
+                if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
+                    if (hasCompanyKeyword) {
+                        ragContext = ragContext || {};
+                        ragContext.sources = [{
+                            title: "Unified Web Options",
+                            url: "https://uwo24.com/",
+                            snippet: "Official information about AISA and UWO services.",
+                            document_title: "Unified Web Options",
+                            source_type: "URL",
+                            chunk_id: `brand_${Date.now()}`
+                        }];
+                    }
+                }
+
                 const promptWithMemory = buildMemoryPrompt(message);
                 // Step 4: Answer Generation (Context + Original Question)
-                const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext.text, { 
+                const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
+
+                const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext?.text, { 
                     userName, 
-                    systemInstruction: dynamicSystemInstruction,
+                    systemInstruction: ragInstructionWithLink,
                     mode: 'RAG' 
                 });
-                finalResponseData = { text: ragResponse, isRealTime: false, sources: ragContext.sources };
+                finalResponseData = { text: ragResponse, isRealTime: true, sources: ragContext?.sources || [], mode: 'RAG' };
             } else {
-                // PRIORITY 3: General Knowledge
+                // PRIORITY 3: General Knowledge (Normal Questions)
                 const promptWithMemory = buildMemoryPrompt(message);
-                const aiResponse = await openaiService.askOpenAI(promptWithMemory, null, { 
+                
+                // USER REQUIREMENT: For normal questions, ONLY give the answer.
+                // We use a specialized instruction set that forbids suggestions and citations.
+                const generalInstruction = configService.getGeneralSystemInstruction(personaContext);
+                logger.warn(`[RAG-Logic] EXECUTING GENERAL CHAT for: "${message}"`);
+
+                const aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
                     userName, 
-                    systemInstruction: dynamicSystemInstruction 
+                    systemInstruction: generalInstruction 
                 });
                 finalResponseData = { text: aiResponse, isRealTime: false };
             }

@@ -41,7 +41,7 @@ export const initializeConfigs = async () => {
                 value: `### OFFICIAL COMPANY DATA (UWO™):
 Unified Web Options & Services Pvt. Ltd. (UWO™) is an IT-registered technology company founded in 2020 and headquartered in Jabalpur, Madhya Pradesh. Specialized in AI solutions, business automation, CRM/workflow systems, AI agents & chatbots, web & app development, cloud integrations, and enterprise productivity tools. Flagship project: AI Mall™.
 - For questions about UWO™, use the above data.
-- For missing information, refer users to admin@uwo24.com.`,
+- For missing information, refer users to our official contact channels.`,
                 description: 'Official UWO company profile and contact info.'
             },
             {
@@ -116,9 +116,9 @@ Instructions:
             if (!existing) {
                 logger.info(`[ConfigService] Seeding default config for: ${config.key}`);
                 existing = await SystemConfig.create(config);
-            } else if (config.key === 'AISA_CONVERSATIONAL_RULES' && !existing.value.includes('RESOURCE RULES:')) {
-                // Feature push: Update existing rules to include new citation logic if missing
-                logger.info(`[ConfigService] Updating ${config.key} to include CITATION rules.`);
+            } else if (config.key === 'AISA_CONVERSATIONAL_RULES' && !existing.value.includes('FALLBACK:')) {
+                // Feature push: Update rules to include the new Fallback/No-Disclaimer logic
+                logger.info(`[ConfigService] Updating ${config.key} to include new Fallback/No-Disclaimer rules.`);
                 existing.value = config.value;
                 existing.lastUpdated = Date.now();
                 await existing.save();
@@ -161,7 +161,31 @@ export const getFullSystemInstruction = () => {
     return `${rules}\n${brand}\n\n${performance}\n\n${company}\n\n${intro}\n\n${ethical}\n\n${intelligence}`;
 };
 
+export const getGeneralSystemInstruction = (adaptiveContext = '') => {
+    let rules = getConfig('AISA_CONVERSATIONAL_RULES');
+    const brand = getConfig('BRAND_SYSTEM_RULES');
+    const performance = getConfig('AISA_PERFORMANCE_RULES');
+    const ethical = getConfig('ETHICAL_GUARDRAILS');
+
+    // USER REQUIREMENT: For normal questions, ONLY give the answer.
+    // We strip the "SUGGESTIONS" rule block and the "KNOWLEDGE USAGE (RAG)" citations block.
+    // This removes instructions that force citing sources or offering help at the end.
+    rules = rules.replace(/###\s*SUGGESTIONS[\s\S]*?(?=###|$)/gi, '');
+    rules = rules.replace(/###\s*KNOWLEDGE USAGE \(RAG\)[\s\S]*?(?=###|$)/gi, '');
+    rules = rules.replace(/5\.\s*SUGGESTIONS[\s\S]*?(?=6\.|$)/gi, '');
+
+    return `${rules}\n${brand}\n\n${performance}\n\n${ethical}\n\n${adaptiveContext}\n\n### MODE: DIRECT ANSWER (ChatGPT Style)
+- Provide ONLY the direct answer to the user's question.
+- DO NOT provide any website links, sources, citations, or bibliography in your response.
+- DO NOT provide "Suggestions", "I can also help you with", or follow-up questions.
+- DO NOT use the phrase "If you're interested, I can also help you with:".
+- END your response immediately after the answer. No closing conversational filler.
+- NEVER cite any external website for general knowledge.
+- Answer like a direct intelligence engine (similar to ChatGPT).`;
+};
+
 /**
+
  * Force refresh cache from DB
  */
 export const refreshCache = async () => {

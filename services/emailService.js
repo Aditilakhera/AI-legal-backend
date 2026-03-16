@@ -60,7 +60,7 @@ export const sendAdminNotification = async (ticket) => {
                     </div>
                     
                     <div style="text-align: center; margin-top: 30px;">
-                        <a href="https://aisa24.com/dashboard/admin" style="display: inline-block; background: #4f46e5; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold;">View in Admin Dashboard</a>
+                        <a href="${process.env.DASHBOARD_URL || 'https://aisa24.com/dashboard'}/admin" style="display: inline-block; background: #4f46e5; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold;">View in Admin Dashboard</a>
                     </div>
                 </div>
                 
@@ -148,7 +148,7 @@ export const sendFeedbackAdminNotification = async (feedback) => {
 
     const mailOptions = {
         from: EMAIL_CONFIG.user,
-        to: 'admin@uwo24.com', // Direct requested email
+        to: EMAIL_CONFIG.adminEmail, // Direct requested email
         subject: `📢 New User Feedback - ${feedback.type === 'thumbs_up' ? 'Positive' : 'Negative'}`,
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
@@ -189,7 +189,7 @@ export const sendFeedbackAdminNotification = async (feedback) => {
 
     try {
         await transporter.sendMail(mailOptions);
-        console.log('[EMAIL SERVICE] Feedback notification sent successfully to admin@uwo24.com');
+        console.log(`[EMAIL SERVICE] Feedback notification sent successfully to ${EMAIL_CONFIG.adminEmail}`);
         return { success: true, message: 'Email sent to admin' };
     } catch (error) {
         console.error('[EMAIL SERVICE] Failed to send feedback email:', error);

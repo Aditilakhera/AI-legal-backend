@@ -36,8 +36,13 @@ const findOrCreateCorpus = async () => {
     if (cachedCorpusId) return cachedCorpusId;
 
     try {
-        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const projectId = process.env.GCP_PROJECT_ID;
         const location = process.env.GCP_LOCATION || 'asia-south1';
+
+        if (!projectId) {
+            logger.error("[Vertex RAG] GCP_PROJECT_ID not set in environment.");
+            return null;
+        }
         const client = await auth.getClient();
         const token = await client.getAccessToken();
 
@@ -81,8 +86,13 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             return null;
         }
 
-        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const projectId = process.env.GCP_PROJECT_ID;
         const location = process.env.GCP_LOCATION || 'asia-south1';
+
+        if (!projectId) {
+            logger.error("[Vertex RAG] Retrieval failed: GCP_PROJECT_ID not set in environment.");
+            return null;
+        }
         const client = await auth.getClient();
         const token = await client.getAccessToken();
 
@@ -149,21 +159,16 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
                         // Internal file with no URL - use generic brand title instead of filename
                         sourceName = "UWO Internal Resource";
                     }
-                } else {
-                    sourceName = "Documentation";
                 }
             }
-
-            if (sourceUrl) {
-                sources.push({
-                    title: sourceName,
-                    url: sourceUrl || gcsUri || '',
-                    snippet: c.text ? c.text.substring(0, 150) + '...' : '',
-                    document_title: sourceName,
-                    source_type: sourceName.includes('.') ? sourceName.split('.').pop().toUpperCase() : 'URL',
-                    chunk_id: `chunk_${idx}_${Date.now()}`
-                });
-            }
+            sources.push({
+                title: sourceName,
+                url: sourceUrl || 'https://uwo24.com/',
+                snippet: c.text ? c.text.substring(0, 150) + '...' : '',
+                document_title: sourceName,
+                source_type: 'URL',
+                chunk_id: `chunk_${idx}_${Date.now()}`
+            });
 
             const citation = sourceUrl ? `[Ref: ${sourceName}]` : `[Internal Knowledge]`;
             return `${citation}\n${c.text}`;
@@ -179,8 +184,19 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             }
         }
 
+        if (uniqueSources.length === 0) {
+            uniqueSources.push({
+                title: "Unified Web Options",
+                url: "https://uwo24.com/",
+                snippet: "Official information about AISA and UWO services.",
+                document_title: "Unified Web Options",
+                source_type: "URL",
+                chunk_id: `default_${Date.now()}`
+            });
+        }
+
         logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
-        return { text: contextText.join('\n\n'), sources: uniqueSources };
+        return { text: contextText.join('\n\n') || "Direct answer based on system knowledge.", sources: uniqueSources };
 
     } catch (error) {
         logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);
@@ -216,36 +232,54 @@ export const rewriteQuery = async (userQuestion) => {
 export const detectRAGNeed = async (query) => {
     try {
         const lower = query.toLowerCase().trim();
-        // Fast-path: check for common conversational fillers and closings
+        // Fast-path: check for common conversational fillers, greetings, and generic definitions
         const fillers = [
             'hi', 'hello', 'thanks', 'thank you', 'okay', 'dynamic', 'great', 'awesome', 
             'happy to help', 'see you', 'bye', 'hope this helps', 'hope this clears things up',
-            'no problem', 'you are welcome', 'got it', 'sure', 'alright'
+            'no problem', 'you are welcome', 'got it', 'sure', 'alright', 'what is', 'define',
+            'explain', 'how to', 'meaning of'
         ];
-        if (fillers.some(f => lower.includes(f)) || query.length < 12) {
-            logger.info(`[RAG-Detector] Fast-path NO for: "${query}"`);
+        
+        // If it starts with a general definition phrase and doesn't mention brand keywords
+        const brandKeywords = ['uwo', 'aisa', 'ai mall', 'unified web'];
+        const hasBrandKeyword = brandKeywords.some(bk => lower.includes(bk));
+        
+        const generalPhrases = [
+            'what is', 'define', 'how to', 'meaning of', 'explain', 'tell me about', 
+            'suggest', 'why is', 'who is', 'give me', 'describe', 'difference between',
+            'how does', 'why does', 'what are', 'where is'
+        ];
+        const isGeneralDefinition = generalPhrases.some(p => lower.startsWith(p)) && !hasBrandKeyword;
+
+        if (fillers.some(f => lower === f) || query.length < 5 || isGeneralDefinition) {
+            logger.info(`[RAG-Detector] Fast-path NO (General Content) for: "${query}"`);
             return false;
         }
 
-        const detectorPrompt = `You are a filter that decides if a user's message requires searching a private company database.
+        const detectorPrompt = `You are a strict filter that decides if a user's message needs info from a PRIVATE COMPANY DATABASE (UWO/AISA).
 
-        Respond "YES" ONLY if the user is asking about:
-        - Specific company projects, products, or services (UWO, AISA, etc.)
-        - Internal financial, technical, or procedural data.
-        - Detailed documentation questions.
+        Respond "YES" ONLY if the user is asking specifically about:
+        - Internal company projects, products, or services (e.g., "What is AI Mall?", "AISA capabilities").
+        - Internal financial, technical, or procedural data specific to UWO.
+        - Detailed documentation questions about company services.
 
-        Respond "NO" if the message is:
-        - A general greeting or social chat.
-        - Gratitude or simple acknowledgment.
-        - Generic knowledge easily found on the public internet.
+        Respond "NO" for EVERYTHING ELSE, especially:
+        - Common definitions (e.g., "What is IOT?", "What is AI?", "What is an API?").
+        - General knowledge easily found on Google.
+        - Greetings, social chat, or gratitude.
+        - Questions not explicitly mentioning company-specific terms.
 
+        If you are even 1% unsure, respond "NO".
+        
         User Message: "${query}"
         Decision (YES/NO):`;
 
         const result = await AskVertexRaw(detectorPrompt);
-        const decision = result.trim().toUpperCase().replace(/[^A-Z]/g, '');
+        const decision = result.trim().toUpperCase();
         logger.info(`[RAG-Detector] AI Decision for "${query}": ${decision}`);
-        return decision === 'YES';
+        
+        // Check if decision starts with YES or is just YES
+        return decision === 'YES' || decision.startsWith('YES\n') || decision.startsWith('YES ');
     } catch (error) {
         logger.error(`[RAG-Detector] Error: ${error.message}`);
         return false;
@@ -278,6 +312,11 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         } else {
             // Append date context even to custom instructions for reference
             systemInstruction = systemInstruction + dateContext;
+        }
+
+        // Add User Name context if provided
+        if (userName) {
+            systemInstruction += `\n### USER INFO:\nYou are talking to ${userName}. Address them naturally if appropriate.\n`;
         }
 
         let finalPrompt = prompt;
@@ -371,8 +410,12 @@ export const importToVertexRag = async (gcsUris, originalName = 'batch_import') 
         }
 
         const uris = Array.isArray(gcsUris) ? gcsUris : [gcsUris];
-        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const projectId = process.env.GCP_PROJECT_ID;
         const location = process.env.GCP_LOCATION || 'asia-south1';
+
+        if (!projectId) {
+            throw new Error("GCP_PROJECT_ID not set in environment.");
+        }
         const client = await auth.getClient();
         const token = await client.getAccessToken();
 
@@ -407,8 +450,10 @@ export const deleteFromVertexRag = async (gcsUri, originalName) => {
         const corpusId = await findOrCreateCorpus();
         if (!corpusId) return;
 
-        const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+        const projectId = process.env.GCP_PROJECT_ID;
         const location = process.env.GCP_LOCATION || 'asia-south1';
+
+        if (!projectId) return;
         const client = await auth.getClient();
         const token = await client.getAccessToken();
 

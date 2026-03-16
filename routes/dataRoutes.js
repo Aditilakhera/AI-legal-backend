@@ -56,7 +56,7 @@ router.delete('/data', verifyToken, async (req, res) => {
         console.error('[DATA DELETION ERROR]', error);
         res.status(500).json({
             success: false,
-            error: 'Failed to process data deletion request. Please contact admin@uwo24.com for assistance.'
+            error: `Failed to process data deletion request. Please contact support at ${process.env.ADMIN_EMAIL || 'admin@aisa24.com'} for assistance.`
         });
     }
 });
@@ -91,7 +91,7 @@ router.get('/data/export', verifyToken, async (req, res) => {
         console.error('[DATA EXPORT ERROR]', error);
         res.status(500).json({
             success: false,
-            error: 'Failed to export data. Please contact admin@uwo24.com for assistance.'
+            error: `Failed to export data. Please contact support at ${process.env.ADMIN_EMAIL || 'admin@aisa24.com'} for assistance.`
         });
     }
 });

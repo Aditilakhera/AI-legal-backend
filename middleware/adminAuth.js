@@ -3,7 +3,7 @@ import userModel from "../models/User.js";
 
 /**
  * Middleware to verify admin access
- * Only allows admin@uwo24.com to access protected routes
+ * Only allows ADMIN_EMAIL to access protected routes
  */
 export const verifyAdmin = async (req, res, next) => {
     try {
@@ -30,7 +30,8 @@ export const verifyAdmin = async (req, res, next) => {
         }
 
         // Check if user is admin
-        if (user.email !== 'admin@uwo24.com') {
+        const adminEmail = process.env.ADMIN_EMAIL || 'admin@aisa24.com';
+        if (user.email !== adminEmail) {
             return res.status(403).json({ error: "Access denied. Admin only." });
         }
 

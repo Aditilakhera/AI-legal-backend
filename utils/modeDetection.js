@@ -65,27 +65,9 @@ export function detectMode(message = '', attachments = []) {
 
   console.log(`[MODE DETECTION] Processing message: "${lowerMessage}" with ${attachments ? attachments.length : 0} attachments`);
 
-  // Priority 1: File Analysis/Conversion/Edit - if attachments are present
+  // Priority 1: File Analysis - IF explicitly not a conversion or edit (restricted to cards)
   if (hasAttachments) {
-    const hasImages = attachments.some(a => (a.type && a.type.startsWith('image')) || (a.mimeType && a.mimeType.startsWith('image')));
-
-    // Check for conversion first
-    const matchedConversion = CONVERSION_KEYWORDS.find(keyword => lowerMessage.includes(keyword));
-    if (matchedConversion) {
-      console.log(`[MODE DETECTION] Detected conversion keyword: "${matchedConversion}". Setting mode to FILE_CONVERSION.`);
-      return MODES.FILE_CONVERSION;
-    }
-
-    // Check for image edit if images are present
-    if (hasImages) {
-      const matchedEdit = EDIT_KEYWORDS.find(keyword => lowerMessage.includes(keyword));
-      if (matchedEdit) {
-        console.log(`[MODE DETECTION] Detected image edit keyword: "${matchedEdit}". Setting mode to IMAGE_EDIT.`);
-        return MODES.IMAGE_EDIT;
-      }
-    }
-
-    console.log(`[MODE DETECTION] No specialized file keyword found. Defaulting to FILE_ANALYSIS.`);
+    console.log(`[MODE DETECTION] File detected. Defaulting to FILE_ANALYSIS.`);
     return MODES.FILE_ANALYSIS;
   }
 

@@ -31,8 +31,13 @@ class MemoryService {
     // Generate Embeddings utilizing Google Vertex AI Endpoint
     async generateEmbedding(text) {
         try {
-            const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+            const projectId = process.env.GCP_PROJECT_ID;
             const location = process.env.GCP_LOCATION || 'asia-south1'; // Vertex Location
+            
+            if (!projectId) {
+                logger.error("[Memory Service] GCP_PROJECT_ID not set in environment.");
+                return null;
+            }
             
             const client = await auth.getClient();
             const token = await client.getAccessToken();
