@@ -104,7 +104,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     let isWebSearchResponse = false;
     let searchSources = [];
     const isDeepSearch = (systemInstruction && systemInstruction.includes('DEEP SEARCH MODE ENABLED')) || mode === 'DEEP_SEARCH';
-    
+
     // Check for company keywords early to ensure sources box
     const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web'];
     const lowerMsgFull = content ? content.toLowerCase().trim() : "";
@@ -131,22 +131,22 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
 
     // MAGIC TOOLS ENFORCEMENT: Strictly use features ONLY if the user explicitly selected the card (passed as 'mode')
     const magicTools = [
-      'IMAGE_GEN', 'VIDEO_GEN', 'web_search', 'DEEP_SEARCH', 
-      'AUDIO_TALK', 'FILE_CONVERSION', 'CODE_WRITER', 
+      'IMAGE_GEN', 'VIDEO_GEN', 'web_search', 'DEEP_SEARCH',
+      'AUDIO_TALK', 'FILE_CONVERSION', 'CODE_WRITER',
       'IMAGE_EDIT', 'IMAGE_TO_VIDEO', 'CODING_HELP'
     ];
-    
+
     let detectedMode = mode;
     if (!detectedMode) {
       // Auto-detect only for non-Magic Tools (like FILE_ANALYSIS)
       const autoDetected = detectMode(content, allAttachments);
       if (magicTools.includes(autoDetected)) {
-         detectedMode = 'CHAT'; 
+        detectedMode = 'CHAT';
       } else {
-         detectedMode = autoDetected;
+        detectedMode = autoDetected;
       }
     }
-    
+
     if (detectedMode === 'DOCUMENT_CONVERT') detectedMode = 'FILE_CONVERSION';
 
     // FINAL DECISION: Strictly use web search ONLY if the user explicitly selected the card
@@ -208,11 +208,11 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     if (content && sessionId) {
       try {
         const userId = req.user ? req.user.id : (req.guest ? req.guest.id : null);
-        
+
         // Retrieve relevant past messages BEFORE saving the current one, to avoid self-retrieval
         conversationHistoryMemory = await memoryService.retrieveMemory(sessionId, content, 5);
         conversationHistoryMemory = conversationHistoryMemory.filter(msg => msg.content !== content); // Prevent echo
-        
+
         // Async save user message to Vector DB Memory
         memoryService.saveMessageWithEmbedding(sessionId, userId, 'user', content);
 
@@ -224,7 +224,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
             nameUsageInstruction = `\nUser's Name is "${req.user.name}". You may use it naturally.\n`;
           }
         }
-        
+
         // Build Full Memory-RAG System Prompt
         const finalSystemPrompt = `${systemInstructionText}\n${personalizationContext}\n${nameUsageInstruction}\n\n${systemInstruction || ""}`;
         combinedMemoryPrompt = memoryService.buildContext(finalSystemPrompt, conversationHistoryMemory, content);
@@ -343,48 +343,48 @@ User's Name is "${req.user.name}".
       if ((docCount > 0 || manualCorpusId) && content) {
         // Robust Detection (Priority 1: General Phrase filtering)
         const generalPhrases = [
-            'what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 
-            'why is', 'suggest', 'give me', 'who is', 'describe', 'difference between',
-            'how does', 'why does', 'what are', 'where is'
+          'what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about',
+          'why is', 'suggest', 'give me', 'who is', 'describe', 'difference between',
+          'how does', 'why does', 'what are', 'where is'
         ];
-        
+
         const lowerMsg = content.toLowerCase().trim();
         const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
-        
+
         let needsRAG = true;
         if (startsWithGeneral && !hasCompanyKeyword) {
-            needsRAG = false;
-            isGeneralQuestion = true;
-            console.log(`[RAG-Logic] FORCED NO for generic question: "${content}"`);
+          needsRAG = false;
+          isGeneralQuestion = true;
+          console.log(`[RAG-Logic] FORCED NO for generic question: "${content}"`);
         } else {
-            needsRAG = await detectRAGNeed(content);
+          needsRAG = await detectRAGNeed(content);
         }
 
         // --- NEW: FORCE COMPANY SOURCE FOR BRANDED QUERIES ---
         if (hasCompanyKeyword) {
-            console.log(`[RAG-Logic] Branded keyword detected. Ensuring company source exists.`);
-            if (searchSources.length === 0) {
-                searchSources.push({
-                    title: "Unified Web Options",
-                    url: "https://uwo24.com/",
-                    snippet: "Official information about AISA and UWO services.",
-                    document_title: "Unified Web Options",
-                    source_type: "URL",
-                    chunk_id: `brand_${Date.now()}`
-                });
-            }
+          console.log(`[RAG-Logic] Branded keyword detected. Ensuring company source exists.`);
+          if (searchSources.length === 0) {
+            searchSources.push({
+              title: "Unified Web Options",
+              url: "https://uwo24.com/",
+              snippet: "Official information about AISA and UWO services.",
+              document_title: "Unified Web Options",
+              source_type: "URL",
+              chunk_id: `brand_${Date.now()}`
+            });
+          }
         }
 
         if (needsRAG) {
           console.log(`[RAG] Checking Knowledge Base (Vertex RAG) for: "${content.substring(0, 30)}..."`);
           const retrieved = await retrieveContextFromRag(content, 8); // TopK=8 as per expert guideline
-        if (retrieved) {
-          if (retrieved.sources && Array.isArray(retrieved.sources)) {
-            searchSources = [...searchSources, ...retrieved.sources];
-          }
-          if (retrieved.text) {
-            console.log("[RAG] Relevant context FOUND and injected.");
-            ragContext = `
+          if (retrieved) {
+            if (retrieved.sources && Array.isArray(retrieved.sources)) {
+              searchSources = [...searchSources, ...retrieved.sources];
+            }
+            if (retrieved.text) {
+              console.log("[RAG] Relevant context FOUND and injected.");
+              ragContext = `
 You are AISA, an intelligent super AI assistant.
 
 Use the provided context to answer the user's question accurately.
@@ -409,11 +409,11 @@ Response Guidelines:
 - Keep the response clear and concise.
 - Avoid unnecessary filler text.
 `;
+            }
           }
         }
       }
-    }
-} catch (ragError) {
+    } catch (ragError) {
       console.error("[RAG ERROR]", ragError.message);
     }
 
@@ -424,10 +424,10 @@ Response Guidelines:
 
     let baseInstruction = systemInstruction || modeSystemInstruction;
     let dynamicSystemInstruction = (await import('../config/vertex.js')).getDynamicSystemInstruction();
-    
+
     if (isGeneralQuestion) {
-        // Switch to strict direct-answer mode for general questions
-        dynamicSystemInstruction = configService.getGeneralSystemInstruction(memoryContext);
+      // Switch to strict direct-answer mode for general questions
+      dynamicSystemInstruction = configService.getGeneralSystemInstruction(memoryContext);
     }
 
     let finalSystemInstruction = `${dynamicSystemInstruction}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
@@ -456,57 +456,57 @@ MANDATORY INTERACTIVE RULES (AISA):
 `;
 
       if (isGeneralQuestion) {
-          MANDATORY_JSON_RULES += `
+        MANDATORY_JSON_RULES += `
 - DIRECT ANSWER MODE: Provide ONLY the direct answer.
 - DO NOT provide website links, sources, citations, or bibliography in your response.
 - DO NOT provide "Suggestions", "I can also help you with", or follow-up questions.
 - END your response immediately after the answer. No closing conversational filler.
 `;
       } else {
-          MANDATORY_JSON_RULES += `
+        MANDATORY_JSON_RULES += `
 - RICH SUGGESTIONS: End with a conversational lead-in (e.g., "I can also help you with:"), 2-4 bulleted suggestions, and a final friendly sentence with an emoji.
 `;
       }
 
       // MEDIA & TOOL RULES: Strictly enforced based on current mode
       let TOOL_RULES = "";
-      
+
       if (isActuallyImageMode) {
-          TOOL_RULES += `
+        TOOL_RULES += `
 MANDATORY IMAGE GENERATION RULES:
 - You are in IMAGE GENERATION MODE. 
 - Output ONLY {"action": "generate_image", "prompt": "..."} to create the image.
 - The prompt MUST be in English, highly descriptive (mention lighting, style, colors), and professional.
 `;
       } else if (isActuallyVideoMode) {
-          TOOL_RULES += `
+        TOOL_RULES += `
 MANDATORY VIDEO GENERATION RULES:
 - You are in VIDEO GENERATION MODE.
 - Output ONLY {"action": "generate_video", "prompt": "..."} to create the video.
 - The prompt MUST be in English and cinematic.
 `;
       } else if (isActuallySearchMode) {
-          TOOL_RULES += `
+        TOOL_RULES += `
 MANDATORY SEARCH RULES:
 - You are in WEB SEARCH / DEEP SEARCH MODE.
 - Use the provided search results to answer precisely.
 - Cite sources clearly.
 `;
       } else if (isActuallyCodeMode) {
-          TOOL_RULES += `
+        TOOL_RULES += `
 MANDATORY CODE WRITER RULES:
 - You are in CODE WRITER MODE.
 - Provide production-ready code with explanations.
 `;
       } else if (isActuallyConvertMode) {
-          TOOL_RULES += `
+        TOOL_RULES += `
 MANDATORY CONVERSION RULES:
 - You are in DOCUMENT CONVERSION MODE.
 - Output ONLY the JSON action for file_conversion.
 `;
       } else {
-          // CHAT MODE - Strictly forbid JSON Magic Actions
-          TOOL_RULES += `
+        // CHAT MODE - Strictly forbid JSON Magic Actions
+        TOOL_RULES += `
 MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
 - You are in NORMAL CHAT mode.
 - You are FORBIDDEN from executing magic actions (Do NOT output JSON like {"action": "..."}).

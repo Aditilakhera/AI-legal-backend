@@ -51,65 +51,90 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         const projectId = await auth.getProjectId();
         const { token } = await client.getAccessToken();
         const location = 'us-central1';
-
         const callVertex = async (modelId) => {
+            const isGemini = modelId.startsWith('gemini-');
+            const method = isGemini ? 'generateContent' : 'predict';
             const endpoint =
                 `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}` +
-                `/locations/${location}/publishers/google/models/${modelId}:predict`;
+                `/locations/${location}/publishers/google/models/${modelId}:${method}`;
 
-            console.log(`[VERTEX] Calling ${modelId} (${originalImage ? 'edit' : 'generate'})...`);
+            console.log(`[VERTEX] Calling ${modelId} (${originalImage ? 'edit' : 'generate'}) via ${method}...`);
 
-            let instanceStruct = { prompt };
-            let paramStruct = { sampleCount: 1 };
-
-            if (originalImage) {
-                // ---- IMAGE EDITING ----
-                let base64Data =
-                    typeof originalImage === 'string'
+            let payload;
+            if (isGemini) {
+                // Gemini "Nano Banana" Style Structure
+                const parts = [{ text: prompt }];
+                if (originalImage) {
+                    let base64Data = typeof originalImage === 'string'
                         ? originalImage
                         : (originalImage.base64Data || originalImage.image || originalImage.data);
 
-                // Strip data-URL prefix if present
-                if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
-                    base64Data = base64Data.split('base64,')[1];
-                }
-
-                // imagen-3.0-capability-001 requires referenceImages array format
-                // (NOT the old `image` field used by the deprecated imagegeneration@006)
-                instanceStruct.referenceImages = [
-                    {
-                        referenceType: 'REFERENCE_TYPE_RAW',
-                        referenceId: 1,
-                        referenceImage: { bytesBase64Encoded: base64Data }
+                    if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
+                        base64Data = base64Data.split('base64,')[1];
                     }
-                ];
 
-                // REQUIRED: editConfig with editMode — omitting causes 400
-                const editMode = detectEditMode(prompt);
-                paramStruct.editConfig = { editMode };
-                console.log(`[VERTEX EDIT] editMode="${editMode}" | prompt="${prompt}"`);
+                    parts.push({
+                        inlineData: {
+                            mimeType: 'image/png',
+                            data: base64Data
+                        }
+                    });
+                }
+                payload = { contents: [{ parts }] };
 
+                // Optional: Add generation config for safety/guidance if supported by the specific model
+                payload.generationConfig = {
+                    candidateCount: 1,
+                    // guidanceScale: 25.0 // Some Gemini-image versions might use this
+                };
             } else {
-                // ---- IMAGE GENERATION ----
-                let vertexRatio = '1:1';
-                if (aspectRatio === '16:9') vertexRatio = '16:9';
-                else if (aspectRatio === '4:5') vertexRatio = '3:4';
-                else if (aspectRatio === '4:7') vertexRatio = '9:16';
-                paramStruct.aspectRatio = vertexRatio;
+                // Imagen Style Structure
+                let instanceStruct = { prompt };
+                let paramStruct = {
+                    sampleCount: 1,
+                    guidanceScale: 25.0,
+                    personGeneration: 'allow_all'
+                };
+
+                if (originalImage) {
+                    let base64Data = typeof originalImage === 'string'
+                        ? originalImage
+                        : (originalImage.base64Data || originalImage.image || originalImage.data);
+
+                    if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
+                        base64Data = base64Data.split('base64,')[1];
+                    }
+
+                    const rawEditMode = detectEditMode(prompt);
+                    instanceStruct.referenceImages = [
+                        {
+                            referenceType: 'REFERENCE_TYPE_RAW',
+                            referenceId: 1,
+                            referenceImage: { bytesBase64Encoded: base64Data }
+                        }
+                    ];
+                    paramStruct.editConfig = { editMode: rawEditMode };
+                } else {
+                    let vertexRatio = '1:1';
+                    if (aspectRatio === '16:9') vertexRatio = '16:9';
+                    else if (aspectRatio === '4:5') vertexRatio = '3:4';
+                    else if (aspectRatio === '4:7') vertexRatio = '9:16';
+                    paramStruct.aspectRatio = vertexRatio;
+                }
+                payload = { instances: [instanceStruct], parameters: paramStruct };
             }
 
             return axios.post(
                 endpoint,
-                { instances: [instanceStruct], parameters: paramStruct },
+                payload,
                 { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 60000 }
             );
         };
 
         // Model selection:
-        //   Editing:    imagen-3.0-capability-001 only (imagegeneration@006 is EOL)
-        //   Generation: imagen-3.0-generate-001, fallback → imagegeneration@006
-        const primaryModel = originalImage ? 'imagen-3.0-capability-001' : selectedModelId;
-        const fallbackModel = originalImage ? null : 'imagegeneration@006';
+        // User requested "Nano Banana" (gemini-2.5-flash-image) for editing.
+        const primaryModel = originalImage ? 'gemini-2.5-flash-image' : 'imagen-3.0-generate-001';
+        const fallbackModel = originalImage ? 'imagen-3.0-capability-001' : 'imagen-3.0-generate-002';
 
         let response;
         let usedModel = primaryModel;
@@ -123,18 +148,24 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
             if (fallbackModel) {
                 console.warn(`[VERTEX] Trying fallback model: ${fallbackModel}`);
                 usedModel = fallbackModel;
-                response = await callVertex(fallbackModel); // throws if this also fails
+                response = await callVertex(fallbackModel);
             } else {
-                throw err; // editing — no fallback, re-throw
+                throw err;
             }
         }
 
         console.log(`[VERTEX RESPONSE] HTTP ${response.status} from ${usedModel}`);
 
-        const prediction = response.data?.predictions?.[0];
-        const base64Data =
-            prediction?.bytesBase64Encoded ||
-            (typeof prediction === 'string' ? prediction : null);
+        // Parsing prediction based on model type
+        let base64Data = null;
+        if (usedModel.startsWith('gemini-')) {
+            const candidate = response.data?.candidates?.[0];
+            const part = candidate?.content?.parts?.find(p => p.inlineData);
+            base64Data = part?.inlineData?.data;
+        } else {
+            const prediction = response.data?.predictions?.[0];
+            base64Data = prediction?.bytesBase64Encoded || (typeof prediction === 'string' ? prediction : null);
+        }
 
         if (base64Data) {
             console.log(`[CLOUDINARY] Uploading result from ${usedModel}...`);
