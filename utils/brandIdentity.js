@@ -86,6 +86,8 @@ You are AISA, an intelligent AI assistant designed to provide clear, accurate, a
 Deliver accurate, clear, and helpful answers while maintaining a natural conversational experience similar to a high-quality AI assistant.
 `;
 
+import { getConfig } from '../services/configService.js';
+
 /**
  * Refines a user prompt for Image/Video generation if it mentions AISA
  */
@@ -109,12 +111,25 @@ export const refineBrandPrompt = (prompt, type = 'image') => {
             return `A premium, ultra-modern 3D high-tech logo for AISA™ AI. A glowing blue and purple translucent neural brain icon, minimalist clean design, 3D glassmorphism effect, deep space blue background, 8k resolution, cinematic studio lighting, sharp edges, professional branding.`;
         }
 
-        // Randomly pick between an Avatar-based and an Environment-based premium visual
-        const variations = [
-            `A stunningly beautiful, futuristic female AI personification for AISA™. She has subtle glowing blue neural circuits on her skin, wearing a premium white-and-silver tech suit. She stands in a high-end glass office overlooking a futuristic neon city. Beside her floats a glowing blue and purple neural brain. Cinematic lighting, hyper-realistic, 8k, elegant and intelligent.`,
-            `A cinematic promotional shot of AISA™ Advanced Super AI. A high-tech laboratory with floating holographic screens, glassmorphism UI widgets, and deep blue data streams. In the center, a large, magnificent glowing translucent blue/purple neural brain pulsates with power. 8k resolution, Unreal Engine 5 render style, vibrant magenta highlights, extremely detailed.`,
-            `A premium marketing visual of AISA™ AI assistant. A futuristic workspace with a sleek hovering dashboard. The interface is clean and modern. The main AISA™ brand identity—a glowing neural brain—is the centerpiece of the holographic display. Cinematic bokeh, professional photography, high-tech luxury vibe, soft purple and cyan glow.`
-        ];
+        // Fetch dynamic variations
+        let variations = [];
+        try {
+            const rawVariations = getConfig('BRAND_VISUAL_VARIATIONS');
+            if (rawVariations) {
+                variations = JSON.parse(rawVariations);
+            }
+        } catch (e) {
+            console.error("[BrandIdentity] Failed to parse BRAND_VISUAL_VARIATIONS", e);
+        }
+
+        // Fallback if empty or parse failed
+        if (!variations || variations.length === 0) {
+            variations = [
+                `A stunningly beautiful, futuristic female AI personification for AISA™. She has subtle glowing blue neural circuits on her skin, wearing a premium white-and-silver tech suit. she floats a glowing blue and purple neural brain. Cinematic lighting, hyper-realistic, 8k.`,
+                `A cinematic promotional shot of AISA™ Advanced Super AI. A large, magnificent glowing translucent blue/purple neural brain pulsates with power. 8k resolution.`,
+                `A premium marketing visual of AISA™ AI assistant. A futuristic workspace with a sleek hovering dashboard. The centerpiece is a glowing neural brain. Cinematic bokeh.`
+            ];
+        }
 
         const selectedVariation = variations[Math.floor(Math.random() * variations.length)];
         return `${selectedVariation} Professional tech branding, sharp textures, vibrant colors.`;

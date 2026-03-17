@@ -175,7 +175,7 @@ export function formatSources(snippets) {
     return `\n\n*Sources: ${firstTwo}, and ${remaining} other${remaining > 1 ? 's' : ''}*`;
 }
 
-import { AISA_CONVERSATIONAL_RULES, BRAND_SYSTEM_RULES } from './brandIdentity.js';
+import { getConfig } from '../services/configService.js';
 
 /**
  * Generate web search system instruction
@@ -184,10 +184,15 @@ export function getWebSearchSystemInstruction(searchResults, language = 'English
     const responseLanguage = language === 'Hindi' || language === 'Hinglish' ? 'Hindi' : 'English';
     const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
 
-    return `${AISA_CONVERSATIONAL_RULES}
-${BRAND_SYSTEM_RULES}
+    const conversationalRules = getConfig('AISA_CONVERSATIONAL_RULES', '');
+    const brandRules = getConfig('BRAND_SYSTEM_RULES', '');
+    const searchRules = getConfig('WEB_SEARCH_RULES', `### WEB SEARCH GUIDELINES:
+- Task: Provide a comprehensive, accurate answer to the user's query using the live data provided.
+- Citations: Cite your sources clearly using [1], [2], etc.
+- Identity: You are AISA™, an advanced IT assistant created by UWO™ with real-time web search capabilities.`);
 
-TODAY'S DATE & TIME: ${currentDate} (India Standard Time)
+    return `${conversationalRules}\n${brandRules}\n\n${searchRules}
+\nTODAY'S DATE & TIME: ${currentDate} (India Standard Time)
 
 WEB SEARCH DATA PROVIDED:
 ${searchResults.snippets.map((s, i) => `${i + 1}. [${s.source}] ${s.title}: ${s.snippet} (Link: ${s.link})`).join('\n\n')}
@@ -196,13 +201,7 @@ CRITICAL INSTRUCTIONS:
 - You are responding with real-time information.
 - Use the language: ${responseLanguage}.
 - If user writes in Hindi, translate and summarize search results in Hindi.
-- Be precise and direct. Avoid unnecessary excitement or long paragraphs.
 - Highlight numbers, prices, and dates in **bold**.
-
-RESPONSE STRUCTURE:
-1. Start with the direct answer derived from the search results.
-2. Provide 2-3 concise bullet points for key details if necessary.
-3. List sources elegantly at the end.
 `;
 }
 

@@ -3,6 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
 import { refineBrandPrompt } from '../utils/brandIdentity.js';
+import { getConfig } from '../services/configService.js';
 
 // -------------------------------------------------------------------
 // Smart editMode detection for imagen-3.0-capability-001
@@ -63,7 +64,13 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
             let payload;
             if (isGemini) {
                 // Gemini "Nano Banana" Style Structure
-                const parts = [{ text: prompt }];
+                let finalPrompt = prompt;
+                if (originalImage) {
+                    const systemInstruction = getConfig('IMAGE_EDIT_INSTRUCTIONS', `You are an advanced AI image editing assistant. Return only the edited image.`);
+                    finalPrompt = `${systemInstruction}\n\nUser Request: ${prompt}`;
+                }
+
+                const parts = [{ text: finalPrompt }];
                 if (originalImage) {
                     let base64Data = typeof originalImage === 'string'
                         ? originalImage

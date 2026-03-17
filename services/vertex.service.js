@@ -195,8 +195,11 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             });
         }
 
+        const template = configService.getConfig('RAG_CONTEXT_TEMPLATE', 'Use this context: {retrieved_text}');
+        const ragContext = template.replace('{retrieved_text}', contextText.join('\n\n'));
+
         logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
-        return { text: contextText.join('\n\n') || "Direct answer based on system knowledge.", sources: uniqueSources };
+        return { text: ragContext, sources: uniqueSources };
 
     } catch (error) {
         logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);
@@ -256,23 +259,8 @@ export const detectRAGNeed = async (query) => {
             return false;
         }
 
-        const detectorPrompt = `You are a strict filter that decides if a user's message needs info from a PRIVATE COMPANY DATABASE (UWO/AISA).
-
-        Respond "YES" ONLY if the user is asking specifically about:
-        - Internal company projects, products, or services (e.g., "What is AI Mall?", "AISA capabilities").
-        - Internal financial, technical, or procedural data specific to UWO.
-        - Detailed documentation questions about company services.
-
-        Respond "NO" for EVERYTHING ELSE, especially:
-        - Common definitions (e.g., "What is IOT?", "What is AI?", "What is an API?").
-        - General knowledge easily found on Google.
-        - Greetings, social chat, or gratitude.
-        - Questions not explicitly mentioning company-specific terms.
-
-        If you are even 1% unsure, respond "NO".
-        
-        User Message: "${query}"
-        Decision (YES/NO):`;
+        const detectorTemplate = configService.getConfig('RAG_DETECTOR_PROMPT', 'Needs RAG? {query}');
+        const detectorPrompt = detectorTemplate.replace('{query}', query);
 
         const result = await AskVertexRaw(detectorPrompt);
         const decision = result.trim().toUpperCase();

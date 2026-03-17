@@ -182,7 +182,7 @@ export function detectLanguage(message) {
     return 'English';
 }
 
-import { AISA_CONVERSATIONAL_RULES, BRAND_SYSTEM_RULES } from './brandIdentity.js';
+import { getConfig } from '../services/configService.js';
 
 /**
  * Get voice-optimized system instruction
@@ -190,18 +190,15 @@ import { AISA_CONVERSATIONAL_RULES, BRAND_SYSTEM_RULES } from './brandIdentity.j
 export function getVoiceSystemInstruction(language = 'English') {
     const responseLanguage = language === 'Hindi' || language === 'Hinglish' ? 'Hinglish' : 'English';
 
-    return `${AISA_CONVERSATIONAL_RULES}
-${BRAND_SYSTEM_RULES}
-
-### VOICE-FIRST RULES:
+    const conversationalRules = getConfig('AISA_CONVERSATIONAL_RULES', '');
+    const brandRules = getConfig('BRAND_SYSTEM_RULES', '');
+    const voiceRules = getConfig('VOICE_FIRST_RULES', `### VOICE-FIRST RULES:
 - IMPORTANT: You are in a hands-free voice conversation.
 - Responses must be optimized for being spoken aloud via Text-to-Speech.
 - Use short, clear sentences with natural pronunciation.
-- Avoid all emojis, decorative symbols, and complex formatting.
-- Ask only one follow-up question at a time, and only if necessary.
-- Do not repeat the user's full sentence.
-- Respond in: ${responseLanguage}.
-`;
+- Avoid all emojis, decorative symbols, and complex formatting.`);
+
+    return `${conversationalRules}\n${brandRules}\n\n${voiceRules}\n- Respond in: ${responseLanguage}.`;
 }
 
 export { INTENTS };
