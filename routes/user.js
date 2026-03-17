@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import { verifyToken } from "../middleware/authorization.js"
 
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
+import uploadMiddleware from "../middlewares/upload.middleware.js";
+import { uploadToCloudinary } from "../services/cloudinary.service.js";
 
 const route = express.Router()
 
@@ -158,6 +160,39 @@ route.put("/profile", verifyToken, async (req, res) => {
     } catch (error) {
         console.error("[BACKEND ERROR] Failed to update profile:", error);
         res.status(500).json({ msg: "Failed to update profile", error: error.message });
+    }
+});
+
+// POST /api/user/avatar - Upload and update profile picture
+route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
+
+        const cloudRes = await uploadToCloudinary(req.file.buffer, {
+            folder: 'user_avatars',
+            public_id: `avatar_${req.user.id}_${Date.now()}`
+        });
+
+        const user = await userModel.findByIdAndUpdate(
+            req.user.id,
+            { avatar: cloudRes.secure_url },
+            { new: true }
+        ).select("-password");
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            message: "Avatar updated successfully",
+            avatar: user.avatar 
+        });
+    } catch (error) {
+        console.error("[AVATAR UPLOAD ERROR]", error);
+        res.status(500).json({ error: "Failed to upload avatar", details: error.message });
     }
 });
 
