@@ -196,6 +196,30 @@ route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
     }
 });
 
+// DELETE /api/user/avatar - Remove profile picture
+route.delete("/avatar", verifyToken, async (req, res) => {
+    try {
+        const user = await userModel.findByIdAndUpdate(
+            req.user.id,
+            { avatar: "" },
+            { new: true }
+        ).select("-password");
+
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            message: "Profile photo removed successfully",
+            avatar: "" 
+        });
+    } catch (error) {
+        console.error("[AVATAR REMOVAL ERROR]", error);
+        res.status(500).json({ error: "Failed to remove avatar", details: error.message });
+    }
+});
+
 // GET /api/user/notifications - Get notification inbox
 route.get("/notifications", verifyToken, async (req, res) => {
     try {
