@@ -4,6 +4,7 @@ import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
 import { refineBrandPrompt } from '../utils/brandIdentity.js';
 import { getConfig } from '../services/configService.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 
 // -------------------------------------------------------------------
 // Smart editMode detection for imagen-3.0-capability-001
@@ -222,13 +223,9 @@ export const generateImage = async (req, res, next) => {
         const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio, modelId);
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
 
-        // Increment usage if successful
-        if (req.subscriptionMeta) {
-            const { usage, usageKey } = req.subscriptionMeta;
-            if (usage && usageKey) {
-                const subscriptionService = (await import('../services/subscriptionService.js')).default;
-                await subscriptionService.incrementUsage(usage, usageKey);
-            }
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
         res.status(200).json({ success: true, data: imageUrl });
@@ -278,13 +275,9 @@ export const editImage = async (req, res, next) => {
         const modifiedImageUrl = await generateImageFromPrompt(prompt, imageToProcess, aspectRatio, modelId);
         if (!modifiedImageUrl) throw new Error('Failed to retrieve modified image URL.');
 
-        // Increment usage if successful
-        if (req.subscriptionMeta) {
-            const { usage, usageKey } = req.subscriptionMeta;
-            if (usage && usageKey) {
-                const subscriptionService = (await import('../services/subscriptionService.js')).default;
-                await subscriptionService.incrementUsage(usage, usageKey);
-            }
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
         res.status(200).json({ success: true, data: modifiedImageUrl });

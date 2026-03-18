@@ -3,6 +3,7 @@ import multer from 'multer';
 import { verifyToken } from '../middleware/authorization.js';
 import { creditMiddleware } from '../middleware/creditSystem.js';
 import { generateImageFromPrompt } from '../controllers/image.controller.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 
 const router = express.Router();
 
@@ -40,13 +41,9 @@ router.post('/', verifyToken, upload.single('image'), creditMiddleware, async (r
             throw new Error("Failed to retrieve modified image URL.");
         }
 
-        // Usage increment if needed
-        if (req.subscriptionMeta) {
-            const { usage, usageKey } = req.subscriptionMeta;
-            if (usage && usageKey) {
-                const subscriptionService = { incrementUsage: async () => { } };
-                await subscriptionService.incrementUsage(usage, usageKey);
-            }
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
         res.status(200).json({

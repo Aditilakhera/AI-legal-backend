@@ -303,8 +303,8 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // Add User Name context if provided
-        if (userName) {
-            systemInstruction += `\n### USER INFO:\nYou are talking to ${userName}. Address them naturally if appropriate.\n`;
+        if (options.userName) {
+            systemInstruction += `\n### USER INFO:\nYou are talking to ${options.userName}. Address them naturally if appropriate.\n`;
         }
 
         let finalPrompt = prompt;

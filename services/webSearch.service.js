@@ -2,6 +2,8 @@ import logger from '../utils/logger.js';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import * as configService from './configService.js';
+import { performWebSearch } from './searchService.js';
+import { askVertex } from '../services/vertex.service.js';
 
 dotenv.config();
 
@@ -117,8 +119,47 @@ export const performSearch = async (query, userLanguage = 'English') => {
         throw new Error('No response from search-preview model');
 
     } catch (error) {
-        logger.error(`[WebSearch] Search Error: ${error.response?.data?.error?.message || error.message}`);
-        return null;
+        logger.error(`[WebSearch] Primary Search Failed: ${error.response?.data?.error?.message || error.message}`);
+        
+        // --- FALLBACK MECHANISM ---
+        try {
+            logger.info(`[WebSearch] Attempting fallback search for: "${query}"`);
+            const searchData = await performWebSearch(query, 5);
+            
+            if (!searchData || !searchData.results || searchData.results.length === 0) {
+                logger.warn('[WebSearch] Fallback search also yielded no results.');
+                return null;
+            }
+
+            const formattedSources = searchData.results.map(r => ({
+                title: r.title,
+                url: r.link,
+                description: r.snippet
+            }));
+
+            const snippetsText = searchData.results.map((r, i) => `${i+1}. [${r.title}] ${r.snippet} (Source: ${r.link})`).join('\n\n');
+            
+            const systemPrompt = configService.getConfig('WEB_SEARCH_RULES') + `
+            TODAY'S DATE: ${new Date().toDateString()}
+            
+            Below are search results for the query: "${query}"
+            ${snippetsText}
+            
+            Task: Using ONLY the data above, provide a clear and concise answer in ${userLanguage}. Keep it helpful and direct.`;
+
+            // Use Gemini for summarization via askVertex
+            const summary = await askVertex(query, null, {
+                systemInstruction: systemPrompt
+            });
+
+            return {
+                summary: summary,
+                sources: formattedSources
+            };
+        } catch (fallbackError) {
+            logger.error(`[WebSearch] Fallback Search also failed: ${fallbackError.message}`);
+            return null;
+        }
     }
 };
 

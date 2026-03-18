@@ -1,4 +1,5 @@
 import logger from '../utils/logger.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 import path from 'path';
 import stream from 'stream';
 import util from 'util';
@@ -107,6 +108,11 @@ export const uploadDocument = async (req, res) => {
             logger.info(`Document metadata saved to MongoDB for track. GCS URI: ${gcsUri}, Chunks: ${chunks}`);
         } catch (dbError) {
             logger.error(`MongoDB Save Error: ${dbError.message}`);
+        }
+
+        // 💰 Deduct credits on successful upload
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
         res.status(200).json({
@@ -369,6 +375,11 @@ export const uploadUrl = async (req, res) => {
         source.next_crawl_at = nextCrawl;
         source.pages_indexed = result.total_pages;
         await source.save();
+
+        // 💰 Deduct credits on successful ingestion
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        }
 
         res.status(200).json({
             success: true,

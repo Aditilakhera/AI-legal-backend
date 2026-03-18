@@ -6,7 +6,7 @@ import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import Tesseract from 'tesseract.js';
 import officeParser from 'officeparser';
-const incrementUsage = async () => {}; // Mock logic 
+import { subscriptionService } from '../services/subscriptionService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,8 +120,10 @@ export const synthesizeSpeech = async (req, res) => {
 
         const audioData = await synthesizeChunks(chunks, languageCode, voiceName, gender, isNarrative, pitch, speakingRate);
 
-        // Deduct Credits
-        await incrementUsage(req);
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        }
 
         res.set({ 'Content-Type': 'audio/mpeg', 'Content-Length': audioData.length });
         res.send(audioData);
@@ -187,8 +189,10 @@ export const synthesizeFile = async (req, res) => {
         console.log(`📖 [VoiceController] File Synthesis: ${chunks.length} chunks, ${textToRead.length} chars`);
         const audioData = await synthesizeChunks(chunks, langCode, voiceName, gender, true, pitch, speakingRate);
 
-        // Deduct Credits
-        await incrementUsage(req);
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        }
 
         res.set({
             'Content-Type': 'audio/mpeg',

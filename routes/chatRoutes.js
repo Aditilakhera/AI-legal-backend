@@ -436,7 +436,8 @@ Response Guidelines:
       finalSystemInstruction = modeSystemInstruction;
     } else {
       // Check if the user explicitly activated magic tools via the card (mode)
-      const isActuallyImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+      const isActuallyImageEdit = mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+      const isActuallyImageGen = mode === 'IMAGE_GEN';
       const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
       const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
       const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
@@ -471,11 +472,20 @@ MANDATORY INTERACTIVE RULES (AISA):
       // MEDIA & TOOL RULES: Strictly enforced based on current mode
       let TOOL_RULES = "";
 
-      if (isActuallyImageMode) {
+      if (isActuallyImageEdit) {
+        TOOL_RULES += `
+MANDATORY IMAGE EDITING RULES:
+- You are in IMAGE EDITING MODE.
+- You have been provided with a reference image (last generated or uploaded).
+- Output ONLY {"action": "modify_image", "prompt": "..."} to edit the image.
+- The prompt MUST describe the CHANGES to be made (e.g., "Change the background to a beach", "Add a cat next to the person").
+- DO NOT use the "generate_image" action.
+`;
+      } else if (isActuallyImageGen) {
         TOOL_RULES += `
 MANDATORY IMAGE GENERATION RULES:
 - You are in IMAGE GENERATION MODE. 
-- Output ONLY {"action": "generate_image", "prompt": "..."} to create the image.
+- Output ONLY {"action": "generate_image", "prompt": "..."} to create a NEW image.
 - The prompt MUST be in English, highly descriptive (mention lighting, style, colors), and professional.
 `;
       } else if (isActuallyVideoMode) {
@@ -1068,7 +1078,7 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
           // 1. Check current turn attachments
           if (Array.isArray(image) && image.length > 0) {
             sourceImage = image[0];
-          } else if (image && image.base64Data) {
+          } else if (image && (image.base64Data || image.url)) {
             sourceImage = image;
           }
 
@@ -1077,27 +1087,52 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
             console.log("[IMAGE MOD] No image in current turn, searching history...");
             for (let i = history.length - 1; i >= 0; i--) {
               const prevMsg = history[i];
+              
+              // Check for AISA generated image
+              if (prevMsg.imageUrl) {
+                sourceImage = { url: prevMsg.imageUrl };
+                console.log("[IMAGE MOD] Found AISA generated image in history.");
+                break;
+              }
+
+              // Check for user attachments
               if (prevMsg.attachments && Array.isArray(prevMsg.attachments)) {
                 const prevImage = prevMsg.attachments.find(a =>
-                  a.type === 'image' || (a.mimeType && a.mimeType.startsWith('image/'))
+                  a.type === 'image' || (a.mimeType && a.mimeType.startsWith('image/')) || (a.url && a.url.includes('cloudinary'))
                 );
-                // In history, images might be stored as Cloudinary URLs or data URLs
-                // If it's a data URL, we can extract base64
-                if (prevImage && prevImage.url && prevImage.url.startsWith('data:')) {
-                  sourceImage = {
-                    mimeType: prevImage.url.substring(prevImage.url.indexOf(':') + 1, prevImage.url.indexOf(';')),
-                    base64Data: prevImage.url.split(',')[1]
+
+                if (prevImage) {
+                  sourceImage = { 
+                    url: prevImage.url,
+                    mimeType: prevImage.type === 'image' ? 'image/png' : prevImage.mimeType
                   };
-                  console.log("[IMAGE MOD] Found image data in recent history.");
+                  
+                  // Extract base64 if available (data URL)
+                  if (prevImage.url && prevImage.url.startsWith('data:')) {
+                    sourceImage.base64Data = prevImage.url.split(',')[1];
+                    sourceImage.mimeType = prevImage.url.substring(prevImage.url.indexOf(':') + 1, prevImage.url.indexOf(';'));
+                  }
+                  
+                  console.log("[IMAGE MOD] Found user image in history.");
                   break;
                 }
-                // If it's a Cloudinary URL, we'd need to fetch and convert to base64
-                // For now, let's prioritize data URLs which are common in recent history before saving
               }
             }
           }
 
           if (sourceImage) {
+            // Convert URL to Base64 if needed (Vertex needs actual data)
+            if (!sourceImage.base64Data && sourceImage.url) {
+              try {
+                 console.log(`[IMAGE MOD] Fetching image from URL: ${sourceImage.url}`);
+                 const resp = await axios.get(sourceImage.url, { responseType: 'arraybuffer' });
+                 sourceImage.base64Data = Buffer.from(resp.data).toString('base64');
+                 sourceImage.mimeType = sourceImage.mimeType || resp.headers['content-type'] || 'image/png';
+              } catch (fetchErr) {
+                 console.error(`[IMAGE MOD] Failed to fetch source image: ${fetchErr.message}`);
+                 // Fallback: Continue, maybe generateImageFromPrompt can handle it? (Unlikely)
+              }
+            }
             let canGenerate = true;
             let limitUsageData = null;
 

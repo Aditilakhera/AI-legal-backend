@@ -4,7 +4,16 @@ import CreditLog from '../models/CreditLog.js';
 
 const getToolCost = (toolName, body = {}) => {
     switch (toolName) {
-        case 'chat': return 2;             // AISA 2.5 Flash ~2 cr/msg (50% margin)
+        case 'chat': {
+            // Normal Chat is now FREE as per requirements
+            // Only Magic modes (Deep Search, Web Search, etc) will deduct if they use the chat endpoint
+            const mode = body?.mode || '';
+            if (mode === 'web_search') return 15;
+            if (mode === 'DEEP_SEARCH') return 30;
+            if (mode === 'CODING_HELP') return 10;
+            if (mode === 'DOCUMENT_CONVERT') return 15;
+            return 0; // Standard NORMAL_CHAT
+        }
         case 'agent_chat': return 10;      // Advanced agents
         case 'realtime_chat': return 15;   // High-speed low latency
         case 'knowledge_base': return 10;  // RAG Query
@@ -15,11 +24,10 @@ const getToolCost = (toolName, body = {}) => {
         case 'generate_image': return 60;      // Default AISA Image
         case 'edit_image': return 60;          // AISA Edit Image
         case 'generate_video': {
-            // Default: 5s, 1080p, Fast (300/s * 5 = 1500)
             const duration = body?.duration || 5;
             const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
             const resolution = body?.resolution || '1080p';
-            let multiplier = 800; // default for full
+            let multiplier = 800;
             if (modelId === 'veo-3.1-fast-generate-001') {
                 multiplier = resolution === '4k' ? 700 : 300;
             } else if (modelId === 'veo-3.1-generate-001') {
@@ -27,8 +35,9 @@ const getToolCost = (toolName, body = {}) => {
             }
             return multiplier * duration;
         }
-        case 'video': return 1500; // Legacy mapping
+        case 'video': return 1500;
         case 'code_writer': return 10;
+        case 'convert_audio': return 25; // New: Convert to Audio
         default: return 0;
     }
 };
@@ -125,6 +134,33 @@ export const subscriptionService = {
             });
         } catch (logErr) {
             console.error('CreditLog save failed in subscriptionService:', logErr.message);
+        }
+
+        return true;
+    },
+
+    deductCreditsFromMeta: async (creditMeta) => {
+        if (!creditMeta || !creditMeta.userId || !creditMeta.cost || creditMeta.cost <= 0) {
+            return true;
+        }
+
+        const user = await User.findById(creditMeta.userId);
+        if (!user) throw new Error("User not found during credit deduction");
+
+        user.credits -= creditMeta.cost;
+        await user.save();
+
+        // 📝 Log to Database
+        try {
+            await CreditLog.create({
+                userId: user._id,
+                action: creditMeta.action || 'feature_usage',
+                description: creditMeta.description || 'AISA Magic Feature',
+                credits: -creditMeta.cost,
+                balanceAfter: user.credits
+            });
+        } catch (logErr) {
+            console.error('CreditLog save failed in deductCreditsFromMeta:', logErr.message);
         }
 
         return true;

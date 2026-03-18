@@ -1,4 +1,5 @@
 import * as aiService from '../services/ai.service.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 import logger from '../utils/logger.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.js';
@@ -65,6 +66,11 @@ export const chat = async (req, res, next) => {
         });
         conversation.lastMessageAt = Date.now();
         await conversation.save();
+
+        // 💰 Deduct credits on successful output
+        if (req.creditMeta && req.creditMeta.cost > 0) {
+            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        }
 
         res.status(200).json({
             success: true,

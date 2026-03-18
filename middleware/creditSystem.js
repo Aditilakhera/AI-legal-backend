@@ -39,7 +39,16 @@ const getActionLabel = (url, body) => {
         const label = model.includes('fast') ? `AISA Video Fast (${res})` : `AISA Video Pro (${res})`;
         return { action: 'video', description: label };
     }
-    if (url.includes('/api/chat')) return { action: 'chat', description: 'AISA Chat (Text)' };
+    if (url.includes('/api/chat')) {
+        const mode = body?.mode || '';
+        if (mode === 'web_search') return { action: 'web_search', description: 'AISA Web Search' };
+        if (mode === 'DEEP_SEARCH') return { action: 'deep_search', description: 'AISA Deep Search' };
+        if (mode === 'CODING_HELP') return { action: 'code_writer', description: 'AISA Code Writer' };
+        if (mode === 'DOCUMENT_CONVERT') return { action: 'document_convert', description: 'AISA Document Magic' };
+        return { action: 'chat', description: 'AISA Chat (Text)' };
+    }
+    if (url.includes('/api/voice')) return { action: 'convert_audio', description: 'AISA Audio Magic' };
+    if (url.includes('/api/knowledge/upload') || url.includes('/api/knowledge/upload-url')) return { action: 'knowledge_base', description: 'AISA Knowledge Base' };
     return { action: 'other', description: 'AISA Feature' };
 };
 
@@ -60,7 +69,10 @@ export const creditMiddleware = async (req, res, next) => {
             url.includes('/api/edit-image') ||
             url.includes('/api/chat/realtime') ||
             url.includes('/api/aibase/chat') ||
-            url.includes('/api/aibase/knowledge')
+            url.includes('/api/aibase/knowledge') ||
+            url.includes('/api/voice') ||
+            req.body?.mode === 'web_search' ||
+            req.body?.mode === 'DEEP_SEARCH'
         );
 
     // Admins bypass all credit/plan checks
@@ -110,10 +122,21 @@ export const creditMiddleware = async (req, res, next) => {
         cost = modelId === 'imagen-4.0-ultra-generate-001' ? 80 : 60;
         isPremiumEndpoint = true;
     }
+    else if (url.includes('/api/voice')) {
+        cost = 25;
+        isPremiumEndpoint = true;
+    }
     else if (req.method !== 'GET' && url.includes('/api/chat')) {
-        // Standard Text Chat (Gemini 2.5 Flash)
-        // Average charge to user (50% margin): ~2 credits per message
-        cost = 2;
+        // Standard Text Chat is FREE
+        // Check for Magic Modes that use the chat endpoint
+        const mode = req.body?.mode || '';
+        if (mode === 'web_search') cost = 15;
+        else if (mode === 'DEEP_SEARCH') cost = 30;
+        else if (mode === 'CODING_HELP') cost = 10;
+        else if (mode === 'DOCUMENT_CONVERT') cost = 15;
+        else cost = 0; // Standard NORMAL_CHAT
+        
+        if (cost > 0) isPremiumEndpoint = true; // Magic chat modes are premium
     }
 
     // Pass through if cost is still 0 
@@ -144,24 +167,16 @@ export const creditMiddleware = async (req, res, next) => {
             });
         }
 
-        user.credits -= cost;
-        await user.save();
+        // 🚀 ATTACH BALANCE INFO TO REQ
+        // Deduction now happens in controllers ONLY on successful output
+        const actionLabel = getActionLabel(url, req.body);
+        req.creditMeta = {
+            userId: user._id,
+            cost: cost,
+            action: actionLabel.action,
+            description: actionLabel.description
+        };
 
-        // 📝 Log credit deduction
-        try {
-            const { action, description } = getActionLabel(url, req.body);
-            await CreditLog.create({
-                userId: user._id,
-                action,
-                description,
-                credits: -cost,
-                balanceAfter: user.credits
-            });
-        } catch (logErr) {
-            console.error('CreditLog write failed (non-fatal):', logErr.message);
-        }
-
-        req.user.credits = user.credits;
         next();
     } catch (error) {
         console.error("Credit deduction failed:", error);

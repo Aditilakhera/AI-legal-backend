@@ -7,6 +7,7 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import GeneratedVideo from '../models/GeneratedVideo.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 
 // Initialize Google Cloud Storage
 // In production (App Engine), uses the App Engine default service account (ADC) automatically.
@@ -99,14 +100,11 @@ export const generateVideo = async (req, res) => {
 
     logger.info(`[VIDEO] Video generated successfully: ${videoUrl}`);
 
-    // Increment usage if successful
-    if (req.subscriptionMeta) {
-      const { usage, usageKey } = req.subscriptionMeta;
-      if (usage && usageKey) {
-        const subscriptionService = { incrementUsage: async () => { } };
-        // Wait, realistically they import subscriptionService somewhere else but I left it
-        await subscriptionService.incrementUsage(usage, usageKey);
-      }
+    logger.info(`[VIDEO] Video generated successfully: ${videoUrl}`);
+
+    // 💰 Deduct credits on successful output
+    if (req.creditMeta && req.creditMeta.cost > 0) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta);
     }
 
     // Save to database
