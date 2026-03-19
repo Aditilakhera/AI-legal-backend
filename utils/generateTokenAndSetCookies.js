@@ -2,17 +2,15 @@ import jwt from "jsonwebtoken";
 
 /**
  * Generate a JWT and set it as an httpOnly cookie.
- * Token payload:  { id, email, name, planType }
- * planType is stored so middleware can do a quick pre-check,
- * but the real authoritative check ALWAYS re-reads from MongoDB.
+ * Token payload: { id, email, name, planType, role }
  */
-export default function generateTokenAndSetCookies(res, id, email, name, planType = 'basic') {
+export default function generateTokenAndSetCookies(res, id, email, name, planType = 'basic', role = 'user') {
   try {
     const secret = process.env.JWT_SECRET || 'fallback_secret';
     const tokenEx = (process.env.TOKEN_EX || '7d').trim();
 
     const token = jwt.sign(
-      { id, email, name, planType },
+      { id, email, name, planType, role },
       secret,
       { expiresIn: tokenEx }
     );

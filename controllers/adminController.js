@@ -2,29 +2,63 @@ import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import Plan from '../models/Plan.js';
 import CreditPackage from '../models/CreditPackage.js';
-
-const Payment = {
-  find: async () => []
-};
-const CreditUsageLog = {
-  find: async () => [],
-  aggregate: async () => []
-};
+import CreditLog from '../models/CreditLog.js';
 
 export const getAdminStats = async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
-        const activeSubscriptions = await Subscription.countDocuments({ status: 'active' });
-        
-        const payments = await Payment.find({ status: 'success' });
-        const totalRevenue = payments.reduce((acc, p) => acc + p.amount, 0);
+        const activeSubscriptionsCount = await Subscription.countDocuments({ 
+          subscriptionStatus: 'active' 
+        });
 
-        const creditLogs = await CreditUsageLog.find();
-        const totalCreditsUsed = creditLogs.reduce((acc, log) => acc + log.credits_used, 0);
+        // Revenue calculation: Sum of plan prices for all successful/active paid subscriptions
+        // Note: Joining with Plan model to get the current price at the time of calculation
+        const revenueAggregation = await Subscription.aggregate([
+          { $match: { subscriptionStatus: 'active', paymentId: { $exists: true, $ne: "" } } },
+          {
+            $lookup: {
+              from: 'plans',
+              localField: 'planId',
+              foreignField: '_id',
+              as: 'planDetails'
+            }
+          },
+          { $unwind: '$planDetails' },
+          {
+            $group: {
+              _id: null,
+              total: {
+                $sum: {
+                  $cond: [
+                    { $eq: ['$billingCycle', 'yearly'] },
+                    '$planDetails.priceYearly',
+                    '$planDetails.priceMonthly'
+                  ]
+                }
+              }
+            }
+          }
+        ]);
+        const totalRevenue = revenueAggregation.length > 0 ? revenueAggregation[0].total : 0;
 
-        // Tool usage analytics
-        const toolUsage = await CreditUsageLog.aggregate([
-            { $group: { _id: "$tool_name", count: { $sum: 1 }, totalCredits: { $sum: "$credits_used" } } },
+        // Credit usage from real logs
+        const creditUsageData = await CreditLog.aggregate([
+            { $match: { credits: { $lt: 0 } } },
+            { $group: { 
+                _id: null, 
+                totalUsed: { $sum: { $abs: "$credits" } } 
+            } }
+        ]);
+        const totalCreditsUsed = creditUsageData.length > 0 ? creditUsageData[0].totalUsed : 0;
+
+        // Tool usage analytics grouped by action
+        const toolUsage = await CreditLog.aggregate([
+            { $match: { credits: { $lt: 0 } } },
+            { $group: { 
+                _id: "$action", 
+                count: { $sum: 1 }, 
+                totalCredits: { $sum: { $abs: "$credits" } } 
+            } },
             { $sort: { count: -1 } }
         ]);
 
@@ -32,13 +66,14 @@ export const getAdminStats = async (req, res) => {
             success: true,
             stats: {
                 totalUsers,
-                activeSubscriptions,
+                activeSubscriptions: activeSubscriptionsCount,
                 totalRevenue,
                 totalCreditsUsed,
                 toolUsage
             }
         });
     } catch (error) {
+        console.error("[getAdminStats Error]", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -46,10 +81,10 @@ export const getAdminStats = async (req, res) => {
 export const searchUserByEmail = async (req, res) => {
     try {
         const { email } = req.query;
-        const user = await User.findOne({ email }).select('name email');
+        const user = await User.findOne({ email }).select('name email credits role isBlocked');
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        const subscription = await Subscription.findOne({ user_id: user._id });
+        const subscription = await Subscription.findOne({ userId: user._id }).populate('planId');
         
         res.status(200).json({
             success: true,
@@ -57,6 +92,7 @@ export const searchUserByEmail = async (req, res) => {
             subscription
         });
     } catch (error) {
+        console.error("[searchUserByEmail Error]", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -64,9 +100,12 @@ export const searchUserByEmail = async (req, res) => {
 export const adjustCredits = async (req, res) => {
     try {
         const { userId, credits } = req.body;
+        // Update both the user model and the subscription model for consistency
+        await User.findByIdAndUpdate(userId, { $set: { credits: credits } });
+        
         const subscription = await Subscription.findOneAndUpdate(
-            { user_id: userId },
-            { $set: { remaining_credits: credits } },
+            { userId: userId },
+            { $set: { creditsRemaining: credits } },
             { new: true }
         );
 
@@ -76,6 +115,7 @@ export const adjustCredits = async (req, res) => {
             subscription
         });
     } catch (error) {
+        console.error("[adjustCredits Error]", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -83,22 +123,29 @@ export const adjustCredits = async (req, res) => {
 export const manualPlanUpgrade = async (req, res) => {
     try {
         const { userId, planName, expiryDate } = req.body;
+        
+        // Find the actual plan ID first
+        const plan = await Plan.findOne({ planName: new RegExp(`^${planName}$`, 'i') });
+        if (!plan) return res.status(404).json({ success: false, message: `Plan '${planName}' not found.` });
+
         const subscription = await Subscription.findOneAndUpdate(
-            { user_id: userId },
+            { userId: userId },
             { 
-                plan_name: planName, 
-                expiry_date: expiryDate ? new Date(expiryDate) : undefined,
-                status: 'active'
+                planId: plan._id, 
+                renewalDate: expiryDate ? new Date(expiryDate) : undefined,
+                subscriptionStatus: 'active',
+                creditsRemaining: plan.credits // Reset credits to plan default on manual upgrade
             },
             { new: true, upsert: true }
         );
 
         res.status(200).json({
             success: true,
-            message: 'Plan updated successfully.',
+            message: `Plan upgraded to ${plan.planName} successfully.`,
             subscription
         });
     } catch (error) {
+        console.error("[manualPlanUpgrade Error]", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };
