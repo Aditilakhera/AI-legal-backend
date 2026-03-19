@@ -432,16 +432,51 @@ Response Guidelines:
 
     let finalSystemInstruction = `${dynamicSystemInstruction}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
 
-    if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
-      finalSystemInstruction = modeSystemInstruction;
+    // Determine specific tool modes for instruction tailoring
+    const isActuallyImageEdit = mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+    const isActuallyImageGen = mode === 'IMAGE_GEN';
+    const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
+    const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
+    const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
+    const isActuallyConvertMode = mode === 'FILE_CONVERSION' || detectedMode === 'DOCUMENT_CONVERT';
+
+    if (isActuallyConvertMode || detectedMode === 'FILE_ANALYSIS' || isActuallyCodeMode) {
+      if (isActuallyCodeMode) {
+        finalSystemInstruction = `
+### ROLE:
+You are an expert Software Architect and Senior Lead Developer. Your goal is to provide highly structured, technical, and ready-to-implement architecture and code.
+
+### CRITICAL FORMATTING RULES:
+1. NO BULLET POINTS FOR STRUCTURES: Do NOT use standard markdown bullet points ( - or * ) to represent folder or file structures.
+2. UNIFIED TREE: You MUST display the entire project architecture inside ONE SINGLE markdown code block using a visual tree format.
+3. CODE BLOCKS: Wrap ALL code snippets in proper multi-line markdown blocks with the correct language tag (e.g., \`\`\`csharp).
+4. NO INLINE PATHS: Do not use single backticks for file names inside text paragraphs.
+5. EXAMPLE TREE FORMAT (MANDATORY):
+\`\`\`text
+ProjectRoot/
+├── src/
+│   ├── Controllers/
+│   │   ├── AuthController.cs
+│   │   └── UserController.cs
+│   ├── Models/
+│   │   ├── Entities/
+│   │   └── DTOs/
+│   └── Program.cs
+└── appsettings.json
+\`\`\`
+
+### RESPONSE STRUCTURE:
+- First, provide the complete, unified Directory Tree as shown in the example above.
+- Second, provide any necessary explanations or code snippets below the tree.
+- Third, ensure the output is technical, professional, and visually clean (avoid long paragraphs).
+- Respond in HINGLISH (Roman script) if the user asks in Hindi/Hinglish.
+`;
+      } else {
+        finalSystemInstruction = modeSystemInstruction;
+      }
     } else {
       // Check if the user explicitly activated magic tools via the card (mode)
-      const isActuallyImageEdit = mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
-      const isActuallyImageGen = mode === 'IMAGE_GEN';
-      const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
-      const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
-      const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
-      const isActuallyConvertMode = mode === 'FILE_CONVERSION';
+      // Note: Booleans moved up for clean check above.
 
       // Only add standard rules for non-specialized modes to avoid instruction collision
       let MANDATORY_JSON_RULES = `
@@ -504,9 +539,13 @@ MANDATORY SEARCH RULES:
 `;
       } else if (isActuallyCodeMode) {
         TOOL_RULES += `
-MANDATORY CODE WRITER RULES:
-- You are in CODE WRITER MODE.
-- Provide production-ready code with explanations.
+MANDATORY CODE WRITER MODE RULES:
+- ROLE: You are an expert Software Architect and Lead Developer.
+- FORMATTING OVERRIDE: Ignore general rules about "Using bullet points for lists" when displaying project structures.
+- FILE STRUCTURES: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block (e.g., \`\`\`text or \`\`\`bash).
+- CODE SNIPPETS: Wrap ALL code snippets in proper markdown blocks with the correct language tag (e.g., \`\`\`csharp).
+- NO INLINE CODE: Do not use single backticks (\`) for file names or technical paths if they are part of a structure.
+- CLEAN OUTPUT: Do not intersperse bullet points with code blocks for the same structure. Provide the unified tree first, then explain components below it.
 `;
       } else if (isActuallyConvertMode) {
         TOOL_RULES += `
