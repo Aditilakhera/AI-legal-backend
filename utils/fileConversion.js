@@ -2,6 +2,8 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import mammoth from 'mammoth';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import htmlToDocx from 'html-to-docx';
+import { genAIInstance, modelName as primaryModelName } from '../config/vertex.js';
 
 /**
  * File Conversion Service for AISA
@@ -57,7 +59,63 @@ async function convertPdfToDocx(pdfBuffer) {
         const pdfData = await pdfParse(pdfBuffer);
         const text = pdfData.text;
 
+        try {
+            console.log('[FILE CONVERSION] Attempting AI-powered semantic formatting...');
+            // Need to wrap inside generativeModel handling correctly
+            const model = genAIInstance.getGenerativeModel({ model: primaryModelName });
+            
+            const prompt = `Convert the following extracted PDF text into clean, professional, and well-structured semantic HTML.
+Requirements:
+- Identify headings and apply proper hierarchy (<h1>, <h2>, <h3>)
+- Merge broken lines into proper paragraphs (<p>)
+- Maintain original meaning without skipping any content
+- Format tables accurately with rows and columns (<table>, <tr>, <td>, <th>)
+- Preserve bullet points and numbered lists (<ul>, <ol>, <li>)
+- Fix spacing, alignment, and indentation
+- Remove OCR errors if present
+- Ensure the output looks like a professionally created document
+
+OUTPUT ONLY THE RAW HTML STRING. DO NOT include markdown code blocks like \`\`\`html or any explanations.
+
+PDF Text:
+${text}
+`;
+            
+            const result = await model.generateContent({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: { maxOutputTokens: 8192 }
+            });
+            
+            const response = await result.response;
+            let aiHtml = '';
+            if (typeof response.text === 'function') {
+                aiHtml = response.text();
+            } else if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
+                aiHtml = response.candidates[0].content.parts[0].text;
+            }
+
+            if (aiHtml) {
+                // Clean up any markdown code blocks just in case
+                aiHtml = aiHtml.replace(/```html|```/gi, '').trim();
+                
+                // Convert HTML to DOCX using html-to-docx
+                console.log('[FILE CONVERSION] Generating DOCX from AI HTML...');
+                const docxBuffer = await htmlToDocx(aiHtml, null, {
+                    table: { row: { cantSplit: true } },
+                    footer: true,
+                    pageNumber: true,
+                });
+                
+                if (docxBuffer) {
+                    return docxBuffer;
+                }
+            }
+        } catch (aiError) {
+            console.warn('[FILE CONVERSION] AI semantic formatting failed, falling back to basic:', aiError.message);
+        }
+
         // Split text into paragraphs
+        console.log('[FILE CONVERSION] Using basic paragraph split fallback.');
         const paragraphs = text.split('\n').filter(line => line.trim().length > 0);
 
         // Create DOCX document
