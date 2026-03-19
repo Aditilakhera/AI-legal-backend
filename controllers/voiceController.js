@@ -67,15 +67,41 @@ const synthesizeChunks = async (chunks, languageCode, voiceName, gender, isNarra
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batch = chunks.slice(i, i + BATCH_SIZE);
         const batchPromises = batch.map(chunk => {
+            let reqVoiceName = voiceName;
+            
+            const isUnsupportedVoice = voiceName && (voiceName.includes('Chirp') || voiceName.includes('Journey'));
+            const isModified = pitch !== 0 || speakingRate !== 1.0;
+
             const request = {
                 input: { text: chunk },
-                voice: { languageCode, name: voiceName },
+                voice: { languageCode, name: reqVoiceName },
                 audioConfig: { 
-                     audioEncoding: 'MP3',
-                     pitch: pitch,
-                     speakingRate: speakingRate 
+                     audioEncoding: 'MP3'
                 },
             };
+
+            if (isUnsupportedVoice && isModified) {
+                // Infer correct gender for fallback if it's a known male voice
+                let finalGender = gender;
+                const maleVoices = ['Alnilam', 'Charon', 'Enceladus', 'Fenrir', 'Iapetus', 'Orus', 'Puck', 'Rasalgethi', 'Sadachbia', 'Sadaltager', 'Schedar', 'Umbriel', 'Zubenelgenubi'];
+                if (voiceName && maleVoices.some(m => voiceName.includes(m))) {
+                    finalGender = 'MALE';
+                }
+
+                // Fallback to default voice (which supports pitch/speed adjustments since Chirp/Journey do not)
+                delete request.voice.name;
+                if (finalGender) {
+                    request.voice.ssmlGender = finalGender;
+                }
+                console.log(`[VoiceController] Falling back from ${voiceName} to default ${finalGender} voice to support pitch/speed parameters.`);
+            }
+
+            // Only send pitch and speakingRate if they are modified, or if voice supports it
+            if (isModified || !isUnsupportedVoice) {
+                request.audioConfig.pitch = pitch;
+                request.audioConfig.speakingRate = speakingRate;
+            }
+
             return client.synthesizeSpeech(request).then(([response]) => {
                 let data = response.audioContent;
                 return Buffer.isBuffer(data) ? data : Buffer.from(data, 'base64');
