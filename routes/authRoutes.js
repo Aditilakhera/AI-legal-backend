@@ -129,7 +129,7 @@ router.post("/signup", async (req, res) => {
     }
 
     // Generate token cookie
-    const token = generateTokenAndSetCookies(res, newUser._id, newUser.email, newUser.name, newUser.plan);
+    const token = generateTokenAndSetCookies(res, newUser._id, newUser.email, newUser.name, newUser.plan, newUser.role);
 
 
     // Send OTP email
@@ -184,7 +184,7 @@ router.post("/login", async (req, res) => {
     // Remove normalisePlan
     const userPlan = user.plan || "Basic";
     // Generate token
-    const token = generateTokenAndSetCookies(res, user._id, user.email, user.name, userPlan);
+    const token = generateTokenAndSetCookies(res, user._id, user.email, user.name, userPlan, user.role);
 
     // Add welcome notifications if inbox is empty
     if (!user.notificationsInbox || user.notificationsInbox.length === 0) {
@@ -350,7 +350,7 @@ const handleSocialUser = async (profile, res, isRedirect = true) => {
     }
 
     // Generate JWT
-    const token = generateTokenAndSetCookies(res, user._id, user.email, user.name, user.plan);
+    const token = generateTokenAndSetCookies(res, user._id, user.email, user.name, user.plan, user.role);
 
     if (isRedirect) {
       const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
