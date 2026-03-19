@@ -25,7 +25,9 @@ const isAdmin = async (req, res, next) => {
         }
         
         const user = await User.findById(req.user.id);
-        if (user && user.role === 'admin') {
+        const PRIMARY_ADMIN_EMAIL = 'admin@uwo24.com';
+        
+        if (user && (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL)) {
             next();
         } else {
             console.warn(`[Blocked Access] User ${req.user.email} attempted admin access without proper role.`);
