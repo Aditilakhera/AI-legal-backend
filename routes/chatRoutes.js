@@ -597,6 +597,9 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
     async function processDocumentPart(doc, partsArray) {
       const mimeType = doc.mimeType || 'application/pdf';
 
+      // Explicitly label the attached document for the AI to understand it
+      partsArray.push({ text: `[Attached File Name: ${doc.name || 'document'}]` });
+
       // For PDF documents, we can pass binary data directly to Gemini
       if (mimeType === 'application/pdf') {
         partsArray.push({
@@ -933,6 +936,14 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
       sources: searchSources,
       language: detectedLanguage || language || 'English'
     };
+
+    if (conversionResult && conversionResult.success) {
+      finalResponse.conversion = {
+        file: conversionResult.file,
+        fileName: conversionResult.fileName,
+        mimeType: conversionResult.mimeType
+      };
+    }
 
     // --- CREDIT DEDUCTION AFTER SUCCESS ---
     if (req.user) {
