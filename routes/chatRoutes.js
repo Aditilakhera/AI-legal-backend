@@ -24,6 +24,7 @@ import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
 import * as deepSearchService from "../services/deepSearch.service.js";
 import memoryService from "../services/memory.service.js";
+import { generateConversationTitle } from "../services/ai.service.js";
 
 import axios from "axios";
 
@@ -1544,11 +1545,28 @@ router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (re
       }
     }
 
+    let aiTitle = null;
+    const isGenericTitle = !existingSession?.title || 
+                           existingSession.title === "New Chat" || 
+                           existingSession.title === "General Chat" || 
+                           existingSession.title.includes('...');
+
+    // If it's the first message or title is generic, generate an AI title
+    if ((!existingSession || existingSession.messages.length === 0 || isGenericTitle) && message.role === 'user') {
+      try {
+        aiTitle = await generateConversationTitle(message.content);
+        console.log(`[AI-TITLE] Generated: "${aiTitle}" for session ${sessionId}`);
+      } catch (titleErr) {
+        console.error("AI Title generation failed:", titleErr);
+        // Fallback to provided title or default
+      }
+    }
+
     const updateData = {
       $push: { messages: message },
       $set: {
         lastModified: Date.now(),
-        ...(title && { title })
+        title: aiTitle || title || existingSession?.title || "General Chat"
       }
     };
 

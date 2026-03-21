@@ -277,11 +277,19 @@ export const detectRAGNeed = async (query) => {
 /**
  * Internal helper for basic text generation
  */
-const AskVertexRaw = async (prompt, options = {}) => {
+export const AskVertexRaw = async (prompt, options = {}) => {
     try {
         const result = await generativeModel.generateContent(prompt);
         const response = await result.response;
-        return response.text();
+        
+        if (typeof response.text === 'function') {
+            return response.text();
+        } else if (response.text) {
+            return response.text;
+        } else if (response.candidates && response.candidates[0]?.content?.parts[0]?.text) {
+            return response.candidates[0].content.parts[0].text;
+        }
+        return "";
     } catch (err) {
         throw err;
     }
@@ -352,7 +360,10 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // 3. Generate Content
-        const result = await model.generateContent(parts);
+        // Use string directly for text-only to avoid 400 errors in some SDK versions
+        const result = (parts.length === 1 && parts[0].text) 
+            ? await model.generateContent(parts[0].text)
+            : await model.generateContent({ contents: [{ role: 'user', parts }] });
         const response = await result.response;
 
         let text = '';

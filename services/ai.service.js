@@ -299,6 +299,53 @@ export const reloadVectorStore = async () => {
     await initializeFromDB();
 };
 
+export const generateConversationTitle = async (message) => {
+    try {
+        const prompt = `Convert the following user message into a very short, clean title (3-5 words max).
+        
+Rules:
+- NO QUOTES.
+- NO CONVERSATIONAL FILLER.
+- DO NOT answer the user. Just title it.
+- Title Case for principal words.
+- If it's a greeting, just say "Greeting". 
+- ALWAYS try to summarize the topic if it's longer than 2 words.
+
+User Message: "${message}"
+
+Title:`;
+
+        const fullPrompt = prompt;
+
+        // Log the request
+        logger.debug(`[AI-TITLE] Prompt: ${fullPrompt}`);
+
+        const title = await vertexService.AskVertexRaw(fullPrompt, {
+            maxOutputTokens: 50,
+            temperature: 0.1
+        });
+
+        // Log raw response
+        logger.debug(`[AI-TITLE] Raw response: "${title}"`);
+
+        // Clean up the potentially generated string (remove surrounding quotes if any)
+        const cleanTitle = title.trim().replace(/^["']|["']$/g, '').replace(/\.\.\.$/, '');
+        
+        // If it's a safety block or too long, use fallback
+        if (cleanTitle.toLowerCase().includes("cannot fulfill") || cleanTitle.length > 60 || !cleanTitle) {
+            throw new Error(`Invalid AI title response: "${cleanTitle}"`);
+        }
+
+        return cleanTitle;
+    } catch (error) {
+        logger.error(`[AI-TITLE] Error generateConversationTitle: ${error.message}`);
+        // Last resort: substring of the message (ChatGPT-style fallback)
+        const words = message.trim().split(/\s+/);
+        if (words.length <= 2) return "General Chat";
+        return words.slice(0, 5).join(' ') + (words.length > 5 ? '' : '');
+    }
+};
+
 export const ragChat = async (message) => {
     return chat(message);
 };

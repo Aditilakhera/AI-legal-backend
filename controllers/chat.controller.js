@@ -50,14 +50,23 @@ export const chat = async (req, res, next) => {
         }
 
         if (!conversation) {
+            let titleSourceText = message;
+            if (!titleSourceText) {
+                if (image && image.length > 0) titleSourceText = "Image Analysis Session";
+                else if (document && document.length > 0) titleSourceText = "Document Analysis Session";
+                else titleSourceText = "New Conversation";
+            }
+            
+            const generatedTitle = await aiService.generateConversationTitle(titleSourceText);
+
             conversation = new Conversation({
-                userId: 'admin', // Hardcoded for now
-                title: message.substring(0, 30) + (message.length > 30 ? '...' : ''), // Auto-title
+                userId: req.user?.id || req.user?._id || 'admin', // Support dynamic user
+                title: generatedTitle,
                 messages: []
             });
         }
 
-        conversation.messages.push({ role: 'user', text: message });
+        conversation.messages.push({ role: 'user', text: message || "[Attachment Uploaded]" });
         conversation.messages.push({
             role: 'assistant',
             text: responseText,
@@ -77,7 +86,8 @@ export const chat = async (req, res, next) => {
             data: responseText,
             isRealTime: isRealTime || false,
             sources: sources || [],
-            conversationId: conversation._id
+            conversationId: conversation._id,
+            title: conversation.title
         });
     } catch (error) {
         next(error);
