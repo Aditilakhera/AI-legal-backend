@@ -194,6 +194,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             const docCount = await Knowledge.countDocuments();
             let ragContext = null;
             let rewrittenQuery = message;
+            let hasCompanyKeyword = false;
 
             const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
             if (docCount > 0 || manualCorpusId) {
@@ -203,7 +204,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 const generalPhrases = ['what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 'why is', 'suggest', 'give me', 'who is'];
                 
                 // If it looks like a general question and lacks company keywords, SKIP RAG immediately (No Resources)
-                const hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
+                hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
                 const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
                 
                 logger.info(`[RAG-Logic] Msg: "${lowerMsg}" | hasKeyword: ${hasCompanyKeyword} | startsGen: ${startsWithGeneral}`);

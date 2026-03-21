@@ -259,6 +259,59 @@ router.get('/:sessionId', optionalVerifyToken, identifyGuest, async (req, res) =
   }
 });
 
+// --- ADD MESSAGE MANUALLY (SYNC FROM FRONTEND) ---
+router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { message, title } = req.body;
+    const userId = req.user?.id;
+    const guestId = req.guest?.guestId;
+
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    let session = await ChatSession.findOne({ sessionId });
+    
+    if (!session) {
+      // Create new session if it doesn't exist
+      session = new ChatSession({
+        sessionId,
+        userId: userId || null,
+        guestId: guestId || null,
+        title: title || "New Chat",
+        messages: []
+      });
+      if (userId) await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
+    } else {
+      // Ownership check for existing session
+      if (userId) {
+        if (session.userId && session.userId.toString() !== userId) return res.status(403).json({ error: 'Access denied' });
+      } else if (guestId) {
+        if (session.guestId !== guestId) return res.status(403).json({ error: 'Access denied' });
+      }
+    }
+
+    // Upsert message
+    const existingIndex = session.messages.findIndex(m => m.id === message.id || (m._id && m._id.toString() === message.id));
+    if (existingIndex !== -1) {
+      session.messages[existingIndex] = { ...session.messages[existingIndex].toObject(), ...message, timestamp: message.timestamp || Date.now() };
+    } else {
+      session.messages.push({ ...message, timestamp: message.timestamp || Date.now() });
+    }
+
+    if (title && title !== "New Chat" && session.title === "New Chat") {
+        session.title = title;
+    }
+
+    session.lastModified = Date.now();
+    await session.save();
+
+    res.json({ success: true, message: 'Message synced successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to sync message' });
+  }
+});
+
 // --- DELETE MESSAGE ---
 router.delete('/:sessionId/message/:messageId', optionalVerifyToken, identifyGuest, async (req, res) => {
   try {
