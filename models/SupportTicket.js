@@ -3,7 +3,8 @@ import mongoose from 'mongoose';
 const supportTicketSchema = new mongoose.Schema({
     name: {
         type: String,
-        required: true,
+        required: false,
+        default: 'AISA User'
     },
     email: {
         type: String,

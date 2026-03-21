@@ -9,6 +9,8 @@ import path from 'path';
 import * as vertexService from './vertex.service.js';
 import * as openaiService from './openai.service.js';
 import * as webSearchService from './webSearch.service.js';
+import * as deepSearchService from './deepSearch.service.js';
+import groqService from './groq.service.js';
 import memoryService from './memory.service.js';
 import QueryLog from '../models/QueryLog.model.js';
 import userIntelligenceService from './userIntelligence.service.js';
@@ -76,14 +78,18 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history } = options;
 
         // --- CONVERSATION MEMORY RAG ---
+        // Combine history from frontend and retrieved memory from DB if available
         let retrievedHistory = [];
         if (conversationId) {
             logger.info(`[Memory] Retrieving memory for conversation: ${conversationId}`);
             retrievedHistory = await memoryService.retrieveMemory(conversationId, message, 5);
         }
+
+        // Prepare context for non-Vertex models if history is provided
+        const combinedHistory = history || []; // history from frontend is prioritized for multi-model consistency
         
         // Save User Message (async)
         if (conversationId) {
@@ -96,8 +102,10 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         const personaContext = await userIntelligenceService.getPersonaInjection(userId);
         
         const isActuallyImageMode = mode === 'IMAGE_GEN' || mode === 'IMAGE_EDIT';
-        const isActuallyVideoMode = mode === 'VIDEO_GEN';
+        const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
         const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
+        const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
+        const isActuallyConvertMode = mode === 'FILE_CONVERSION' || mode === 'DOCUMENT_CONVERT';
         
         let toolRestrictions = "";
         if (isActuallyImageMode) {
@@ -106,6 +114,18 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             toolRestrictions = "\n\n### MODE: VIDEO GENERATION ENABLED. You can generate videos using JSON action strictly if explicitly asked.";
         } else if (isActuallySearchMode) {
             toolRestrictions = "\n\n### MODE: WEB SEARCH ENABLED. Answer based on real-time data.";
+        } else if (isActuallyCodeMode) {
+            toolRestrictions = `
+\n\n### MODE: CODE WRITER ENABLED.
+- ROLE: You are an expert Software Architect and Senior Lead Developer.
+- FORMATTING: Ignore general rules about "Using bullet points for lists" when displaying project structures.
+- FILE STRUCTURES: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block using a visual tree format (e.g., \`\`\`text).
+- CODE SNIPPETS: Wrap ALL code snippets in proper markdown blocks with the correct language tag.
+- NO INLINE CODE: Do not use single backticks for file names or technical paths if they are part of a structure.
+- CLEAN OUTPUT: Provide the unified tree first, then explain components below it.
+`;
+        } else if (isActuallyConvertMode) {
+            toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
         } else {
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
         }
@@ -136,12 +156,19 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 // Only perform web search if explicitly requested via mode.
                 // This ensures "normal questions" go to Vertex AI without extra resources.
                 if (isForcedSearch) {
-                    logger.info(`[WebSearch] ROUTING TO LIVE WEB SEARCH for: ${message}`);
-                    const searchResult = await webSearchService.performSearch(message, language);
+                    logger.info(`[WebSearch] ROUTING TO LIVE SEARCH (Mode: ${mode}) for: ${message}`);
+                    let searchResult;
+                    
+                    if (mode === 'DEEP_SEARCH') {
+                        searchResult = await deepSearchService.performDeepSearch(message, language);
+                    } else {
+                        searchResult = await webSearchService.performSearch(message, language);
+                    }
 
-                    if (searchResult && searchResult.summary) {
-                        searchCache.set(cacheKey, { result: searchResult, timestamp: Date.now() });
-                        finalResponseData = { text: searchResult.summary, isRealTime: true, sources: searchResult.sources };
+                    if (searchResult && (searchResult.summary || searchResult.text)) {
+                        const summary = searchResult.summary || searchResult.text;
+                        searchCache.set(cacheKey, { result: { summary, sources: searchResult.sources }, timestamp: Date.now() });
+                        finalResponseData = { text: summary, isRealTime: true, sources: searchResult.sources };
                     } else {
                         logger.warn("[WebSearch] Search yielded no results.");
                     }
@@ -167,6 +194,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             const docCount = await Knowledge.countDocuments();
             let ragContext = null;
             let rewrittenQuery = message;
+            let hasCompanyKeyword = false;
 
             const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
             if (docCount > 0 || manualCorpusId) {
@@ -176,7 +204,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 const generalPhrases = ['what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 'why is', 'suggest', 'give me', 'who is'];
                 
                 // If it looks like a general question and lacks company keywords, SKIP RAG immediately (No Resources)
-                const hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
+                hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
                 const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
                 
                 logger.info(`[RAG-Logic] Msg: "${lowerMsg}" | hasKeyword: ${hasCompanyKeyword} | startsGen: ${startsWithGeneral}`);
@@ -250,18 +278,33 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
                 });
                 finalResponseData = { text: ragResponse, isRealTime: true, sources: ragContext?.sources || [], mode: 'RAG' };
             } else {
-                // PRIORITY 3: General Knowledge (Normal Questions)
+                // PRIORITY 3: Multi-Model or Vertex AI General Chat
                 const promptWithMemory = buildMemoryPrompt(message);
                 
-                // USER REQUIREMENT: For normal questions, ONLY give the answer.
-                // We use a specialized instruction set that forbids suggestions and citations.
-                const generalInstruction = configService.getGeneralSystemInstruction(personaContext);
-                logger.warn(`[RAG-Logic] EXECUTING GENERAL CHAT for: "${message}"`);
+                const currentModel = model?.toLowerCase();
+                let aiResponse = "";
 
-                const aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
-                    userName, 
-                    systemInstruction: generalInstruction 
-                });
+                if (currentModel && (currentModel.includes('gpt') || currentModel.includes('openai'))) {
+                    logger.info(`[AI-Service] Routing to OpenAI (${currentModel})`);
+                    aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
+                        systemInstruction: dynamicSystemInstruction,
+                        userName
+                    });
+                } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
+                    logger.info(`[AI-Service] Routing to Groq (${currentModel})`);
+                    aiResponse = await groqService.askGroq(promptWithMemory, null);
+                } else {
+                    // Default to Vertex AI (Gemini)
+                    const generalInstruction = configService.getGeneralSystemInstruction(personaContext);
+                    logger.warn(`[RAG-Logic] EXECUTING GENERAL CHAT for: "${message}"`);
+
+                    aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
+                        userName, 
+                        systemInstruction: generalInstruction,
+                        mode: mode || 'GENERAL'
+                    });
+                }
+                
                 finalResponseData = { text: aiResponse, isRealTime: false };
             }
         }

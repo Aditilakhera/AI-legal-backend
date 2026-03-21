@@ -6,10 +6,13 @@ const router = express.Router();
 
 router.post('/', async (req, res) => {
     try {
-        const { name, email, issueType, message, userId } = req.body;
+        let { name, email, issueType, message, userId } = req.body;
+        
+        // Provide default name if missing to prevent validation failure
+        if (!name) name = "AISA User";
 
-        if (!name || !email || !issueType || !message) {
-            return res.status(400).json({ error: 'Missing required fields' });
+        if (!email || !issueType || !message) {
+            return res.status(400).json({ error: 'Missing required fields (email, issueType, or message)' });
         }
 
         const newTicket = new SupportTicket({
@@ -33,9 +36,10 @@ router.post('/', async (req, res) => {
 router.get('/tickets', verifyAdmin, async (req, res) => {
     try {
         const tickets = await SupportTicket.find().sort({ createdAt: -1 });
+        console.log(`[SUPPORT API] Fetched ${tickets.length} tickets for admin.`);
         res.status(200).json({ tickets });
     } catch (error) {
-        console.error('Error fetching support tickets:', error);
+        console.error('[SUPPORT API ERROR] Error fetching support tickets:', error);
         res.status(500).json({ error: 'Failed to fetch tickets' });
     }
 });

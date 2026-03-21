@@ -29,15 +29,15 @@ export const verifyAdmin = async (req, res, next) => {
             return res.status(401).json({ error: "User not found" });
         }
 
-        // Check if user is admin
-        const adminEmail = process.env.ADMIN_EMAIL || 'admin@aisa24.com';
-        if (user.email !== adminEmail) {
+        // Check if user is admin (email or role check)
+        const PRIMARY_ADMIN_EMAIL = 'admin@uwo24.com';
+        if (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL) {
+            req.user = decoded;
+            req.adminUser = user;
+            next();
+        } else {
             return res.status(403).json({ error: "Access denied. Admin only." });
         }
-
-        req.user = decoded;
-        req.adminUser = user;
-        next();
     } catch (error) {
         console.error(`[ADMIN AUTH ERROR] ${error.message}`);
         return res.status(401).json({ error: "Invalid or expired token" });

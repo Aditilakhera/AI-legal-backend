@@ -1,0 +1,144 @@
+﻿diff --git a/routes/chatRoutes.js b/routes/chatRoutes.js
+index 9ca5ccd..fb0fb6d 100644
+--- a/routes/chatRoutes.js
++++ b/routes/chatRoutes.js
+@@ -24,6 +24,7 @@ import Knowledge from "../models/Knowledge.model.js";
+ import * as webSearchService from "../services/webSearch.service.js";
+ import * as deepSearchService from "../services/deepSearch.service.js";
+ import memoryService from "../services/memory.service.js";
++import { generateConversationTitle } from "../services/ai.service.js";
+ 
+ import axios from "axios";
+ 
+@@ -432,16 +433,51 @@ Response Guidelines:
+ 
+     let finalSystemInstruction = `${dynamicSystemInstruction}\n${dateContext}\n${ragContext}\n${memoryContext}\n${nameUsageInstruction}\n${duplicateNote}\n\n[SESSION CONTEXT]:\n${baseInstruction}`;
+ 
+-    if (detectedMode === 'FILE_CONVERSION' || detectedMode === 'FILE_ANALYSIS') {
+-      finalSystemInstruction = modeSystemInstruction;
++    // Determine specific tool modes for instruction tailoring
++    const isActuallyImageEdit = mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
++    const isActuallyImageGen = mode === 'IMAGE_GEN';
++    const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
++    const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
++    const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
++    const isActuallyConvertMode = mode === 'FILE_CONVERSION' || detectedMode === 'DOCUMENT_CONVERT';
++
++    if (isActuallyConvertMode || detectedMode === 'FILE_ANALYSIS' || isActuallyCodeMode) {
++      if (isActuallyCodeMode) {
++        finalSystemInstruction = `
++### ROLE:
++You are an expert Software Architect and Senior Lead Developer. Your goal is to provide highly structured, technical, and ready-to-implement architecture and code.
++
++### CRITICAL FORMATTING RULES:
++1. NO BULLET POINTS FOR STRUCTURES: Do NOT use standard markdown bullet points ( - or * ) to represent folder or file structures.
++2. UNIFIED TREE: You MUST display the entire project architecture inside ONE SINGLE markdown code block using a visual tree format.
++3. CODE BLOCKS: Wrap ALL code snippets in proper multi-line markdown blocks with the correct language tag (e.g., \`\`\`csharp).
++4. NO INLINE PATHS: Do not use single backticks for file names inside text paragraphs.
++5. EXAMPLE TREE FORMAT (MANDATORY):
++\`\`\`text
++ProjectRoot/
++Γö£ΓöÇΓöÇ src/
++Γöé   Γö£ΓöÇΓöÇ Controllers/
++Γöé   Γöé   Γö£ΓöÇΓöÇ AuthController.cs
++Γöé   Γöé   ΓööΓöÇΓöÇ UserController.cs
++Γöé   Γö£ΓöÇΓöÇ Models/
++Γöé   Γöé   Γö£ΓöÇΓöÇ Entities/
++Γöé   Γöé   ΓööΓöÇΓöÇ DTOs/
++Γöé   ΓööΓöÇΓöÇ Program.cs
++ΓööΓöÇΓöÇ appsettings.json
++\`\`\`
++
++### RESPONSE STRUCTURE:
++- First, provide the complete, unified Directory Tree as shown in the example above.
++- Second, provide any necessary explanations or code snippets below the tree.
++- Third, ensure the output is technical, professional, and visually clean (avoid long paragraphs).
++- Respond in HINGLISH (Roman script) if the user asks in Hindi/Hinglish.
++`;
++      } else {
++        finalSystemInstruction = modeSystemInstruction;
++      }
+     } else {
+       // Check if the user explicitly activated magic tools via the card (mode)
+-      const isActuallyImageEdit = mode === 'IMAGE_EDIT' || detectedMode === 'IMAGE_EDIT';
+-      const isActuallyImageGen = mode === 'IMAGE_GEN';
+-      const isActuallyVideoMode = mode === 'VIDEO_GEN' || mode === 'IMAGE_TO_VIDEO';
+-      const isActuallySearchMode = mode === 'web_search' || mode === 'DEEP_SEARCH';
+-      const isActuallyCodeMode = mode === 'CODE_WRITER' || mode === 'CODING_HELP';
+-      const isActuallyConvertMode = mode === 'FILE_CONVERSION';
++      // Note: Booleans moved up for clean check above.
+ 
+       // Only add standard rules for non-specialized modes to avoid instruction collision
+       let MANDATORY_JSON_RULES = `
+@@ -504,9 +540,13 @@ MANDATORY SEARCH RULES:
+ `;
+       } else if (isActuallyCodeMode) {
+         TOOL_RULES += `
+-MANDATORY CODE WRITER RULES:
+-- You are in CODE WRITER MODE.
+-- Provide production-ready code with explanations.
++MANDATORY CODE WRITER MODE RULES:
++- ROLE: You are an expert Software Architect and Lead Developer.
++- FORMATTING OVERRIDE: Ignore general rules about "Using bullet points for lists" when displaying project structures.
++- FILE STRUCTURES: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block (e.g., \`\`\`text or \`\`\`bash).
++- CODE SNIPPETS: Wrap ALL code snippets in proper markdown blocks with the correct language tag (e.g., \`\`\`csharp).
++- NO INLINE CODE: Do not use single backticks (\`) for file names or technical paths if they are part of a structure.
++- CLEAN OUTPUT: Do not intersperse bullet points with code blocks for the same structure. Provide the unified tree first, then explain components below it.
+ `;
+       } else if (isActuallyConvertMode) {
+         TOOL_RULES += `
+@@ -597,6 +637,9 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
+     async function processDocumentPart(doc, partsArray) {
+       const mimeType = doc.mimeType || 'application/pdf';
+ 
++      // Explicitly label the attached document for the AI to understand it
++      partsArray.push({ text: `[Attached File Name: ${doc.name || 'document'}]` });
++
+       // For PDF documents, we can pass binary data directly to Gemini
+       if (mimeType === 'application/pdf') {
+         partsArray.push({
+@@ -934,6 +977,14 @@ MANDATORY TOOL RESTRICTIONS (NORMAL CHAT):
+       language: detectedLanguage || language || 'English'
+     };
+ 
++    if (conversionResult && conversionResult.success) {
++      finalResponse.conversion = {
++        file: conversionResult.file,
++        fileName: conversionResult.fileName,
++        mimeType: conversionResult.mimeType
++      };
++    }
++
+     // --- CREDIT DEDUCTION AFTER SUCCESS ---
+     if (req.user) {
+       // Re-detect tools based on AI action if any
+@@ -1494,11 +1545,28 @@ router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (re
+       }
+     }
+ 
++    let aiTitle = null;
++    const isGenericTitle = !existingSession?.title || 
++                           existingSession.title === "New Chat" || 
++                           existingSession.title === "General Chat" || 
++                           existingSession.title.includes('...');
++
++    // If it's the first message or title is generic, generate an AI title
++    if ((!existingSession || existingSession.messages.length === 0 || isGenericTitle) && message.role === 'user') {
++      try {
++        aiTitle = await generateConversationTitle(message.content);
++        console.log(`[AI-TITLE] Generated: "${aiTitle}" for session ${sessionId}`);
++      } catch (titleErr) {
++        console.error("AI Title generation failed:", titleErr);
++        // Fallback to provided title or default
++      }
++    }
++
+     const updateData = {
+       $push: { messages: message },
+       $set: {
+         lastModified: Date.now(),
+-        ...(title && { title })
++        title: aiTitle || title || existingSession?.title || "General Chat"
+       }
+     };
+ 

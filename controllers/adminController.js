@@ -3,10 +3,12 @@ import Subscription from '../models/Subscription.js';
 import Plan from '../models/Plan.js';
 import CreditPackage from '../models/CreditPackage.js';
 import CreditLog from '../models/CreditLog.js';
+import SupportTicket from '../models/SupportTicket.js';
 
 export const getAdminStats = async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
+        const pendingTickets = await SupportTicket.countDocuments({ status: { $in: ['pending', 'open', 'in_progress'] } });
         const activeSubscriptionsCount = await Subscription.countDocuments({ 
           subscriptionStatus: 'active' 
         });
@@ -69,7 +71,8 @@ export const getAdminStats = async (req, res) => {
                 activeSubscriptions: activeSubscriptionsCount,
                 totalRevenue,
                 totalCreditsUsed,
-                toolUsage
+                toolUsage,
+                pendingTickets
             }
         });
     } catch (error) {

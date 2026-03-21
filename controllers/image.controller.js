@@ -141,8 +141,8 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
 
         // Model selection:
         // User requested "Nano Banana" (gemini-2.5-flash-image) for editing.
-        const primaryModel = originalImage ? 'gemini-2.5-flash-image' : 'imagen-3.0-generate-001';
-        const fallbackModel = originalImage ? 'imagen-3.0-capability-001' : 'imagen-3.0-generate-002';
+        const primaryModel = originalImage ? 'gemini-2.5-flash-image' : selectedModelId;
+        const fallbackModel = originalImage ? 'imagen-3.0-capability-001' : (selectedModelId === 'imagen-4.0-ultra-generate-001' ? 'imagen-3.0-generate-001' : 'imagen-3.0-generate-002');
 
         let response;
         let usedModel = primaryModel;
