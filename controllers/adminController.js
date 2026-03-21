@@ -109,7 +109,11 @@ export const adjustCredits = async (req, res) => {
         const targetUser = await User.findById(userId);
         if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
         
-        const adminUser = await User.findById(adminId);
+        let adminUser = await User.findById(adminId);
+        // Fallback: if ID not found (e.g. stale JWT after DB reset), look up by admin email
+        if (!adminUser) {
+            adminUser = await User.findOne({ email: 'admin@uwo24.com' });
+        }
         if (!adminUser) return res.status(404).json({ success: false, message: 'Admin not found' });
         
         const oldCredits = targetUser.credits || 0;

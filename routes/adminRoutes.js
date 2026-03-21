@@ -24,16 +24,25 @@ const isAdmin = async (req, res, next) => {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
         
-        const user = await User.findById(req.user.id);
         const PRIMARY_ADMIN_EMAIL = 'admin@uwo24.com';
+
+        // Fast path: if email is already in the JWT payload, check it immediately
+        if (req.user.email === PRIMARY_ADMIN_EMAIL || req.user.role === 'admin') {
+            return next();
+        }
+
+        // DB lookup for role/email verification
+        const user = await User.findById(req.user.id);
         
         if (user && (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL)) {
             next();
         } else {
-            console.warn(`[Blocked Access] User ${req.user.email} attempted admin access without proper role.`);
+            const identEmail = req.user.email || (user && user.email) || req.user.id;
+            console.warn(`[Blocked Access] User ${identEmail} attempted admin access without proper role.`);
             res.status(403).json({ success: false, message: 'Access denied. Admins only.' });
         }
     } catch (error) {
+        console.error('[Admin Auth Error]', error.message);
         res.status(500).json({ success: false, message: 'Error verifying admin status' });
     }
 };

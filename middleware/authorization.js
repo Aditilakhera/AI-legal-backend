@@ -20,7 +20,6 @@ export const verifyToken = (req, res, next) => {
         next();
     } catch (error) {
         console.error(`[AUTH ERROR] JWT Verification Failed: ${error.message}`);
-        console.error(`[AUTH ERROR] Header: ${authHeader}`);
         return res.status(401).json({ error: "Invalid or expired token" });
     }
 };

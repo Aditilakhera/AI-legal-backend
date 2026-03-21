@@ -28,12 +28,20 @@ route.get("/", verifyToken, async (req, res) => {
 
         let user = await userModel.findById(userId);
         if (!user) {
+            // Secondary lookup by email (handles stale JWT after DB reset)
+            if (req.user.email) {
+                user = await userModel.findOne({ email: req.user.email });
+            }
+        }
+        if (!user) {
+            const isKnownAdmin = req.user.email === 'admin@uwo24.com';
             console.warn(`[GET USER] User ${userId} not found in DB. Returning fallback user.`);
             return res.status(200).json({
                 _id: userId,
-                name: req.user.name || "AISA User",
-                email: req.user.email || "user@aisa.in",
-                role: "user",
+                name: req.user.name || (isKnownAdmin ? 'ADMIN' : 'AISA User'),
+                email: req.user.email || 'user@aisa.in',
+                role: isKnownAdmin ? 'admin' : 'user',
+                credits: 0,
                 personalizations: {}
             });
         }
