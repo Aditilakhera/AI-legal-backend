@@ -8,36 +8,36 @@ const getToolCost = (toolName, body = {}) => {
             // Normal Chat is now FREE as per requirements
             // Only Magic modes (Deep Search, Web Search, etc) will deduct if they use the chat endpoint
             const mode = body?.mode || '';
-            if (mode === 'web_search') return 15;
-            if (mode === 'DEEP_SEARCH') return 30;
-            if (mode === 'CODING_HELP') return 10;
-            if (mode === 'DOCUMENT_CONVERT') return 15;
+            if (mode === 'web_search') return 53;
+            if (mode === 'DEEP_SEARCH') return 158;
+            if (mode === 'CODING_HELP') return 3;
+            if (mode === 'DOCUMENT_CONVERT') return 3;
             return 0; // Standard NORMAL_CHAT
         }
-        case 'agent_chat': return 10;      // Advanced agents
-        case 'realtime_chat': return 15;   // High-speed low latency
-        case 'knowledge_base': return 10;  // RAG Query
-        case 'web_search': return 15;      // Web Search Tool
-        case 'deep_search': return 30;     // Multi-step Search
-        case 'generate_image_hd': return 60;   // AISA Image HD
-        case 'generate_image_ultra': return 80; // AISA Image Ultra
-        case 'generate_image': return 60;      // Default AISA Image
-        case 'edit_image': return 60;          // AISA Edit Image
+        case 'agent_chat': return 60;      // Advanced agents
+        case 'realtime_chat': return 60;   // High-speed low latency
+        case 'knowledge_base': return 3;   // RAG Query
+        case 'web_search': return 53;      // Web Search Tool
+        case 'deep_search': return 158;     // Multi-step Search
+        case 'generate_image_hd': return 90;   // AISA Image HD
+        case 'generate_image_ultra': return 90; // AISA Image Ultra
+        case 'generate_image': return 45;      // Default AISA Image
+        case 'edit_image': return 45;          // AISA Edit Image
         case 'generate_video': {
             const duration = body?.duration || 5;
             const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
             const resolution = body?.resolution || '1080p';
-            let multiplier = 800;
+            let multiplier = 525;
             if (modelId === 'veo-3.1-fast-generate-001') {
-                multiplier = resolution === '4k' ? 700 : 300;
+                multiplier = resolution === '4k' ? 525 : 225;
             } else if (modelId === 'veo-3.1-generate-001') {
-                multiplier = resolution === '4k' ? 1200 : 800;
+                multiplier = resolution === '4k' ? 900 : 600;
             }
             return multiplier * duration;
         }
-        case 'video': return 1500;
-        case 'code_writer': return 10;
-        case 'convert_audio': return 25; // New: Convert to Audio
+        case 'video': return 1125;
+        case 'code_writer': return 3;
+        case 'convert_audio': return 90; // New: Convert to Audio
         default: return 0;
     }
 };

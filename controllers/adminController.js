@@ -100,6 +100,49 @@ export const searchUserByEmail = async (req, res) => {
 export const adjustCredits = async (req, res) => {
     try {
         const { userId, credits } = req.body;
+        const adminId = req.user.id;
+        
+        // Find the target user and admin
+        const targetUser = await User.findById(userId);
+        if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
+        
+        const adminUser = await User.findById(adminId);
+        if (!adminUser) return res.status(404).json({ success: false, message: 'Admin not found' });
+        
+        const oldCredits = targetUser.credits || 0;
+        const creditsToTransfer = credits - oldCredits;
+        
+        if (creditsToTransfer > 0) {
+            if ((adminUser.credits || 0) < creditsToTransfer) {
+                return res.status(400).json({ success: false, message: 'Admin does not have enough credits to transfer.' });
+            }
+        }
+        
+        if (creditsToTransfer !== 0) {
+            // Deduct/Add from admin
+            await User.findByIdAndUpdate(adminId, { $inc: { credits: -creditsToTransfer } });
+            await Subscription.findOneAndUpdate(
+                { userId: adminId },
+                { $inc: { creditsRemaining: -creditsToTransfer } }
+            );
+            
+            // Create CreditLog for admin
+            await CreditLog.create({
+                userId: adminId,
+                action: creditsToTransfer > 0 ? 'Admin Credit Transfer to User' : 'Admin Credit Recovery from User',
+                credits: -creditsToTransfer,
+                details: `Transferred to/from user ${targetUser.email}`
+            });
+            
+            // Create CreditLog for target user
+            await CreditLog.create({
+                userId: targetUser._id,
+                action: creditsToTransfer > 0 ? 'Credit Received from Admin' : 'Credit Deducted by Admin',
+                credits: creditsToTransfer,
+                details: `Processed by admin ${adminUser.email}`
+            });
+        }
+
         // Update both the user model and the subscription model for consistency
         await User.findByIdAndUpdate(userId, { $set: { credits: credits } });
         

@@ -181,22 +181,31 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
     logDebug(`Output URI: ${outputGcsUri}`);
     logger.info(`[VIDEO] Output URI: ${outputGcsUri}`);
 
+    // Guard against 4k failing on fast models
+    if (resolution === '4k' && selectedModelId.includes('fast')) {
+      logger.warn("[VIDEO] 4K is not supported on Fast models. Falling back to 1080p.");
+      resolution = '1080p';
+    }
+
     // 3. START GENERATION
     let generationConfig = {
       model: selectedModelId,
       prompt: prompt,
       config: {
+        resolution: resolution, // Supported in 2026: "720p", "1080p", "4k"
         aspectRatio: aspectRatio,
         outputGcsUri: outputGcsUri,
+        // Optional crop mode will be set below if image-to-video
+        
         // Using lowercase 'allow_all' as required by @google/genai enum, although 
         // child-safety blocks may still apply if the GCP project isn't specifically whitelisted.
         personGeneration: 'allow_all',
       },
     };
 
-    // NOTE: 'resolution' is NOT a supported field in Vertex AI Veo generateVideos config.
-    // The resolution setting in the UI is purely for credit display labeling and has no API effect.
-    // Passing it to the API causes a 400/500 error. We intentionally omit it here.
+    if (imageGcsUri && imageMimeType) {
+        generationConfig.config.resizeMode = "crop"; // Optimize mapping for image to video
+    }
 
     if (imageGcsUri && imageMimeType) {
       generationConfig.image = {

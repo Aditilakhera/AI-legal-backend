@@ -91,49 +91,71 @@ export const creditMiddleware = async (req, res, next) => {
     }
     // ── END FREE TIER GUARD ──────────────────────────────────────────────────
 
+    // ── STARTER & FOUNDER VIDEO GUARD ────────────────────────────────────────
+    if (url.includes('/api/video')) {
+        const userRec = await User.findById(req.user.id || req.user._id);
+        if (userRec && userRec.role !== 'admin') {
+            const sub = await Subscription.findOne({
+                userId: req.user.id || req.user._id,
+                subscriptionStatus: 'active'
+            }).populate('planId');
+            
+            const planName = (sub && sub.planId && sub.planId.planName) ? sub.planId.planName.toLowerCase() : '';
+            if (planName.includes('starter') || planName.includes('founder') || (!planName && userRec.founderStatus)) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PLAN_RESTRICTED',
+                    error: `Text to Video features are not available on your current plan. Please upgrade to Pro or Business.`,
+                    message: `Text to Video features are not available on your current plan. Please upgrade to Pro or Business.`
+                });
+            }
+        }
+    }
+    // ── END STARTER & FOUNDER VIDEO GUARD ────────────────────────────────────
+
     if (url.includes('/api/chat/realtime')) {
-        cost = 15;
+        cost = 60;
         isPremiumEndpoint = true;
     }
-    else if (url.includes('/api/aibase/chat') || url.includes('/api/aibase/knowledge')) {
-        cost = 10;
+    else if (url.includes('/api/aibase/chat')) {
+        cost = 60;
+        isPremiumEndpoint = true;
+    }
+    else if (url.includes('/api/aibase/knowledge')) {
+        cost = 3;
         isPremiumEndpoint = true;
     }
     else if (url.includes('/api/video')) {
-        if (req.body?.isImageToVideo === 'true') {
-            cost = 50;
-        } else {
-            const duration = req.body?.duration || 5;
-            const modelId = req.body?.modelId || 'veo-3.1-fast-generate-001';
-            const resolution = req.body?.resolution || '1080p';
-            let multiplier = 800;
-            if (modelId === 'veo-3.1-fast-generate-001') {
-                multiplier = resolution === '4k' ? 700 : 300;
-            } else if (modelId === 'veo-3.1-generate-001') {
-                multiplier = resolution === '4k' ? 1200 : 800;
-            }
-            cost = multiplier * duration;
+        const duration = req.body?.duration || 5;
+        const modelId = req.body?.modelId || 'veo-3.1-fast-generate-001';
+        const resolution = req.body?.resolution || '1080p';
+        let multiplier = 525;
+        if (modelId === 'veo-3.1-fast-generate-001') {
+            multiplier = resolution === '4k' ? 525 : 225;
+        } else if (modelId === 'veo-3.1-generate-001') {
+            multiplier = resolution === '4k' ? 900 : 600;
         }
+        cost = multiplier * duration;
         isPremiumEndpoint = true;
     }
     else if (req.method !== 'GET' && (url.includes('/api/image') || url.includes('/api/edit-image'))) {
         const modelId = req.body?.modelId || 'imagen-3.0-generate-001';
-        // Imagen 3.0: 60 credits | Imagen 4.0 Ultra: 80 credits (50% margin)
-        cost = modelId === 'imagen-4.0-ultra-generate-001' ? 80 : 60;
+        // Imagen 3.0: 45 credits | Imagen 4.0 Ultra: 90 credits (50% margin)
+        cost = modelId === 'imagen-4.0-ultra-generate-001' ? 90 : 45;
         isPremiumEndpoint = true;
     }
     else if (url.includes('/api/voice')) {
-        cost = 25;
+        cost = 90;
         isPremiumEndpoint = true;
     }
     else if (req.method !== 'GET' && url.includes('/api/chat')) {
         // Standard Text Chat is FREE
         // Check for Magic Modes that use the chat endpoint
         const mode = req.body?.mode || '';
-        if (mode === 'web_search') cost = 15;
-        else if (mode === 'DEEP_SEARCH') cost = 30;
-        else if (mode === 'CODING_HELP') cost = 10;
-        else if (mode === 'DOCUMENT_CONVERT') cost = 15;
+        if (mode === 'web_search') cost = 53;
+        else if (mode === 'DEEP_SEARCH') cost = 158;
+        else if (mode === 'CODING_HELP') cost = 3;
+        else if (mode === 'DOCUMENT_CONVERT') cost = 3;
         else cost = 0; // Standard NORMAL_CHAT
         
         if (cost > 0) isPremiumEndpoint = true; // Magic chat modes are premium
