@@ -345,18 +345,35 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         logger.info(`[VERTEX] Sending request to Gemini (Context: ${!!context}, Images: ${images?.length || 0})...`);
 
-        // 2. Prepare Parts (Text + Images)
+        // 2. Prepare Parts (Text + Images + Documents)
         let parts = [{ text: finalPrompt }];
 
         if (images && images.length > 0) {
-            const imageParts = images.map(img => ({
-                inlineData: {
-                    data: img.base64Data,
-                    mimeType: img.mimeType
+            const imageParts = images.flatMap(img => [
+                { text: `[Attached Image Name: ${img.name || 'image'}]` },
+                {
+                    inlineData: {
+                        data: img.base64Data,
+                        mimeType: img.mimeType || 'image/png'
+                    }
                 }
-            }));
+            ]);
             // Prepend images to the prompt
             parts = [...imageParts, ...parts];
+        }
+
+        if (documents && documents.length > 0) {
+            const documentParts = documents.flatMap(doc => [
+                { text: `[Attached Document Name: ${doc.name || 'document'}]` },
+                {
+                    inlineData: {
+                        data: doc.base64Data,
+                        mimeType: doc.mimeType || 'application/pdf'
+                    }
+                }
+            ]);
+            // Prepend documents to the prompt
+            parts = [...documentParts, ...parts];
         }
 
         // 3. Generate Content
