@@ -4,6 +4,45 @@ import Plan from '../models/Plan.js';
 import CreditPackage from '../models/CreditPackage.js';
 import CreditLog from '../models/CreditLog.js';
 import SupportTicket from '../models/SupportTicket.js';
+import FeatureCredit from '../models/FeatureCredit.js';
+
+export const getFeatureCredits = async (req, res) => {
+    try {
+        const features = await FeatureCredit.find({});
+        res.status(200).json({ success: true, features });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to fetch feature credits' });
+    }
+};
+
+export const updateFeatureCredit = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { cost, uiLabel, isActive } = req.body;
+        
+        const feature = await FeatureCredit.findByIdAndUpdate(
+            id, 
+            { cost, uiLabel, isActive }, 
+            { new: true }
+        );
+        
+        if (!feature) {
+            return res.status(404).json({ success: false, message: 'Feature not found' });
+        }
+        
+        // Notify the application to refresh its RAM cache
+        try {
+            const { refreshFeatureCostCache } = await import('../services/subscriptionService.js');
+            await refreshFeatureCostCache();
+        } catch(cacheErr) {
+            console.error("Failed to refresh feature cost cache:", cacheErr);
+        }
+        
+        res.status(200).json({ success: true, feature });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Failed to update feature credit' });
+    }
+};
 
 export const getAdminStats = async (req, res) => {
     try {
@@ -184,10 +223,18 @@ export const manualPlanUpgrade = async (req, res) => {
                 planId: plan._id, 
                 renewalDate: expiryDate ? new Date(expiryDate) : undefined,
                 subscriptionStatus: 'active',
-                creditsRemaining: plan.credits // Reset credits to plan default on manual upgrade
+                creditsRemaining: plan.credits
             },
             { new: true, upsert: true }
         );
+
+        // Also update User record for consistency with credit system
+        await User.findByIdAndUpdate(userId, { 
+            $set: { 
+                credits: plan.credits,
+                founderStatus: plan.planName.toLowerCase().includes('founder')
+            } 
+        });
 
         res.status(200).json({
             success: true,

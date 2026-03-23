@@ -139,9 +139,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', dashboardRoutes);
 
 // Admin Panel (Admin only)
-import adminConfigRoutes from './routes/adminConfigRoutes.js';
-app.use('/api/admin', adminConfigRoutes);
 app.use('/api/admin', adminRoutes);
+
 
 // AIBASE (V3) - With Credit System
 const { verifyToken } = await import('./middleware/authorization.js');

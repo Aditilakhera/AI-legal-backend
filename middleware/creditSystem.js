@@ -27,8 +27,9 @@ const getActionLabel = (url, body) => {
     if (url.includes('/api/edit-image')) return { action: 'edit_image', description: 'AISA Edit Image' };
     if (url.includes('/api/image')) {
         const model = body?.modelId || '';
-        const label = model.includes('ultra') ? 'AISA Image Ultra' : 'AISA Image HD';
-        return { action: 'image', description: label };
+        if (model.includes('ultra')) return { action: 'generate_image_ultra', description: 'AISA Image Ultra' };
+        if (model.includes('hd')) return { action: 'generate_image_hd', description: 'AISA Image HD' };
+        return { action: 'generate_image', description: 'AISA Image' };
     }
     if (url.includes('/api/video')) {
         if (body?.isImageToVideo === 'true') {
@@ -75,10 +76,10 @@ export const creditMiddleware = async (req, res, next) => {
             req.body?.mode === 'DEEP_SEARCH'
         );
 
-    // Admins bypass all credit/plan checks
-    if (req.user && req.user.role === 'admin') return next();
+    // Admins bypass PLAN_RESTRICTED checks only
+    const isAdmin = req.user && req.user.role === 'admin';
 
-    if (isPaidOnlyRoute) {
+    if (isPaidOnlyRoute && !isAdmin) {
         const freeTier = await isFreeTierUser(req.user.id || req.user._id);
         if (freeTier) {
             return res.status(403).json({
@@ -99,7 +100,7 @@ export const creditMiddleware = async (req, res, next) => {
                 userId: req.user.id || req.user._id,
                 subscriptionStatus: 'active'
             }).populate('planId');
-            
+
             const planName = (sub && sub.planId && sub.planId.planName) ? sub.planId.planName.toLowerCase() : '';
             if (planName.includes('starter') || planName.includes('founder') || (!planName && userRec.founderStatus)) {
                 return res.status(403).json({
@@ -113,59 +114,45 @@ export const creditMiddleware = async (req, res, next) => {
     }
     // ── END STARTER & FOUNDER VIDEO GUARD ────────────────────────────────────
 
-    if (url.includes('/api/chat/realtime')) {
-        cost = 60;
-        isPremiumEndpoint = true;
-    }
-    else if (url.includes('/api/aibase/chat')) {
-        cost = 60;
-        isPremiumEndpoint = true;
-    }
-    else if (url.includes('/api/aibase/knowledge')) {
-        cost = 3;
-        isPremiumEndpoint = true;
-    }
-    else if (url.includes('/api/video')) {
-        const duration = req.body?.duration || 5;
-        const modelId = req.body?.modelId || 'veo-3.1-fast-generate-001';
-        const resolution = req.body?.resolution || '1080p';
-        let multiplier = 525;
-        if (modelId === 'veo-3.1-fast-generate-001') {
-            multiplier = resolution === '4k' ? 525 : 225;
-        } else if (modelId === 'veo-3.1-generate-001') {
-            multiplier = resolution === '4k' ? 900 : 600;
+    const actionLabel = getActionLabel(url, req.body);
+    const action = actionLabel.action;
+    let calculatedCost = 0;
+    
+    try {
+        const { getToolCost } = await import('../services/subscriptionService.js');
+        if (action === 'video') {
+             calculatedCost = getToolCost('generate_video', req.body);
+        } else if (action === 'chat') {
+             const mode = req.body?.mode || '';
+             if (mode && mode !== 'NORMAL_CHAT') {
+                 calculatedCost = getToolCost(mode, req.body);
+             } else {
+                 calculatedCost = getToolCost('chat', req.body);
+             }
+        } else {
+             calculatedCost = getToolCost(action, req.body);
         }
-        cost = multiplier * duration;
-        isPremiumEndpoint = true;
+    } catch(e) {
+        // Fallback default if subscriptionService fetch fails somehow
+        calculatedCost = action === 'chat' ? 2 : 50; 
     }
-    else if (req.method !== 'GET' && (url.includes('/api/image') || url.includes('/api/edit-image'))) {
-        const modelId = req.body?.modelId || 'imagen-3.0-generate-001';
-        // Imagen 3.0: 45 credits | Imagen 4.0 Ultra: 90 credits (50% margin)
-        cost = modelId === 'imagen-4.0-ultra-generate-001' ? 90 : 45;
+    
+    cost = calculatedCost;
+    
+    // Define explicitly which actions are premium-only (Free tier cannot access them regardless of credits)
+    const premiumActions = ['video', 'image', 'generate_image', 'generate_image_hd', 'generate_image_ultra', 'edit_image', 'agent_chat', 'realtime_chat', 'voice', 'web_search', 'deep_search', 'knowledge_base'];
+    
+    if (premiumActions.includes(action)) {
         isPremiumEndpoint = true;
-    }
-    else if (url.includes('/api/voice')) {
-        cost = 90;
+    } else if (action === 'chat' && req.body?.mode && req.body.mode !== 'NORMAL_CHAT') {
         isPremiumEndpoint = true;
-    }
-    else if (req.method !== 'GET' && url.includes('/api/chat')) {
-        // Standard Text Chat is FREE
-        // Check for Magic Modes that use the chat endpoint
-        const mode = req.body?.mode || '';
-        if (mode === 'web_search') cost = 53;
-        else if (mode === 'DEEP_SEARCH') cost = 158;
-        else if (mode === 'CODING_HELP') cost = 3;
-        else if (mode === 'DOCUMENT_CONVERT') cost = 3;
-        else cost = 0; // Standard NORMAL_CHAT
-        
-        if (cost > 0) isPremiumEndpoint = true; // Magic chat modes are premium
     }
 
     // Pass through if cost is still 0 
     if (cost === 0) return next();
 
     try {
-        if (isPremiumEndpoint) {
+        if (isPremiumEndpoint && !isAdmin) {
             const hasAccess = await checkPremiumAccess(req.user.id || req.user._id);
             if (!hasAccess) {
                 return res.status(403).json({
@@ -180,7 +167,7 @@ export const creditMiddleware = async (req, res, next) => {
         const user = await User.findById(req.user.id || req.user._id);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        if (user.credits < cost) {
+        if (user.credits < cost && !isAdmin) {
             return res.status(403).json({
                 error: "Insufficient credits",
                 code: "OUT_OF_CREDITS",
@@ -191,7 +178,6 @@ export const creditMiddleware = async (req, res, next) => {
 
         // 🚀 ATTACH BALANCE INFO TO REQ
         // Deduction now happens in controllers ONLY on successful output
-        const actionLabel = getActionLabel(url, req.body);
         req.creditMeta = {
             userId: user._id,
             cost: cost,

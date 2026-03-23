@@ -1,49 +1,74 @@
 import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import CreditLog from '../models/CreditLog.js';
+import FeatureCredit from '../models/FeatureCredit.js';
 
-const getToolCost = (toolName, body = {}) => {
-    switch (toolName) {
-        case 'chat': {
-            // Normal Chat is now FREE as per requirements
-            // Only Magic modes (Deep Search, Web Search, etc) will deduct if they use the chat endpoint
-            const mode = body?.mode || '';
-            if (mode === 'web_search') return 53;
-            if (mode === 'DEEP_SEARCH') return 158;
-            if (mode === 'CODING_HELP') return 3;
-            if (mode === 'DOCUMENT_CONVERT') return 3;
-            return 0; // Standard NORMAL_CHAT
+let featureCostCache = {};
+
+export const refreshFeatureCostCache = async () => {
+    try {
+        const features = await FeatureCredit.find({});
+        const newCache = {};
+        features.forEach(f => {
+            newCache[f.featureKey] = f.cost;
+        });
+        
+        // Retain Video Multipliers manually since they are matrix-based
+        newCache['video_multipliers'] = { 
+            "veo-3.1-fast-generate-001": { "4k": newCache['video_veo_fast_4k'] || 585, "default": newCache['video_veo_fast_def'] || 250 }, 
+            "veo-3.1-generate-001": { "4k": newCache['video_veo_pro_4k'] || 666, "default": newCache['video_veo_pro_def'] || 333 } 
+        };
+        
+        if (Object.keys(newCache).length > 2) {
+            featureCostCache = newCache;
         }
-        case 'agent_chat': return 60;      // Advanced agents
-        case 'realtime_chat': return 60;   // High-speed low latency
-        case 'knowledge_base': return 3;   // RAG Query
-        case 'web_search': return 53;      // Web Search Tool
-        case 'deep_search': return 158;     // Multi-step Search
-        case 'generate_image_hd': return 90;   // AISA Image HD
-        case 'generate_image_ultra': return 90; // AISA Image Ultra
-        case 'generate_image': return 45;      // Default AISA Image
-        case 'edit_image': return 45;          // AISA Edit Image
-        case 'generate_video': {
-            const duration = body?.duration || 5;
-            const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
-            const resolution = body?.resolution || '1080p';
-            let multiplier = 525;
-            if (modelId === 'veo-3.1-fast-generate-001') {
-                multiplier = resolution === '4k' ? 525 : 225;
-            } else if (modelId === 'veo-3.1-generate-001') {
-                multiplier = resolution === '4k' ? 900 : 600;
-            }
-            return multiplier * duration;
-        }
-        case 'video': return 1125;
-        case 'code_writer': return 3;
-        case 'convert_audio': return 90; // New: Convert to Audio
-        default: return 0;
+    } catch(e) {
+        console.error("Failed to load Feature Credits into cache");
     }
 };
 
+// Start cache asynchronously
+refreshFeatureCostCache();
+
+export const getToolCost = (toolName, body = {}) => {
+    // Safe fallback if local cache is empty
+    let featureCosts = Object.keys(featureCostCache).length > 2 ? featureCostCache : {
+        chat: 2, web_search: 60, deep_search: 85, agent_chat: 60, realtime_chat: 60,
+        knowledge_base: 3, generate_image: 66, generate_image_hd: 100, generate_image_ultra: 135,
+        edit_image: 66, video_multipliers: { "veo-3.1-fast-generate-001": { "4k": 585, "default": 250 }, "veo-3.1-generate-001": { "4k": 666, "default": 333 } },
+        code_writer: 3, convert_audio: 90, document_convert: 3
+    };
+
+    if (toolName === 'chat') {
+        // Base chat cost handles standard input. Magic modes added to tools array handle their own costs.
+        return featureCosts.chat !== undefined ? featureCosts.chat : 2; 
+    }
+    
+    // Normalize mode/tool names for consistent lookup (e.g. DEEP_SEARCH -> deep_search)
+    const normalizedTool = typeof toolName === 'string' ? toolName.toLowerCase() : toolName;
+    if (normalizedTool === 'deep_search' || normalizedTool === 'web_search' || normalizedTool === 'code_writer') {
+        return featureCosts[normalizedTool] || 0;
+    }
+    if (normalizedTool === 'convert_document' || normalizedTool === 'document_convert') {
+        return featureCosts.document_convert || 0;
+    }
+    
+    if (toolName === 'generate_video') {
+        const duration = body?.duration || 5;
+        const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
+        const resolution = body?.resolution || '1080p';
+        const videoMults = featureCosts.video_multipliers || {};
+        const modelMult = videoMults[modelId] || videoMults['veo-3.1-fast-generate-001'] || { "4k": 585, "default": 250 };
+        const multiplier = resolution === '4k' ? (modelMult['4k'] || 585) : (modelMult['default'] || 250);
+        return multiplier * duration;
+    }
+    
+    // Default fallback to direct key matching
+    return featureCosts[toolName] !== undefined ? featureCosts[toolName] : 0;
+};
+
 const getToolLabel = (toolName) => {
-    switch (toolName) {
+    switch ((toolName || '').toLowerCase()) {
         case 'chat': return 'AISA Chat (Text)';
         case 'agent_chat': return 'AISA Agent Chat';
         case 'realtime_chat': return 'AISA Realtime Chat';
@@ -56,6 +81,7 @@ const getToolLabel = (toolName) => {
         case 'edit_image': return 'AISA Edit Image';
         case 'generate_video': return 'AISA Video Generation';
         case 'code_writer': return 'AISA Code Writer';
+        case 'convert_document': return 'AISA Document Analysis';
         default: return 'AISA Service';
     }
 };
@@ -113,22 +139,27 @@ export const subscriptionService = {
         if (!user) throw new Error("User not found");
 
         const totalCost = toolsUsed.reduce((acc, tool) => acc + getToolCost(tool, metadata), 0);
-        if (totalCost === 0) return true;
 
         if ((user.credits || 0) < totalCost) {
             throw new Error("Insufficient credits");
         }
 
-        user.credits -= totalCost;
-        await user.save();
+        if (totalCost > 0) {
+            user.credits -= totalCost;
+            await user.save();
+        }
 
-        // 📝 Log to Database - Use the first primary tool as action label
+        // 📝 Log to Database - Find the most descriptive tool for the label
         try {
-            const primaryTool = toolsUsed[0];
+            // Pick a magic tool over 'chat' if multiple exist
+            const nonChatTools = toolsUsed.filter(t => t !== 'chat');
+            const primaryTool = nonChatTools.length > 0 ? nonChatTools[0] : toolsUsed[0];
+            const otherToolsCount = toolsUsed.length > 1 ? toolsUsed.length - 1 : 0;
+            
             await CreditLog.create({
                 userId: user._id,
                 action: primaryTool,
-                description: getToolLabel(primaryTool) + (toolsUsed.length > 1 ? ` (+${toolsUsed.length-1} more)` : ''),
+                description: getToolLabel(primaryTool) + (otherToolsCount > 0 ? ` (+${otherToolsCount} more)` : ''),
                 credits: -totalCost,
                 balanceAfter: user.credits
             });
@@ -169,3 +200,4 @@ export const subscriptionService = {
     checkLimit: async () => ({ usage: 0, usageKey: 'mock' }),
     incrementUsage: () => { }
 };
+

@@ -117,12 +117,25 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         } else if (isActuallyCodeMode) {
             toolRestrictions = `
 \n\n### MODE: CODE WRITER ENABLED.
-- ROLE: You are an expert Software Architect and Senior Lead Developer.
-- FORMATTING: Ignore general rules about "Using bullet points for lists" when displaying project structures.
-- FILE STRUCTURES: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block using a visual tree format (e.g., \`\`\`text).
-- CODE SNIPPETS: Wrap ALL code snippets in proper markdown blocks with the correct language tag.
-- NO INLINE CODE: Do not use single backticks for file names or technical paths if they are part of a structure.
-- CLEAN OUTPUT: Provide the unified tree first, then explain components below it.
+- ROLE: You are an expert Software Architect and Senior Lead Developer. Your goal is to provide highly structured, technical, and implementation-ready architecture.
+- FORMATTING OVERRIDE: Ignore general rules about "Using bullet points for lists" when displaying project structures.
+- UNIFIED TREE: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block using a visual tree format (e.g., \`\`\`text).
+- CODE SNIPPETS: Wrap ALL code snippets in proper multi-line markdown code blocks with the correct language tag.
+- NO INLINE PATHS: Do not use single backticks for file names inside paragraphs if they are part of a structure.
+- EXAMPLE TREE FORMAT (MANDATORY):
+\`\`\`text
+ProjectRoot/
+├── src/
+│   ├── controllers/
+│   │   ├── AuthController.js
+│   │   └── UserController.js
+│   ├── models/
+│   │   ├── User.js
+│   │   └── ChatSession.js
+│   └── server.js
+└── package.json
+\`\`\`
+- CLEAN OUTPUT: Provide the unified Directory Tree first, then explain specific components or code snippets below the tree.
 `;
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";

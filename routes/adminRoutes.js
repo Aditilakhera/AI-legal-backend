@@ -2,17 +2,19 @@ import express from 'express';
 import { verifyToken } from '../middleware/authorization.js';
 import User from '../models/User.js';
 // Assuming there is an isAdmin middleware or we check role
-import { 
-    getAdminStats, 
-    searchUserByEmail, 
-    adjustCredits, 
+import {
+    getAdminStats,
+    searchUserByEmail,
+    adjustCredits,
     manualPlanUpgrade,
     createPlan,
     updatePlan,
     deletePlan,
     createCreditPackage,
     updateCreditPackage,
-    deleteCreditPackage
+    deleteCreditPackage,
+    getFeatureCredits,
+    updateFeatureCredit
 } from '../controllers/adminController.js';
 
 const router = express.Router();
@@ -23,7 +25,7 @@ const isAdmin = async (req, res, next) => {
         if (!req.user || !req.user.id) {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
-        
+
         const PRIMARY_ADMIN_EMAIL = 'admin@uwo24.com';
 
         // Fast path: if email is already in the JWT payload, check it immediately
@@ -33,7 +35,7 @@ const isAdmin = async (req, res, next) => {
 
         // DB lookup for role/email verification
         const user = await User.findById(req.user.id);
-        
+
         if (user && (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL)) {
             next();
         } else {
@@ -61,5 +63,9 @@ router.delete('/plans/:planId', verifyToken, isAdmin, deletePlan);
 router.post('/packages', verifyToken, isAdmin, createCreditPackage);
 router.put('/packages/:packageId', verifyToken, isAdmin, updateCreditPackage);
 router.delete('/packages/:packageId', verifyToken, isAdmin, deleteCreditPackage);
+
+// Feature Credit metrics and adjustments
+router.get('/feature-credits', verifyToken, isAdmin, getFeatureCredits);
+router.put('/feature-credits/:id', verifyToken, isAdmin, updateFeatureCredit);
 
 export default router;

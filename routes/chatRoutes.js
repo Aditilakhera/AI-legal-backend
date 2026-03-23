@@ -32,8 +32,8 @@ const router = express.Router();
 // Helper to check guest limits
 const checkGuestLimits = async (req, sessionId) => {
   const guestId = req.guest?.guestId;
-  if (!guestId && !req.user) return { allowed: true }; 
-  
+  if (!guestId && !req.user) return { allowed: true };
+
   if (req.user) return { allowed: true };
 
   const guest = await Guest.findOne({ guestId });
@@ -63,7 +63,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
 
     if (req.user) {
       try {
-        await subscriptionService.checkCredits(req.user.id, toolsRequested);
+        await subscriptionService.checkCredits(req.user.id, toolsRequested, req.body);
       } catch (subError) {
         return res.status(403).json({ success: false, code: subError.message === "PREMIUM_RESTRICTED" ? "PREMIUM_ONLY" : "OUT_OF_CREDITS", message: subError.message });
       }
@@ -132,8 +132,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         const docToConvert = (Array.isArray(document) ? document[0] : document) || (Array.isArray(image) ? image[0] : image);
         const conversionResult = await convertFile(docToConvert, data.target_format);
         if (conversionResult && conversionResult.success) {
-          finalResponse.conversion = { 
-            file: conversionResult.file, 
+          finalResponse.conversion = {
+            file: conversionResult.file,
             fileName: conversionResult.fileName,
             mimeType: conversionResult.mimeType
           };
@@ -148,11 +148,11 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
 
     // 4. SESSION MANAGEMENT
     let session = await ChatSession.findOne({ sessionId });
-    const isGenericTitle = !session || 
-                           session.title === "New Chat" || 
-                           session.title === "Greeting" || 
-                           session.title === "General Chat" || 
-                           (session.title && session.title.includes('...'));
+    const isGenericTitle = !session ||
+      session.title === "New Chat" ||
+      session.title === "Greeting" ||
+      session.title === "General Chat" ||
+      (session.title && session.title.includes('...'));
     const userId = req.user ? req.user.id : null;
 
     if (!session && sessionId) {
@@ -172,9 +172,9 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
 
     if (session) {
       session.messages.push({ role: 'user', content, timestamp: Date.now() });
-      session.messages.push({ 
-        role: 'assistant', 
-        content: finalResponse.reply, 
+      session.messages.push({
+        role: 'assistant',
+        content: finalResponse.reply,
         timestamp: Date.now(),
         isRealTime: isWebSearchResponse,
         sources: searchSources,
@@ -186,13 +186,13 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       await session.save();
     }
 
-    if (req.user) await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId);
-    
+    if (req.user) await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId, req.body);
+
     return res.status(200).json(finalResponse);
 
   } catch (err) {
     if (mongoose.connection.readyState !== 1) {
-       return res.status(200).json({ reply: "dbDemoModeMessage", detectedMode: 'NORMAL_CHAT' });
+      return res.status(200).json({ reply: "dbDemoModeMessage", detectedMode: 'NORMAL_CHAT' });
     }
     console.error("Interaction failed:", err);
     return res.status(500).json({ error: err.message });
@@ -244,9 +244,9 @@ router.get('/:sessionId', optionalVerifyToken, identifyGuest, async (req, res) =
     if (userId) {
       if (session.userId && session.userId.toString() !== userId) return res.status(403).json({ error: "Access denied" });
       if (!session.userId) {
-         session.userId = userId;
-         await session.save();
-         await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
+        session.userId = userId;
+        await session.save();
+        await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
       }
     } else if (guestId) {
       if (session.guestId !== guestId) return res.status(403).json({ error: 'Access denied' });
@@ -270,7 +270,7 @@ router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (re
     if (!message) return res.status(400).json({ error: 'Message is required' });
 
     let session = await ChatSession.findOne({ sessionId });
-    
+
     if (!session) {
       // Create new session if it doesn't exist
       session = new ChatSession({
@@ -299,7 +299,7 @@ router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (re
     }
 
     if (title && title !== "New Chat" && session.title === "New Chat") {
-        session.title = title;
+      session.title = title;
     }
 
     session.lastModified = Date.now();

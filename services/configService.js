@@ -355,6 +355,79 @@ Response Guidelines:
                     `A premium marketing visual of AISA™ AI assistant. A futuristic workspace with a sleek hovering dashboard. The interface is clean and modern. The main AISA™ brand identity—a glowing neural brain—is the centerpiece of the holographic display. Cinematic bokeh, professional photography, high-tech luxury vibe, soft purple and cyan glow.`
                 ]),
                 description: 'Variations for AISA brand identity visuals (Avatar/Environment prompts).'
+            },
+            {
+                key: 'FEATURE_COSTS',
+                value: JSON.stringify({
+                    "chat": 2,
+                    "web_search": 25,
+                    "deep_search": 85,
+                    "agent_chat": 60,
+                    "realtime_chat": 60,
+                    "knowledge_base": 3,
+                    "generate_image": 50,
+                    "generate_image_hd": 90,
+                    "generate_image_ultra": 120,
+                    "edit_image": 50,
+                    "video_multipliers": {
+                        "veo-3.1-fast-generate-001": {
+                            "4k": 333,
+                            "default": 166
+                        },
+                        "veo-3.1-generate-001": {
+                            "4k": 666,
+                            "default": 500
+                        }
+                    },
+                    "code_writer": 3,
+                    "convert_audio": 90,
+                    "document_convert": 3
+                }),
+                description: 'Credit costs for various AISA features and tools (Targeting 50% Profit Margin over Vertex AI Costs).'
+            },
+            {
+                key: 'FEATURE_COSTS',
+                value: JSON.stringify({
+                    "chat": 2,
+                    "web_search": 60,
+                    "deep_search": 85,
+                    "agent_chat": 60,
+                    "realtime_chat": 60,
+                    "knowledge_base": 3,
+                    "generate_image": 66,
+                    "generate_image_hd": 100,
+                    "generate_image_ultra": 135,
+                    "edit_image": 66,
+                    "video_multipliers": {
+                        "veo-3.1-fast-generate-001": {
+                            "4k": 585,
+                            "default": 250
+                        },
+                        "veo-3.1-generate-001": {
+                            "4k": 666,
+                            "default": 333
+                        }
+                    },
+                    "code_writer": 3,
+                    "convert_audio": 90,
+                    "document_convert": 3
+                }),
+                description: 'Credit costs for various AISA features and tools (Targeting exact 50% Profit Margin over Vertex AI Costs).'
+            },
+            {
+                key: 'DEFAULT_AI_MODEL',
+                value: 'gemini-2.0-flash-exp',
+                description: 'Primary AI model used for standard chat.'
+            },
+            {
+                key: 'MAX_TOKENS_PER_USER',
+                value: '500000',
+                description: 'Default token limit for user analysis sessions.'
+            },
+            {
+                key: 'ALLOW_PUBLIC_SIGNUP',
+                value: 'true',
+                description: 'Whether new users can register on the platform.'
             }
         ];
 
@@ -370,9 +443,46 @@ Response Guidelines:
                 existing.value = config.value;
                 existing.lastUpdated = Date.now();
                 await existing.save();
+            } else if (config.key === 'FEATURE_COSTS') {
+                // FORCE UPDATE: Ensure feature costs perfectly reflect the latest 50% profit margin calculations
+                logger.info(`[ConfigService] Synchronizing FEATURE_COSTS to latest default algorithm.`);
+                existing.value = config.value;
+                existing.lastUpdated = Date.now();
+                await existing.save();
             }
 
             configCache.set(config.key, existing.value);
+        }
+
+        // --- Seed FeatureCredit Configs ---
+        try {
+            const { default: FeatureCredit } = await import('../models/FeatureCredit.js');
+            const featureCount = await FeatureCredit.countDocuments();
+            if (featureCount === 0) {
+                logger.info(`[ConfigService] Seeding initial FeatureCredits into database.`);
+                const initialFeatureCredits = [
+                    { featureKey: 'chat', uiLabel: 'Standard Chat (Text)', cost: 2, category: 'Core' },
+                    { featureKey: 'web_search', uiLabel: 'Web Search Mode', cost: 60, category: 'Magic Tool' },
+                    { featureKey: 'deep_search', uiLabel: 'Deep Search Mode', cost: 85, category: 'Magic Tool' },
+                    { featureKey: 'agent_chat', uiLabel: 'Agent Database Chat', cost: 60, category: 'Core' },
+                    { featureKey: 'realtime_chat', uiLabel: 'Realtime Voice Chat', cost: 60, category: 'Core' },
+                    { featureKey: 'knowledge_base', uiLabel: 'Knowledge Base Upload/Query', cost: 3, category: 'Core' },
+                    { featureKey: 'generate_image', uiLabel: 'Generate Image (Standard)', cost: 66, category: 'Media Generation' },
+                    { featureKey: 'generate_image_hd', uiLabel: 'Generate Image (HD)', cost: 100, category: 'Media Generation' },
+                    { featureKey: 'generate_image_ultra', uiLabel: 'Generate Image (Ultra)', cost: 135, category: 'Media Generation' },
+                    { featureKey: 'edit_image', uiLabel: 'Edit Image (Magic)', cost: 66, category: 'Media Generation' },
+                    { featureKey: 'video_veo_fast_def', uiLabel: 'Video Gen (Veo Fast 1080p)', cost: 250, category: 'Media Generation' },
+                    { featureKey: 'video_veo_fast_4k', uiLabel: 'Video Gen (Veo Fast 4k)', cost: 585, category: 'Media Generation' },
+                    { featureKey: 'video_veo_pro_def', uiLabel: 'Video Gen (Veo Pro 1080p)', cost: 333, category: 'Media Generation' },
+                    { featureKey: 'video_veo_pro_4k', uiLabel: 'Video Gen (Veo Pro 4k)', cost: 666, category: 'Media Generation' },
+                    { featureKey: 'code_writer', uiLabel: 'Code Writer Mode', cost: 3, category: 'Magic Tool' },
+                    { featureKey: 'convert_audio', uiLabel: 'File/Text to Audio', cost: 90, category: 'Magic Tool' },
+                    { featureKey: 'document_convert', uiLabel: 'File Conversion Mode', cost: 3, category: 'Magic Tool' }
+                ];
+                await FeatureCredit.insertMany(initialFeatureCredits);
+            }
+        } catch (fcErr) {
+            logger.error(`[ConfigService] Failed to seed FeatureCredits: ${fcErr.message}`);
         }
 
         logger.info('[ConfigService] Configurations loaded successfully.');
