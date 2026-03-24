@@ -191,7 +191,7 @@ ProjectRoot/
 
         if (finalResponseData.text) {
             // Memory save handled at end
-        } else if ((activeDocContent && activeDocContent.length > 0) || (images && images.length > 0)) {
+        } else if ((activeDocContent && activeDocContent.length > 0) || (images && images.length > 0) || (documents && documents.length > 0)) {
             // PRIORITY 1: Chat-Uploaded Document / Images
             const promptWithMemory = buildMemoryPrompt(message);
             const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
@@ -314,7 +314,9 @@ ProjectRoot/
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
                         userName, 
                         systemInstruction: generalInstruction,
-                        mode: mode || 'GENERAL'
+                        mode: mode || 'GENERAL',
+                        images,
+                        documents
                     });
                 }
                 

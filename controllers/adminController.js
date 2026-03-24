@@ -165,11 +165,14 @@ export const adjustCredits = async (req, res) => {
         }
         
         if (creditsToTransfer !== 0) {
+            const adminNewBalance = (adminUser.credits || 0) - creditsToTransfer;
+            const targetUserNewBalance = credits;
+
             // Deduct/Add from admin
-            await User.findByIdAndUpdate(adminId, { $inc: { credits: -creditsToTransfer } });
+            await User.findByIdAndUpdate(adminId, { $set: { credits: adminNewBalance } });
             await Subscription.findOneAndUpdate(
                 { userId: adminId },
-                { $inc: { creditsRemaining: -creditsToTransfer } }
+                { $set: { creditsRemaining: adminNewBalance } }
             );
             
             // Create CreditLog for admin
@@ -177,7 +180,8 @@ export const adjustCredits = async (req, res) => {
                 userId: adminId,
                 action: creditsToTransfer > 0 ? 'Admin Credit Transfer to User' : 'Admin Credit Recovery from User',
                 credits: -creditsToTransfer,
-                details: `Transferred to/from user ${targetUser.email}`
+                balanceAfter: adminNewBalance,
+                description: `Transferred to/from user ${targetUser.email}`
             });
             
             // Create CreditLog for target user
@@ -185,7 +189,8 @@ export const adjustCredits = async (req, res) => {
                 userId: targetUser._id,
                 action: creditsToTransfer > 0 ? 'Credit Received from Admin' : 'Credit Deducted by Admin',
                 credits: creditsToTransfer,
-                details: `Processed by admin ${adminUser.email}`
+                balanceAfter: targetUserNewBalance,
+                description: `Processed by admin ${adminUser.email}`
             });
         }
 
