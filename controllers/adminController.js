@@ -141,7 +141,7 @@ export const searchUserByEmail = async (req, res) => {
 
 export const adjustCredits = async (req, res) => {
     try {
-        const { userId, credits } = req.body;
+        const { userId, credits, amount } = req.body;
         const adminId = req.user.id;
         
         // Find the target user and admin
@@ -149,14 +149,24 @@ export const adjustCredits = async (req, res) => {
         if (!targetUser) return res.status(404).json({ success: false, message: 'User not found' });
         
         let adminUser = await User.findById(adminId);
-        // Fallback: if ID not found (e.g. stale JWT after DB reset), look up by admin email
         if (!adminUser) {
             adminUser = await User.findOne({ email: 'admin@uwo24.com' });
         }
         if (!adminUser) return res.status(404).json({ success: false, message: 'Admin not found' });
         
         const oldCredits = targetUser.credits || 0;
-        const creditsToTransfer = credits - oldCredits;
+        
+        // Determine the delta to transfer
+        // If 'amount' is provided, we use it directly (additive)
+        // If only 'credits' is provided, we calculate the difference (absolute update)
+        let creditsToTransfer = 0;
+        if (typeof amount === 'number') {
+            creditsToTransfer = amount;
+        } else if (typeof credits === 'number') {
+            creditsToTransfer = credits - oldCredits;
+        }
+
+        const newTargetCredits = oldCredits + creditsToTransfer;
         
         if (creditsToTransfer > 0) {
             if ((adminUser.credits || 0) < creditsToTransfer) {
@@ -166,9 +176,9 @@ export const adjustCredits = async (req, res) => {
         
         if (creditsToTransfer !== 0) {
             const adminNewBalance = (adminUser.credits || 0) - creditsToTransfer;
-            const targetUserNewBalance = credits;
+            const targetUserNewBalance = newTargetCredits;
 
-            // Deduct/Add from admin
+            // Deduct/Add from admin pool
             await User.findByIdAndUpdate(adminId, { $set: { credits: adminNewBalance } });
             await Subscription.findOneAndUpdate(
                 { userId: adminId },
@@ -195,17 +205,17 @@ export const adjustCredits = async (req, res) => {
         }
 
         // Update both the user model and the subscription model for consistency
-        await User.findByIdAndUpdate(userId, { $set: { credits: credits } });
+        await User.findByIdAndUpdate(userId, { $set: { credits: newTargetCredits } });
         
         const subscription = await Subscription.findOneAndUpdate(
             { userId: userId },
-            { $set: { creditsRemaining: credits } },
+            { $set: { creditsRemaining: newTargetCredits } },
             { new: true }
         );
 
         res.status(200).json({
             success: true,
-            message: 'Credits adjusted successfully.',
+            message: `Transferred ${creditsToTransfer} credits successfully.`,
             subscription
         });
     } catch (error) {
