@@ -147,12 +147,15 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     finalResponse.reply = finalResponse.reply || reply;
 
     // 4. SESSION MANAGEMENT
+    console.log(`[BACKEND-CHAT] Session ID: ${sessionId} | Content Len: ${content?.length}`);
     let session = await ChatSession.findOne({ sessionId });
     const isGenericTitle = !session ||
       session.title === "New Chat" ||
       session.title === "Greeting" ||
       session.title === "General Chat" ||
       (session.title && session.title.includes('...'));
+      
+    console.log(`[BACKEND-CHAT] Session found: ${!!session} | Generic Title: ${isGenericTitle} | Title: ${session?.title}`);
     const userId = req.user ? req.user.id : null;
 
     if (!session && sessionId) {
@@ -187,6 +190,11 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     }
 
     if (req.user) await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId, req.body);
+
+    if (session) {
+        finalResponse.title = session.title;
+        finalResponse.sessionId = session.sessionId;
+    }
 
     return res.status(200).json(finalResponse);
 
@@ -256,6 +264,31 @@ router.get('/:sessionId', optionalVerifyToken, identifyGuest, async (req, res) =
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// --- GENERATE CONVERSATION TITLE ---
+router.post('/:sessionId/generate-title', optionalVerifyToken, identifyGuest, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { message } = req.body;
+
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const title = await aiService.generateConversationTitle(message);
+    if (!title) return res.status(500).json({ error: 'Failed to generate title' });
+
+    const session = await ChatSession.findOne({ sessionId });
+    if (session) {
+      session.title = title;
+      session.lastModified = Date.now();
+      await session.save();
+    }
+
+    res.json({ title });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to generate title' });
   }
 });
 
