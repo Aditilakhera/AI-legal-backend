@@ -199,7 +199,8 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
         const ragContext = template.replace('{retrieved_text}', contextText.join('\n\n'));
 
         logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
-        return { text: ragContext, sources: uniqueSources };
+        // Return max 3 sources to keep the UI clean as requested by the user
+        return { text: ragContext, sources: uniqueSources.slice(0, 3) };
 
     } catch (error) {
         logger.error(`[Vertex RAG] Retrieval Error: ${error.response?.data?.error?.message || error.message}`);

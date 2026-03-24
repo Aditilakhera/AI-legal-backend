@@ -289,7 +289,7 @@ ProjectRoot/
                     systemInstruction: ragInstructionWithLink,
                     mode: 'RAG' 
                 });
-                finalResponseData = { text: ragResponse, isRealTime: true, sources: ragContext?.sources || [], mode: 'RAG' };
+                finalResponseData = { text: ragResponse, isRealTime: true, sources: [], mode: 'RAG' };
             } else {
                 // PRIORITY 3: Multi-Model or Vertex AI General Chat
                 const promptWithMemory = buildMemoryPrompt(message);
@@ -308,12 +308,19 @@ ProjectRoot/
                     aiResponse = await groqService.askGroq(promptWithMemory, null);
                 } else {
                     // Default to Vertex AI (Gemini)
-                    const generalInstruction = configService.getGeneralSystemInstruction(personaContext);
-                    logger.warn(`[RAG-Logic] EXECUTING GENERAL CHAT for: "${message}"`);
+                    const lowerMsg = message.toLowerCase().trim();
+                    const greetings = ['hi', 'hello', 'hii', 'hey', 'yo', 'namaste', 'greeting'];
+                    const isGreeting = greetings.some(g => lowerMsg === g || lowerMsg.startsWith(g + ' '));
+
+                    const systemInstructionToUse = isGreeting 
+                        ? configService.getGreetingSystemInstruction(personaContext)
+                        : configService.getGeneralSystemInstruction(personaContext);
+
+                    logger.info(`[AI-Service] Executing Chat (Greeting: ${isGreeting}) for: "${message}"`);
 
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
                         userName, 
-                        systemInstruction: generalInstruction,
+                        systemInstruction: systemInstructionToUse,
                         mode: mode || 'GENERAL',
                         images,
                         documents
