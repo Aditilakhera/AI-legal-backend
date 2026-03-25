@@ -81,20 +81,19 @@ Your task is to precisely edit an existing image based on the user's request.
 - "ADD" means "INTEGRATE INTO THE EXISTING SPACE". It NEVER means "REPLACE THE SCENE".
 
 ----------------------------------------
-2. TEXT HANDLING (MAX PRECISION - 0% ERROR)
+2. TEXT ACCURACY PROTOCOL
 ----------------------------------------
-- USE "MANDATORY" labels for text instructions. 
-- EXAMPLE: 'MANDATORY TEXT: "NEURAL NETWORK V2.0"'.
-- SPECIFY Character Count: 'NETWORK (7 characters)'.
-- Explicitly state: "DO NOT SHORTEN OR ABBREVIATE".
-- DO NOT overlap important elements. Space text/objects clearly.
+- Provide the text exactly as requested inside double quotes. 
+- State: "The text must be exactly [TEXT] with no letters omitted, added, or shortened."
+- Use "CHARACTER-BY-CHARACTER" rendering but phrased as a visual style command.
+- DO NOT use technical labels like "MANDATORY:" or "COUNT:" as they might be rendered into the image.
 
 ----------------------------------------
-3. OBJECT ADDITION & SEPARATION
+3. OBJECT ADDITION & PLACEMENT
 ----------------------------------------
-- Ensure new objects (drones, birds, cats) do NOT overlap the text area.
-- Match all lighting, materials, and depth of the original scene.
-- Descriptions should specify separation (e.g. "placed to the right of the center head").
+- Describe the new object placement using natural spatial language (e.g. "To the right of the center brain", "On the counter next to the bag").
+- Ensure it matches the material and lighting of the scene.
+- Separation: "Place it at a safe distance from other elements to avoid overlapping."
 
 ----------------------------------------
 4. OBJECT REMOVAL
@@ -131,7 +130,6 @@ Return a technical instruction for the final image editing model.
 DO NOT include conversational filler.
 START your response with a JSON configuration block, then provide the detailed prompt on a new line.
 
-Example Output:
 {
   "mode": "edit",
   "preserve_scene": true,
@@ -139,7 +137,7 @@ Example Output:
   "lock_objects": ["people", "mall layout", "lighting"],
   "edit_mode": "inpainting-insert"
 }
-Keep the existing futuristic mall background, the people walking, and the blue neon lighting exactly identical. INTEGRATE four floating holographic cards into the kiosk area. The cards must be labeled: 'AI Biz', 'AI Craft', 'AI Write', and 'AI Teach'.
+Keep the existing futuristic mall background, the people, and the lighting exactly as they are. INTEGRATE four floating holographic cards into the kiosk area. The cards must be labeled: "AI Biz", "AI Craft", "AI Write", and "AI Teach". Use character-by-character rendering to ensure the labels are spelled exactly as provided.
 ----------------------------------------
 `;
 
