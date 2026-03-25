@@ -3,6 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
 import { refineBrandPrompt } from '../utils/brandIdentity.js';
+import { refineAdvancedImagePrompt, refineAdvancedEditPrompt } from '../utils/imagePromptController.js';
 import { getConfig } from '../services/configService.js';
 import { subscriptionService } from '../services/subscriptionService.js';
 
@@ -33,7 +34,7 @@ const detectEditMode = (prompt) => {
 // -------------------------------------------------------------------
 // Core Vertex AI helper — used by both chat and API endpoints
 // -------------------------------------------------------------------
-export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'imagen-3.0-generate-001') => {
+export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'imagen-3.0-generate-001', manualEditMode = null) => {
     try {
         console.log(`[VERTEX IMAGE] Triggered for: "${prompt}" (Edit: ${!!originalImage}, Ratio: ${aspectRatio})`);
 
@@ -67,8 +68,15 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                 // Gemini "Nano Banana" Style Structure
                 let finalPrompt = prompt;
                 if (originalImage) {
-                    const systemInstruction = getConfig('IMAGE_EDIT_INSTRUCTIONS', `You are an advanced AI image editing assistant. Return only the edited image.`);
-                    finalPrompt = `${systemInstruction}\n\nUser Request: ${prompt}`;
+            const defaultInst = `You are a high-precision IMAGE MODIFYING assistant. 
+1. DO NOT REGENERATE the image. 
+2. PRESERVE EVERY PIXEL that is not explicitly requested to change. 
+3. KEEP THE ORIGINAL background, subjects, composition, colors, and layout. 
+4. TEXT ACCURACY: You MUST render text CHARACTER-BY-CHARACTER. DO NOT OMIT ANY LETTERS.
+5. ERASE & REPLACE: first completely remove any existing text or objects being changed.
+Return only the modified image.`;
+                    const systemInstruction = getConfig('IMAGE_EDIT_INSTRUCTIONS', defaultInst);
+                    finalPrompt = `${systemInstruction}\n\nACTUAL USER REQUEST: ${prompt}`;
                 }
 
                 const parts = [{ text: finalPrompt }];
@@ -100,8 +108,9 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                 let instanceStruct = { prompt };
                 let paramStruct = {
                     sampleCount: 1,
-                    guidanceScale: 25.0,
-                    personGeneration: 'allow_all'
+                    guidanceScale: originalImage ? 100.0 : 25.0, // High precision for edits
+                    personGeneration: 'allow_all',
+                    negativePrompt: "misspelled text, garbled letters, overlapping characters, blurry text, extra characters"
                 };
 
                 if (originalImage) {
@@ -113,7 +122,7 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                         base64Data = base64Data.split('base64,')[1];
                     }
 
-                    const rawEditMode = detectEditMode(prompt);
+                    const rawEditMode = manualEditMode || detectEditMode(prompt);
                     instanceStruct.referenceImages = [
                         {
                             referenceType: 'REFERENCE_TYPE_RAW',
@@ -139,10 +148,10 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
             );
         };
 
-        // Model selection:
-        // User requested "Nano Banana" (gemini-2.5-flash-image) for editing.
-        const primaryModel = originalImage ? 'gemini-2.5-flash-image' : selectedModelId;
-        const fallbackModel = originalImage ? 'imagen-3.0-capability-001' : (selectedModelId === 'imagen-4.0-ultra-generate-001' ? 'imagen-3.0-generate-001' : 'imagen-3.0-generate-002');
+        // Model selection for Editing:
+        // Use "Magic Editor" (imagen-3.0-capability-001) as primary for best text/layout editing.
+        const primaryModel = originalImage ? 'imagen-3.0-capability-001' : selectedModelId;
+        const fallbackModel = originalImage ? 'gemini-2.5-flash-image' : (selectedModelId === 'imagen-4.0-ultra-generate-001' ? 'imagen-3.0-generate-001' : 'imagen-3.0-generate-002');
 
         let response;
         let usedModel = primaryModel;
@@ -216,9 +225,15 @@ export const generateImage = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Prompt is required' });
         }
 
+        // 1. Brand Refinement (Lightweight)
         prompt = refineBrandPrompt(prompt, 'image');
-        if (logger && logger.info) logger.info(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
-        else console.log(`[Image Generation] "${prompt}" (Ratio: ${aspectRatio}, Model: ${modelId})`);
+
+        // 2. Advanced Controller Refinement (LLM-based)
+        // Uses the new "Advanced Image Generation Controller" logic
+        prompt = await refineAdvancedImagePrompt(prompt);
+
+        if (logger && logger.info) logger.info(`[Image Generation] Refined: "${prompt.substring(0, 100)}..." (Ratio: ${aspectRatio}, Model: ${modelId})`);
+        else console.log(`[Image Generation] Refined: "${prompt.substring(0, 100)}..." (Ratio: ${aspectRatio}, Model: ${modelId})`);
 
         const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio, modelId);
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
@@ -251,7 +266,18 @@ export const editImage = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Image (URL or Base64) is required for editing' });
         }
 
-        console.log(`[Image Editing] Processing: "${prompt}"`);
+        console.log(`[Image Editing] Processing raw request: "${prompt}"`);
+
+        // Refine the edit request using the Advanced Editing Controller
+        const { prompt: refined, config } = await refineAdvancedEditPrompt(prompt, imageUrl);
+        
+        // Final fallback: Ensure the prompt is NEVER empty
+        const finalPrompt = (refined && refined.trim()) ? refined : prompt;
+
+        // If the controller suggested a specific edit mode, we can use it
+        const suggestedEditMode = config?.edit_mode || (config?.mode === 'edit' ? 'inpainting-insert' : null);
+
+        console.log(`[Image Editing] Refined Title: "${finalPrompt.substring(0, 100)}..." (Suggested Mode: ${suggestedEditMode})`);
 
         let imageToProcess = imageBase64;
 
@@ -272,7 +298,7 @@ export const editImage = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'Valid image data required' });
         }
 
-        const modifiedImageUrl = await generateImageFromPrompt(prompt, imageToProcess, aspectRatio, modelId);
+        const modifiedImageUrl = await generateImageFromPrompt(finalPrompt, imageToProcess, aspectRatio, modelId, suggestedEditMode);
         if (!modifiedImageUrl) throw new Error('Failed to retrieve modified image URL.');
 
         // 💰 Deduct credits on successful output
