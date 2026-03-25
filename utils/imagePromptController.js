@@ -76,49 +76,47 @@ Your task is to precisely edit an existing image based on the user's request.
 ----------------------------------------
 1. PRESERVE ORIGINAL IMAGE (PARANOID MODE)
 ----------------------------------------
-- You MUST describe the original scene (background, subjects, lighting) in your refined prompt to remind the model what to lock.
-- Keep EVERY existing detail (people, furniture, floor, sky) unless specifically asked to remove it.
+- You MUST describe the original scene (background, lighting) in your refined prompt to remind the model what to lock.
+- Keep EVERY existing detail (furniture, floor, sky) unless specifically asked to remove it.
 - "ADD" means "INTEGRATE INTO THE EXISTING SPACE". It NEVER means "REPLACE THE SCENE".
 
 ----------------------------------------
-2. TEXT ACCURACY PROTOCOL
+2. SUBJECT MODIFICATION (POSE / OUTFIT / APPEARANCE)
+----------------------------------------
+- 🚨 **AVOID DUPLICATE SUBJECTS:** If the user asks to change the pose (e.g., "make her stand", "change hands"), outfit, or appearance of a person, you MUST explicitly tell the model to REPLACE or MODIFY the existing person.
+- DO NOT lock "people" in the config if the person is the target of the edit.
+- Command phrasing: "Remove the seated person and replace her in the same spot with the same person standing straight up." or "Change her current outfit to a formal black blazer while keeping her face and features identical."
+
+----------------------------------------
+3. TEXT ACCURACY PROTOCOL
 ----------------------------------------
 - Provide the text exactly as requested inside double quotes. 
 - State: "The text must be exactly [TEXT] with no letters omitted, added, or shortened."
 - Use "CHARACTER-BY-CHARACTER" rendering but phrased as a visual style command.
-- DO NOT use technical labels like "MANDATORY:" or "COUNT:" as they might be rendered into the image.
 
 ----------------------------------------
-3. OBJECT ADDITION & PLACEMENT
+4. OBJECT ADDITION & PLACEMENT
 ----------------------------------------
 - Describe the new object placement using natural spatial language (e.g. "To the right of the center brain", "On the counter next to the bag").
 - Ensure it matches the material and lighting of the scene.
-- Separation: "Place it at a safe distance from other elements to avoid overlapping."
 
 ----------------------------------------
-4. OBJECT REMOVAL
+5. OBJECT REMOVAL
 ----------------------------------------
 - Remove object cleanly using background-aware inpainting.
 - Ensure no artifacts or distortions in the removed area.
 
 ----------------------------------------
-5. STYLE & COLOR CONSISTENCY
+6. STYLE & COLOR CONSISTENCY
 ----------------------------------------
 - Maintain original art style (illustration / realistic / 3D).
 - Keep color palette and ambient lighting identical.
-- Preserve the mood and atmospheric effects.
 
 ----------------------------------------
 7. PRECISION PRIORITY
 ----------------------------------------
 - Accuracy > creativity.
 - Treat edits like Photoshop-level changes.
-
-----------------------------------------
-8. SAFE EXECUTION
-----------------------------------------
-- If instruction is unclear -> make minimal safe change.
-- Do NOT hallucinate new elements.
 
 ----------------------------------------
 INPUT IMAGE: [original image]
@@ -134,10 +132,10 @@ START your response with a JSON configuration block, then provide the detailed p
   "mode": "edit",
   "preserve_scene": true,
   "lock_background": true,
-  "lock_objects": ["people", "mall layout", "lighting"],
+  "lock_objects": ["furniture", "lighting"],
   "edit_mode": "inpainting-insert"
 }
-Keep the existing futuristic mall background, the people, and the lighting exactly as they are. INTEGRATE four floating holographic cards into the kiosk area. The cards must be labeled: "AI Biz", "AI Craft", "AI Write", and "AI Teach". Use character-by-character rendering to ensure the labels are spelled exactly as provided.
+Keep the existing background and lighting. Remove the seated woman and replace her with the exact same woman standing straight, maintaining her facial features and hairstyle. She should now be standing elegantly in a professional pose in the same location.
 ----------------------------------------
 `;
 
@@ -172,17 +170,19 @@ export const refineAdvancedImagePrompt = async (userPrompt) => {
  * @param {string} imageUrl - Reference image URL.
  * @returns {Promise<string>} - Refined instruction for the image editor.
  */
-export const refineAdvancedEditPrompt = async (userEditText, imageUrl = "") => {
+export const refineAdvancedEditPrompt = async (userEditText, imageUrl = "", imageBase64 = null) => {
     try {
-        console.log(`[Image Editor Controller] Refining edit request: "${userEditText}"`);
+        console.log(`[Image Editor Controller] Refining edit request: "${userEditText}" (Image: ${!!imageUrl || !!imageBase64})`);
 
         const compositePrompt = `
-INPUT IMAGE: ${imageUrl}
 USER EDIT REQUEST: ${userEditText}
+
+Describe the original image scene (subjects, position, background, lighting) and then provide your refined technical instruction according to the rules.
 `;
 
         const refinedInstruction = await askOpenAI(compositePrompt, null, {
-            systemInstruction: IMAGE_EDIT_CONTROLLER_SYSTEM_PROMPT
+            systemInstruction: IMAGE_EDIT_CONTROLLER_SYSTEM_PROMPT,
+            image: imageBase64 || imageUrl
         });
 
         if (refinedInstruction) {

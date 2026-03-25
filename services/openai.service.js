@@ -42,7 +42,23 @@ Understand the user's expertise level and topic preference implicitly from their
             finalPrompt = `CONTEXT:\n${context}\n\nUSER QUESTION:\n${prompt}`;
         }
 
-        messages.push({ role: 'user', content: finalPrompt });
+        const userContent = [{ type: 'text', text: finalPrompt }];
+        
+        // Handle image input for Vision capabilities
+        const imageToUse = options.image || options.imageUrl;
+        if (imageToUse) {
+            let finalImageUrl = imageToUse;
+            // If it's a raw base64 string (no prefix), add it
+            if (typeof imageToUse === 'string' && !imageToUse.startsWith('http') && !imageToUse.startsWith('data:')) {
+                finalImageUrl = `data:image/png;base64,${imageToUse}`;
+            }
+            userContent.push({
+                type: 'image_url',
+                image_url: { url: finalImageUrl }
+            });
+        }
+
+        messages.push({ role: 'user', content: userContent });
 
         logger.info(`[OPENAI] Sending text request to GPT-4o-mini...`);
 

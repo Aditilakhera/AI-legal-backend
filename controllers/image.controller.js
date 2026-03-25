@@ -268,17 +268,6 @@ export const editImage = async (req, res, next) => {
 
         console.log(`[Image Editing] Processing raw request: "${prompt}"`);
 
-        // Refine the edit request using the Advanced Editing Controller
-        const { prompt: refined, config } = await refineAdvancedEditPrompt(prompt, imageUrl);
-        
-        // Final fallback: Ensure the prompt is NEVER empty
-        const finalPrompt = (refined && refined.trim()) ? refined : prompt;
-
-        // If the controller suggested a specific edit mode, we can use it
-        const suggestedEditMode = config?.edit_mode || (config?.mode === 'edit' ? 'inpainting-insert' : null);
-
-        console.log(`[Image Editing] Refined Title: "${finalPrompt.substring(0, 100)}..." (Suggested Mode: ${suggestedEditMode})`);
-
         let imageToProcess = imageBase64;
 
         if (imageUrl && !imageToProcess) {
@@ -297,6 +286,17 @@ export const editImage = async (req, res, next) => {
         if (!imageToProcess) {
             return res.status(400).json({ success: false, message: 'Valid image data required' });
         }
+
+        // Refine the edit request using the Advanced Editing Controller (WITH VISION)
+        const { prompt: refined, config } = await refineAdvancedEditPrompt(prompt, imageUrl, imageToProcess);
+        
+        // Final fallback: Ensure the prompt is NEVER empty
+        const finalPrompt = (refined && refined.trim()) ? refined : prompt;
+
+        // If the controller suggested a specific edit mode, we can use it
+        const suggestedEditMode = config?.edit_mode || (config?.mode === 'edit' ? 'inpainting-insert' : null);
+
+        console.log(`[Image Editing] Refined Title: "${finalPrompt.substring(0, 100)}..." (Suggested Mode: ${suggestedEditMode})`);
 
         const modifiedImageUrl = await generateImageFromPrompt(finalPrompt, imageToProcess, aspectRatio, modelId, suggestedEditMode);
         if (!modifiedImageUrl) throw new Error('Failed to retrieve modified image URL.');
