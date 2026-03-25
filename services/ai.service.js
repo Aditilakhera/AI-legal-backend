@@ -211,9 +211,9 @@ ProjectRoot/
 
             const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
             if (docCount > 0 || manualCorpusId) {
-                // Step 0: Robust Detection (Only use RAG for company-specific queries)
+                // Step 0: Robust Detection (Only use RAG for company-specific or capability queries)
                 const lowerMsg = message.toLowerCase().trim();
-                const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web'];
+                const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web', 'what can you do', 'your features', 'your capabilities', 'who are you', 'how can you help', 'tell me about your services'];
                 const generalPhrases = ['what is', 'how to', 'explain', 'define', 'meaning of', 'tell me about', 'why is', 'suggest', 'give me', 'who is'];
                 
                 // If it looks like a general question and lacks company keywords, SKIP RAG immediately (No Resources)
@@ -224,13 +224,13 @@ ProjectRoot/
 
                 let needsRAG = false;
 
-                if (startsWithGeneral && !hasCompanyKeyword) {
+                if (hasCompanyKeyword) {
+                    needsRAG = true; // High confidence it's about the company or its abilities
+                    logger.info(`[RAG-Logic] Decision: YES (Keyword/Capability match) for: "${lowerMsg}"`);
+                } else if (startsWithGeneral && !hasCompanyKeyword) {
                     // USER REQUIREMENT: Normal questions like "What is..." should NEVER trigger RAG unless brands are mentioned.
                     needsRAG = false;
                     logger.warn(`[RAG-Logic] FORCED NO for generic question: "${lowerMsg}"`);
-                } else if (hasCompanyKeyword) {
-                    needsRAG = true; // High confidence it's about the company
-                    logger.info(`[RAG-Logic] Decision: YES (Keyword match) for: "${lowerMsg}"`);
                 } else {
                     // Ambiguous - ask the AI detector for a decision
                     needsRAG = await vertexService.detectRAGNeed(message);
@@ -289,7 +289,7 @@ ProjectRoot/
                     systemInstruction: ragInstructionWithLink,
                     mode: 'RAG' 
                 });
-                finalResponseData = { text: ragResponse, isRealTime: true, sources: [], mode: 'RAG' };
+                finalResponseData = { text: ragResponse, isRealTime: false, sources: ragContext?.sources || [], mode: 'RAG' };
             } else {
                 // PRIORITY 3: Multi-Model or Vertex AI General Chat
                 const promptWithMemory = buildMemoryPrompt(message);
