@@ -1,6 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger.js';
-import { GoogleAuth, Impersonated } from 'google-auth-library';
+import { GoogleAuth } from 'google-auth-library';
 import { uploadToCloudinary } from '../services/cloudinary.service.js';
 import { Storage } from '@google-cloud/storage';
 import { GoogleGenAI } from '@google/genai';
@@ -8,6 +8,8 @@ import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import GeneratedVideo from '../models/GeneratedVideo.js';
 import { subscriptionService } from '../services/subscriptionService.js';
+import { selectVideoModel } from '../services/modelSelector.js';
+import { executeVideoPipeline } from '../services/generationPipeline.js';
 
 // Initialize Google Cloud Storage
 // In production (App Engine), uses the App Engine default service account (ADC) automatically.
@@ -31,123 +33,75 @@ import { refineBrandPrompt } from '../utils/brandIdentity.js';
 // Video generation using external APIs (e.g., Replicate, Runway, or similar)
 export const generateVideo = async (req, res) => {
   try {
-    let { prompt, duration = 5, quality = 'medium', aspectRatio, modelId = 'veo-3.1-fast-generate-001', resolution = '1080p' } = req.body;
+    let { prompt, duration = 5, quality = 'fast', aspectRatio, modelId } = req.body;
     let imageFile = req.file;
     const userId = req.user?.id;
 
-    let finalAspectRatio = '16:9';
-    if (aspectRatio) {
-      finalAspectRatio = aspectRatio;
-    }
+    let finalAspectRatio = aspectRatio || '16:9';
+    if (!prompt) return res.status(400).json({ success: false, message: 'Prompt is required' });
 
-    if (prompt && typeof prompt === 'string') {
-      if (prompt.includes('9:16')) {
-        finalAspectRatio = '9:16';
-      } else if (prompt.includes('1:1')) {
-        finalAspectRatio = '1:1';
-      } else if (prompt.includes('16:9')) {
-        finalAspectRatio = '16:9';
-      }
-    }
+    const isPremium = req.user?.isPremium || false;
+    const resolvedModelId = selectVideoModel(modelId, quality, isPremium);
 
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({
-        success: false,
-        message: 'Prompt is required and must be a string'
-      });
-    }
-
-    // Apply Brand Identity Refinement
-    prompt = refineBrandPrompt(prompt, 'video');
-
-    logger.info(`[VIDEO] Generating video with prompt: ${prompt.substring(0, 100)}`);
-
-    // Handle Image Upload if provided
+    // 1. Prepare assets if any (Keep existing GCS upload for Veo)
     let imageGcsUri = null;
     let imageMimeType = null;
-
     if (imageFile) {
-      try {
         const bucketName = 'aisageneratedvideo';
         const fileName = `uploads/img_${uuidv4()}_${imageFile.originalname}`;
         const fileRef = storage.bucket(bucketName).file(fileName);
-
-        await fileRef.save(imageFile.buffer, {
-          metadata: {
-            contentType: imageFile.mimetype,
-          },
-        });
-
+        await fileRef.save(imageFile.buffer, { metadata: { contentType: imageFile.mimetype } });
         imageGcsUri = `gs://${bucketName}/${fileName}`;
         imageMimeType = imageFile.mimetype;
-        logger.info(`[VIDEO] Uploaded source image to GCS: ${imageGcsUri}`);
-      } catch (uploadError) {
-        logger.warn(`[VIDEO] Failed to upload source image to GCS: ${uploadError.message}`);
-        throw new Error('Failed to upload source image to GCS for video generation');
-      }
     }
 
-    // Example using Replicate API for video generation
-    // You can replace this with your preferred video generation service
-    const videoUrl = await generateVideoFromPrompt(prompt, duration, quality, finalAspectRatio, modelId, resolution, imageGcsUri, imageMimeType);
+    // 2. Execute via Pipeline
+    const pipelineResult = await executeVideoPipeline(
+        prompt,
+        async (refinedPrompt, activeModel) => {
+            return await generateVideoFromPrompt(
+                refinedPrompt, duration, quality, finalAspectRatio, 
+                activeModel, '1080p', imageGcsUri, imageMimeType
+            );
+        },
+        {
+            modelId: resolvedModelId,
+            enhance: true
+        }
+    );
 
-    // If generateVideoFromPrompt returns null, it failed internally.
-    // We can proceed to fallback logic below if videoUrl is null.
-    if (!videoUrl) {
-      logger.warn("[VIDEO] Primary generation failed, switching to fallback...");
-      throw new Error('Primary video generation failed');
-    }
+    const videoUrl = pipelineResult.url;
+    if (!videoUrl) throw new Error('Generation failed to return a URL');
 
-    logger.info(`[VIDEO] Video generated successfully: ${videoUrl}`);
-
-    logger.info(`[VIDEO] Video generated successfully: ${videoUrl}`);
-
-    // 💰 Deduct credits on successful output
+    // 💰 Deduct credits
     if (req.creditMeta && req.creditMeta.cost > 0) {
       await subscriptionService.deductCreditsFromMeta(req.creditMeta);
     }
 
     // Save to database
-    let parsedVideoUrl = videoUrl;
-    if (typeof videoUrl === 'object' && videoUrl.videoUrl) {
-      // In case videoUrl is returned as an object
-      parsedVideoUrl = videoUrl.videoUrl;
-    }
-
     if (userId) {
-      try {
-        await GeneratedVideo.create({
-          userId: userId,
-          prompt: prompt,
-          videoUrl: parsedVideoUrl,
-          originalImage: imageGcsUri, // or cloudinary url if it was converted
-          aspectRatio: finalAspectRatio,
-          duration: duration,
-          modelId: modelId,
-          status: 'completed'
-        });
-        logger.info(`[VIDEO] Saved video history for user ${userId}`);
-      } catch (dbError) {
-        logger.error(`[VIDEO] Failed to save video history: ${dbError.message}`);
-      }
+      await GeneratedVideo.create({
+        userId,
+        prompt: pipelineResult.finalPrompt,
+        videoUrl,
+        originalImage: imageGcsUri,
+        aspectRatio: finalAspectRatio,
+        duration,
+        modelId: pipelineResult.modelId,
+        status: 'completed'
+      }).catch(e => logger.error(`[VIDEO DB ERROR] ${e.message}`));
     }
 
     return res.status(200).json({
       success: true,
-      videoUrl: parsedVideoUrl,
-      prompt: prompt,
-      duration: duration,
-      quality: quality
+      videoUrl,
+      prompt: pipelineResult.finalPrompt,
+      modelUsed: pipelineResult.modelId
     });
 
   } catch (error) {
     logger.error(`[VIDEO ERROR] ${error.message}`);
-
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to generate video'
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
