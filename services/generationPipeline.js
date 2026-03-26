@@ -26,8 +26,14 @@ const cleanCache = () => {
 export const enhancePrompt = async (prompt, mediaType) => {
     try {
         cleanCache();
-        
-        const cacheKey = `${mediaType}_${prompt.trim().toLowerCase()}`;
+
+        // Pre-process: Replace brand-sensitive word "AISA" with a neutral placeholder
+        // so the LLM enhancer doesn't interpret it as a logo/branding request.
+        const AISA_PLACEHOLDER = '__PRODUCT_NAME__';
+        const hasAisa = /\bAISA\b/i.test(prompt);
+        const normalizedPrompt = hasAisa ? prompt.replace(/\bAISA\b/gi, AISA_PLACEHOLDER) : prompt;
+
+        const cacheKey = `${mediaType}_${normalizedPrompt.trim().toLowerCase()}`;
         if (promptCache.has(cacheKey)) {
             const cached = promptCache.get(cacheKey);
             if (Date.now() - cached.timestamp < CACHE_TTL) {
@@ -45,7 +51,7 @@ export const enhancePrompt = async (prompt, mediaType) => {
         const client = new GoogleGenAI({
             vertexai: true,
             project: projectId,
-            location: 'us-central1' // Note: models like gemini-1.5-flash are usually in us-central1
+            location: 'us-central1'
         });
 
         let systemInstruction = '';
@@ -53,18 +59,20 @@ export const enhancePrompt = async (prompt, mediaType) => {
             systemInstruction = getConfig('VIDEO_PROMPT_ENHANCER', `You are an expert video prompt engineer.
 Enhance the given basic prompt to be highly descriptive for AI Video generation.
 Format MUST follow strict structure: [Subject] + [Environment] + [Lighting] + [Camera Movement/Angles] + [Quality/Style].
-DO NOT include any prefix like "Prompt:" or extra conversational text. Keep it under 60 words for maximum impact.`);
+DO NOT include any prefix like "Prompt:" or extra conversational text. Keep it under 60 words for maximum impact.
+If the prompt contains a placeholder like __PRODUCT_NAME__, treat it as a generic named entity or product and do NOT replace it with branding, logos, or specific visual styles.`);
         } else {
             systemInstruction = getConfig('IMAGE_PROMPT_ENHANCER', `You are an expert image prompt engineer.
 Enhance the user prompt. Keep it punchy, short, and cost-effective for token usage, while maximizing visual impact.
 Focus ONLY on [Subject], [Core Style], and [Lighting].
-DO NOT include any prefix like "Prompt:". Stay under 30 words.`);
+DO NOT include any prefix like "Prompt:". Stay under 30 words.
+If the prompt contains a placeholder like __PRODUCT_NAME__, treat it as a generic named entity and do NOT replace it with logos, brand visuals, or specific identifiable imagery.`);
         }
 
         logger.info(`[PromptEnhancer] Enhancing ${mediaType} prompt via LLM...`);
         const response = await client.models.generateContent({
             model: 'gemini-1.5-flash',
-            contents: [{ role: 'user', parts: [{ text: `Original Prompt: "${prompt}"\n\nEnhance this.` }] }],
+            contents: [{ role: 'user', parts: [{ text: `Original Prompt: "${normalizedPrompt}"\n\nEnhance this.` }] }],
             config: {
                 systemInstruction: systemInstruction,
                 temperature: 0.7,
@@ -72,9 +80,14 @@ DO NOT include any prefix like "Prompt:". Stay under 30 words.`);
             }
         });
 
-        let enhancedText = response.text || prompt;
+        let enhancedText = response.text || normalizedPrompt;
         // Clean up any weird prefixes the LLM might hallucinate
         enhancedText = enhancedText.replace(/^(Here is the enhanced prompt:|Prompt:|\*\*Enhanced Prompt:\*\*|\[.*?\]\s*-?\s*)/gi, '').trim();
+
+        // Post-process: Restore the original word AISA from the placeholder
+        if (hasAisa) {
+            enhancedText = enhancedText.replace(new RegExp(AISA_PLACEHOLDER, 'g'), 'AISA');
+        }
 
         // Save to cache
         promptCache.set(cacheKey, {
