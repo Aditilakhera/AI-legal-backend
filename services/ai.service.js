@@ -15,6 +15,7 @@ import memoryService from './memory.service.js';
 import QueryLog from '../models/QueryLog.model.js';
 import userIntelligenceService from './userIntelligence.service.js';
 import * as configService from './configService.js';
+import { detectLanguage } from '../utils/languageDetector.js';
 
 
 // Real RAG Storage (MongoDB Atlas)
@@ -79,6 +80,20 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         }
 
         const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history } = options;
+
+        // --- LANGUAGE DETECTION ---
+        const detected = detectLanguage(message);
+        // Special: If detected as English, we don't force it in the prompt as strictly
+        // to allow the AI's internal detection to pick up subtle nuances (like French/Spanish)
+        const userLanguage = detected !== 'English' ? detected : (language || 'English');
+        const isDefaultEnglish = detected === 'English' && (!language || language === 'English');
+        
+        const langSwitchRule = `### LANGUAGE BEHAVIOR: 
+        1. If the user changes their script or language (e.g. from English to Arabic), you MUST immediately switch your entire response to that new language. 
+        2. DO NOT use the previous language of the conversation if the current message is in a clear different script/tongue.
+        3. Match the LATEST message's language 100%.`;
+
+        logger.info(`[AI-Service] Lang Selection: ${userLanguage} (Detected: ${detected}, Option: ${language})`);
 
         // --- CONVERSATION MEMORY RAG ---
         // Combine history from frontend and retrieved memory from DB if available
@@ -173,9 +188,9 @@ ProjectRoot/
                     let searchResult;
                     
                     if (mode === 'DEEP_SEARCH') {
-                        searchResult = await deepSearchService.performDeepSearch(message, language);
+                        searchResult = await deepSearchService.performDeepSearch(message, userLanguage);
                     } else {
-                        searchResult = await webSearchService.performSearch(message, language);
+                        searchResult = await webSearchService.performSearch(message, userLanguage);
                     }
 
                     if (searchResult && (searchResult.summary || searchResult.text)) {
@@ -284,9 +299,13 @@ ProjectRoot/
                 // Step 4: Answer Generation (Context + Original Question)
                 const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
 
+                const langContext = isDefaultEnglish 
+                    ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                    : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+
                 const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext?.text, { 
                     userName, 
-                    systemInstruction: ragInstructionWithLink,
+                    systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
                     mode: 'RAG' 
                 });
                 finalResponseData = { text: ragResponse, isRealTime: false, sources: ragContext?.sources || [], mode: 'RAG' };
@@ -299,8 +318,12 @@ ProjectRoot/
 
                 if (currentModel && (currentModel.includes('gpt') || currentModel.includes('openai'))) {
                     logger.info(`[AI-Service] Routing to OpenAI (${currentModel})`);
+                    const langContext = isDefaultEnglish 
+                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                        : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
-                        systemInstruction: dynamicSystemInstruction,
+                        systemInstruction: `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
                         userName
                     });
                 } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
@@ -318,9 +341,13 @@ ProjectRoot/
 
                     logger.info(`[AI-Service] Executing Chat (Greeting: ${isGreeting}) for: "${message}"`);
 
+                    const langContext = isDefaultEnglish 
+                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                        : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
                         userName, 
-                        systemInstruction: systemInstructionToUse,
+                        systemInstruction: `${systemInstructionToUse}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
                         mode: mode || 'GENERAL',
                         images,
                         documents
