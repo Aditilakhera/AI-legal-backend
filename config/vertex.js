@@ -45,7 +45,7 @@ else if (projectId) {
 import { getConfig, getFullSystemInstruction } from '../services/configService.js';
 
 // Model name - Official stable Vertex AI Flash model
-export const modelName = "gemini-1.5-flash";
+export const modelName = "gemini-2.5-flash";
 
 /**
  * Dynamic System Instruction Getter
