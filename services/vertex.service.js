@@ -147,7 +147,6 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
                 const doc = await Knowledge.findOne({ gcsUri });
                 if (doc) {
                     sourceUrl = doc.sourceUrl || '';
-                    // If we have a URL, try to use a clean title (e.g., domain name)
                     if (sourceUrl) {
                         try {
                             const urlObj = new URL(sourceUrl);
@@ -280,7 +279,7 @@ export const detectRAGNeed = async (query) => {
  */
 export const AskVertexRaw = async (prompt, options = {}) => {
     try {
-        const result = await generativeModel.generateContent(prompt);
+        const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
         const response = await result.response;
         
         if (typeof response.text === 'function') {
@@ -378,10 +377,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // 3. Generate Content
-        // Use string directly for text-only to avoid 400 errors in some SDK versions
-        const result = (parts.length === 1 && parts[0].text) 
-            ? await model.generateContent(parts[0].text)
-            : await model.generateContent({ contents: [{ role: 'user', parts }] });
+        const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
         const response = await result.response;
 
         let text = '';
@@ -407,9 +403,12 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
     } catch (error) {
         logger.error(`[VERTEX] Error: ${error.message}`);
-        // Fallback for safety blocks
+        // Fallback for safety blocks or specific quota issues
         if (error.message.includes("SAFETY")) {
             return "I cannot fulfill this request due to safety guidelines.";
+        }
+        if (error.message.includes("429") || error.message.includes("Quota")) {
+            return "The AI system is currently receiving too many requests. Please wait a moment and try again.";
         }
         throw error;
     }

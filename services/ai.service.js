@@ -346,8 +346,13 @@ ProjectRoot/
         return finalResponseData;
 
     } catch (error) {
-        logger.error(`Chat Handling Error: ${error.message}`);
-        return { text: "I'm having trouble connecting to my brain right now. Please try again later.", error: true };
+        logger.error(`[AI-CHAT-ERROR] Stack Trace: ${error.stack}`);
+        logger.error(`[AI-CHAT-ERROR] Message: ${error.message}`);
+        return { 
+            text: "I'm having trouble connecting to my brain right now. Please try again later.", 
+            error: true, 
+            details: error.message 
+        };
     }
 };
 
