@@ -300,7 +300,7 @@ ProjectRoot/
                 const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
 
                 const langContext = isDefaultEnglish 
-                    ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                    ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                     : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
                 const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext?.text, { 
@@ -319,7 +319,7 @@ ProjectRoot/
                 if (currentModel && (currentModel.includes('gpt') || currentModel.includes('openai'))) {
                     logger.info(`[AI-Service] Routing to OpenAI (${currentModel})`);
                     const langContext = isDefaultEnglish 
-                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in English. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                         : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
@@ -342,7 +342,7 @@ ProjectRoot/
                     logger.info(`[AI-Service] Executing Chat (Greeting: ${isGreeting}) for: "${message}"`);
 
                     const langContext = isDefaultEnglish 
-                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use a non-English language or script, respond ENTIRELY in that same language/script."
+                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                         : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
@@ -370,6 +370,15 @@ ProjectRoot/
             });
         }
 
+        // --- Generate Related Questions (Async but awaited for final response) ---
+        let suggestions = [];
+        try {
+            suggestions = await generateRelatedQuestions(message, finalResponseData.text, userLanguage);
+        } catch (suggestionErr) {
+            logger.error(`[RelatedQuestions] Failed: ${suggestionErr.message}`);
+        }
+
+        finalResponseData.suggestions = suggestions;
         return finalResponseData;
 
     } catch (error) {
@@ -394,6 +403,33 @@ export const initializeFromDB = async () => {
 export const reloadVectorStore = async () => {
     vectorStore = null;
     await initializeFromDB();
+};
+
+export const generateRelatedQuestions = async (userMessage, aiResponse, language = 'English') => {
+    try {
+        const prompt = `Based on the following conversation, generate 3 follow-up questions that the user might want to ask next.
+        
+User Message: "${userMessage}"
+AI Response: "${aiResponse}"
+
+Rules:
+- Questions must be relevant and helpful.
+- Language: Respond in ${language}.
+- Format: Return ONLY a JSON array of 3 strings.
+- Example: ["Question 1?", "Question 2?", "Question 3?"]`;
+
+        const response = await vertexService.AskVertexRaw(prompt, { 
+            maxOutputTokens: 150, 
+            temperature: 0.7 
+        });
+        
+        const cleanJson = response.replace(/```json\s*|\s*```/g, '').trim();
+        const questions = JSON.parse(cleanJson);
+        return Array.isArray(questions) ? questions.slice(0, 3) : [];
+    } catch (error) {
+        logger.error(`[RelatedQuestions] Error: ${error.message}`);
+        return [];
+    }
 };
 
 export const generateConversationTitle = async (message) => {

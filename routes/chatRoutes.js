@@ -94,7 +94,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       detectedMode,
       isRealTime: isWebSearchResponse,
       sources: searchSources,
-      language: language || 'English'
+      language: language || 'English',
+      suggestions: chatResponse.suggestions || []
     };
 
     try {
@@ -174,17 +175,10 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     }
 
     if (session) {
-      session.messages.push({ role: 'user', content, timestamp: Date.now() });
-      session.messages.push({
-        role: 'assistant',
-        content: finalResponse.reply,
-        timestamp: Date.now(),
-        isRealTime: isWebSearchResponse,
-        sources: searchSources,
-        imageUrl: finalResponse.imageUrl,
-        videoUrl: finalResponse.videoUrl,
-        conversion: finalResponse.conversion
-      });
+      // NOTE: We do NOT push messages to session.messages here.
+      // The frontend maintains the chat state with explicit unique IDs (e.g. user-1234)
+      // and forcefully syncs them via `chatStorageService.saveMessage()` which hits POST /:sessionId/message.
+      // Pushing them here without those IDs causes double messages in chat history.
       session.lastModified = Date.now();
       await session.save();
     }
