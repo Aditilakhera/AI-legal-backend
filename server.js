@@ -30,6 +30,7 @@ import reminderRoutes from './routes/reminderRoutes.js';
 import imageRoutes from './routes/image.routes.js';
 import videoRoutes from './routes/videoRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import projectRoutes from './routes/projectRoutes.js';
 import memoryRoutes from './routes/memoryRoutes.js';
 import pricingRoutes from './routes/pricingRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
@@ -140,6 +141,9 @@ app.use('/api', dashboardRoutes);
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+
+// Projects
+app.use('/api/projects', projectRoutes);
 
 
 // AIBASE (V3) - With Credit System

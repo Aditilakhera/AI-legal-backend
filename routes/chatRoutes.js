@@ -164,6 +164,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         sessionId,
         userId: userId || null,
         guestId: req.guest?.guestId || null,
+        projectId: req.body.projectId || null,
         title: aiTitle || "New Chat",
         messages: []
       });
@@ -174,17 +175,27 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     }
 
     if (session) {
-      session.messages.push({ role: 'user', content, timestamp: Date.now() });
-      session.messages.push({
-        role: 'assistant',
-        content: finalResponse.reply,
-        timestamp: Date.now(),
-        isRealTime: isWebSearchResponse,
-        sources: searchSources,
-        imageUrl: finalResponse.imageUrl,
-        videoUrl: finalResponse.videoUrl,
-        conversion: finalResponse.conversion
-      });
+      /* 
+       * REDUNDANT SAVE PREVENTED:
+       * The frontend application (Chat.jsx) acts as the source of truth and 
+       * manually syncs all user and assistant messages via the 
+       * POST /api/chat/:sessionId/message endpoint.
+       * 
+       * Automatically pushing messages here causes database duplication 
+       * because the frontend generates its own message IDs which won't match.
+       * 
+       session.messages.push({ role: 'user', content, timestamp: Date.now() });
+       session.messages.push({
+         role: 'assistant',
+         content: finalResponse.reply,
+         timestamp: Date.now(),
+         isRealTime: isWebSearchResponse,
+         sources: searchSources,
+         imageUrl: finalResponse.imageUrl,
+         videoUrl: finalResponse.videoUrl,
+         conversion: finalResponse.conversion
+       });
+       */
       session.lastModified = Date.now();
       await session.save();
     }
@@ -217,13 +228,16 @@ router.get('/', optionalVerifyToken, identifyGuest, async (req, res) => {
     if (mongoose.connection.readyState !== 1) return res.json([]);
 
     let sessions = [];
+    const projectId = req.query.projectId;
+
     if (userId) {
-      const user = await userModel.findById(userId).populate({
-        path: 'chatSessions',
-        select: 'sessionId title lastModified userId',
-        options: { sort: { lastModified: -1 } }
-      });
-      sessions = (user?.chatSessions || []).filter(s => s !== null);
+      const query = { userId: userId };
+      if (projectId) query.projectId = projectId;
+      else query.projectId = { $exists: false }; // Or handle default project logic
+
+      sessions = await ChatSession.find(query)
+        .select('sessionId title lastModified userId projectId')
+        .sort({ lastModified: -1 });
     } else if (guestId) {
       sessions = await ChatSession.find({ guestId: guestId })
         .select('sessionId title lastModified guestId')
@@ -310,6 +324,7 @@ router.post('/:sessionId/message', optionalVerifyToken, identifyGuest, async (re
         sessionId,
         userId: userId || null,
         guestId: guestId || null,
+        projectId: req.body.projectId || null,
         title: title || "New Chat",
         messages: []
       });
