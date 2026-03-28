@@ -151,16 +151,18 @@ class UserIntelligenceService {
         const profile = await UserProfile.findOne({ userId });
         if (!profile) return "";
 
-        const { onboarding, psychology, intelligence } = profile;
+        const onboarding = profile.onboarding || {};
+        const psychology = profile.psychology || {};
+        const intelligence = profile.intelligence || {};
         
         let context = `\n### USER PERSONALITY PROFILE (AISA ADAPTIVE SYSTEM):\n`;
         
         if (onboarding.currentWork) context += `- Current Work: ${onboarding.currentWork}\n`;
         if (onboarding.goals?.length > 0) context += `- Goals: ${onboarding.goals.join(', ')}\n`;
         
-        context += `- Motivation: ${psychology.motivationStyle}\n`;
-        context += `- Learning Style: ${psychology.learningStyle}\n`;
-        context += `- Technical Level: ${intelligence.technicalLevel}/5\n`;
+        context += `- Motivation: ${psychology.motivationStyle || 'Standard'}\n`;
+        context += `- Learning Style: ${psychology.learningStyle || 'Balanced'}\n`;
+        context += `- Technical Level: ${intelligence.technicalLevel || 1}/5\n`;
         
         // Add specific instructions for AISA based on profile
         context += `\n### ADAPTIVE RESPONSE RULES:\n`;

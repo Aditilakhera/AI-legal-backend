@@ -415,14 +415,37 @@ Response Guidelines:
                 description: 'Credit costs for various AISA features and tools (Targeting exact 50% Profit Margin over Vertex AI Costs).'
             },
             {
-                key: 'DEFAULT_AI_MODEL',
-                value: 'gemini-2.0-flash-exp',
-                description: 'Primary AI model used for standard chat.'
+                key: 'IMAGE_PROMPT_ENHANCER',
+                value: `You are an advanced image generation controller for AISA™. 
+Generate a highly detailed prompt for an image generation model (like Imagen 3) based on the user's initial request. 
+The goal is to produce high-quality, visually appealing images AND intelligently embed text inside the image.
+
+### AISA™ BRAND IDENTITY:
+- Name: AISA™
+- Vibe: Futuristic, Modern, Premium, Intelligent, Clean, Reliable.
+- Visuals: Glowing blue and purple neural brain logo, glassmorphism, deep space blue backgrounds, advanced neural networks.
+
+### CORE RULES:
+1. TEXT DETECTION: Extract any title, slogan, or quote. If missing but implied, infer a short catchy title.
+2. PLACEMENT: Describe text placement in a visually balanced area (top-center, sky area, or empty space).
+3. STYLE: Use bold, clean typography. High contrast. Add subtle shadows/glow.
+4. QUALITY: Style must be Ultra-realistic or high-quality digital illustration. Cinematic lighting.
+5. NO FILLER: Respond ONLY with the final refined prompt.`,
+                description: 'Advanced rules for refining image generation prompts.'
             },
             {
-                key: 'MAX_TOKENS_PER_USER',
-                value: '500000',
-                description: 'Default token limit for user analysis sessions.'
+                key: 'VIDEO_PROMPT_ENHANCER',
+                value: `You are an expert video prompt engineer for AISA™.
+Enhance the given basic prompt to be highly descriptive for AI Video generation (Veo 3.1).
+Format MUST follow strict structure: [Subject] + [Environment] + [Lighting] + [Camera Movement/Angles] + [Quality/Style].
+
+### AISA™ STYLE:
+- Use cinematic transitions, high-speed photography, or smooth drone shots if appropriate.
+- Maintain premium, high-tech aesthetics for tech topics.
+- Ensure vivid colors and sharp details.
+
+DO NOT include any prefix. Keep it under 80 words for maximum impact.`,
+                description: 'Advanced rules for refining video generation prompts.'
             },
             {
                 key: 'ALLOW_PUBLIC_SIGNUP',
@@ -437,9 +460,9 @@ Response Guidelines:
             if (!existing) {
                 logger.info(`[ConfigService] Seeding default config for: ${config.key}`);
                 existing = await SystemConfig.create(config);
-            } else if (config.key === 'AISA_CONVERSATIONAL_RULES' && !existing.value.includes('FALLBACK:')) {
-                // Feature push: Update rules to include the new Fallback/No-Disclaimer logic
-                logger.info(`[ConfigService] Updating ${config.key} to include new Fallback/No-Disclaimer rules.`);
+            } else if (config.key === 'AISA_CONVERSATIONAL_RULES' && (!existing.value.includes('FALLBACK:') || !existing.value.includes('TABLE FORMAT FOR COMPARISONS'))) {
+                // Feature push: Update rules to include new Fallback/No-Disclaimer and Table Format logic
+                logger.info(`[ConfigService] Updating ${config.key} to include new rules (Fallback + Table Format).`);
                 existing.value = config.value;
                 existing.lastUpdated = Date.now();
                 await existing.save();

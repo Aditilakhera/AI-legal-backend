@@ -59,8 +59,7 @@ export const performSearch = async (query, userLanguage = 'English') => {
         logger.info(`[WebSearch] Calling OpenAI Search for query: "${query}"`);
 
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
-        const isHindi = userLanguage === 'Hindi' || /[\u0900-\u097F]/.test(query);
-        const targetLang = isHindi ? 'Hindi' : 'English';
+        const targetLang = userLanguage === 'Hinglish' ? 'Hinglish (Romanized Hindi)' : userLanguage;
 
         if (!OPENAI_API_KEY) {
             logger.error('[WebSearch] OPENAI_API_KEY is missing!');

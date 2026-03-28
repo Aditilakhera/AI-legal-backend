@@ -124,8 +124,29 @@ export const performDeepSearch = async (query, userLanguage = 'English') => {
         // Limit context to ~30k tokens (roughly 120k chars)
         const truncatedContent = aggregatedContent.substring(0, 120000);
 
-        // --- STEP 6 & 7: SYNTHESIS & STRUCTURED OUTPUT ---
-        logger.info('[DeepSearch] Step 3: Synthesizing Final Report');
+        const structureTitles = {
+            'Hinglish': {
+                intro: 'Intro/Puri Summary',
+                insights: 'Khaas Baatein',
+                facts: 'Zaroori Facts',
+                sources: 'Sources/Links'
+            },
+            'Hindi': {
+                intro: 'परिचय और सारांश',
+                insights: 'मुख्य बिंदु',
+                facts: 'महत्वपूर्ण तथ्य',
+                sources: 'स्रोत'
+            },
+            'English': {
+                intro: 'Overview',
+                insights: 'Key Insights',
+                facts: 'Important Facts',
+                sources: 'Sources'
+            }
+        };
+
+        const titles = structureTitles[userLanguage] || structureTitles['English'];
+
         const synthesisPrompt = `
         You are AISA Deep Research Agent. You have been provided with raw data from multiple sources.
         
@@ -135,20 +156,21 @@ export const performDeepSearch = async (query, userLanguage = 'English') => {
         DATA:
         ${truncatedContent}
         
-        Your task is to synthesize this into a structured, professional report.
+        Your task is to synthesize this into a structured but natural-sounding response that feels like a conversation with an expert.
         
-        ### REQUIRED STRUCTURE:
-        1. **Overview**: A 2-3 paragraph high-level summary of the findings.
-        2. **Key Insights**: 5-7 critical points extracted from the data.
-        3. **Important Facts**: Data points, statistics, names, and precise details.
-        4. **Timeline**: (If applicable) List key events in chronological order.
-        5. **Sources**: A bulleted list of sources used (Titles and URLs).
+        ### REQUIRED STRUCTURE (In ${userLanguage}):
+        1.  **${titles.intro}**: Summarize the situation naturally.
+        2.  **${titles.insights}**: Clear details extracted from the data.
+        3.  **${titles.facts}**: Precise details, names, stats.
+        4.  **${titles.sources}**: Bulleted list of URLs.
         
         ### RULES:
-        - Cite your sources in-text using [1], [2], etc.
-        - Ensure the tone is objective and analytical.
-        - Respond ONLY in ${userLanguage}.
-        - If the data is insufficient, state what is missing.
+        - **Citations**: Cite sources in-text using [1], [2], etc.
+        - **TONE (CRITICAL)**: Respond in a natural, empathetic, and human-like conversational tone. If the query is personal, be supportive and human, not robotic.
+        - **LANGUAGE RULE (STRICT)**: You MUST respond in the EXACT SAME language that the user used for their question (Currently detected as: ${userLanguage}).
+        - **NO ENGLISH LABELS**: All headers (e.g., Intro, Analysis, Facts) MUST be translated to the user's language.
+        - If the language is Hinglish, the entire response (including every title and header) MUST be in Hinglish script.
+        - If the data is insufficient, state what is missing naturally.
         `;
 
         try {

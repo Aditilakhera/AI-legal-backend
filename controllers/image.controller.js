@@ -2,10 +2,11 @@ import { uploadToCloudinary } from '../services/cloudinary.service.js';
 import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
-import { refineBrandPrompt } from '../utils/brandIdentity.js';
-import { refineAdvancedImagePrompt, refineAdvancedEditPrompt } from '../utils/imagePromptController.js';
+import { refineAdvancedEditPrompt } from '../utils/imagePromptController.js';
 import { getConfig } from '../services/configService.js';
 import { subscriptionService } from '../services/subscriptionService.js';
+import { selectImageModel } from '../services/modelSelector.js';
+import { executeImagePipeline } from '../services/generationPipeline.js';
 
 // -------------------------------------------------------------------
 // Smart editMode detection for imagen-3.0-capability-001
@@ -219,23 +220,31 @@ Return only the modified image.`;
 // -------------------------------------------------------------------
 export const generateImage = async (req, res, next) => {
     try {
-        let { prompt, aspectRatio = '1:1', modelId = 'imagen-3.0-generate-001' } = req.body || {};
+        let { prompt, aspectRatio = '1:1', modelId, quality = 'fast' } = req.body || {};
 
         if (!prompt) {
             return res.status(400).json({ success: false, message: 'Prompt is required' });
         }
 
-        // 1. Brand Refinement (Lightweight)
-        prompt = refineBrandPrompt(prompt, 'image');
+        const isPremium = req.user?.isPremium || false;
+        
+        // 1. Resolve optimal model using selector
+        const resolvedModelId = selectImageModel(modelId, quality, isPremium);
 
-        // 2. Advanced Controller Refinement (LLM-based)
-        // Uses the new "Advanced Image Generation Controller" logic
-        prompt = await refineAdvancedImagePrompt(prompt);
+        // 2. Execute via Pipeline (Handles enhancement, retries, and fallback)
+        const pipelineResult = await executeImagePipeline(
+            prompt, 
+            async (finalPrompt, activeModel) => {
+                // Wrapper for the actual generation logic
+                return await generateImageFromPrompt(finalPrompt, null, aspectRatio, activeModel);
+            },
+            {
+                modelId: resolvedModelId,
+                enhance: true // Toggle based on UI if needed
+            }
+        );
 
-        if (logger && logger.info) logger.info(`[Image Generation] Refined: "${prompt.substring(0, 100)}..." (Ratio: ${aspectRatio}, Model: ${modelId})`);
-        else console.log(`[Image Generation] Refined: "${prompt.substring(0, 100)}..." (Ratio: ${aspectRatio}, Model: ${modelId})`);
-
-        const imageUrl = await generateImageFromPrompt(prompt, null, aspectRatio, modelId);
+        const imageUrl = pipelineResult.url;
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
 
         // 💰 Deduct credits on successful output
@@ -243,7 +252,12 @@ export const generateImage = async (req, res, next) => {
             await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
-        res.status(200).json({ success: true, data: imageUrl });
+        res.status(200).json({ 
+            success: true, 
+            data: imageUrl,
+            refinedPrompt: pipelineResult.finalPrompt,
+            modelUsed: pipelineResult.modelId
+        });
     } catch (error) {
         logger?.error
             ? logger.error(`[Image Generation] Error: ${error.message}`)

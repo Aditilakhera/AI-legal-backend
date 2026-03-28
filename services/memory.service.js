@@ -44,9 +44,12 @@ class MemoryService {
 
             const apiUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/text-embedding-004:predict`;
 
+            // Truncate text to avoid token limit errors (text-embedding-004 limit is ~2048 tokens)
+            const truncatedText = text.length > 6000 ? text.substring(0, 6000) : text;
+            
             const payload = {
                 instances: [
-                    { content: text }
+                    { content: truncatedText }
                 ]
             };
 

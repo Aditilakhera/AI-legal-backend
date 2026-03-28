@@ -44,7 +44,7 @@ else if (projectId) {
 
 import { getConfig, getFullSystemInstruction } from '../services/configService.js';
 
-// Model name - Vertex AI latest experimental
+// Model name - Official stable Vertex AI Flash model
 export const modelName = "gemini-2.5-flash";
 
 /**
@@ -61,7 +61,7 @@ export const systemInstructionText = getFullSystemInstruction();
 
 // Create generative model based on available initialization
 export const generativeModel = useVertexAI
-  ? vertexAI.preview.getGenerativeModel({
+  ? vertexAI.getGenerativeModel({
     model: modelName,
     safetySettings: [
       {
@@ -87,7 +87,7 @@ export const generativeModel = useVertexAI
 // Export genAI instance for multi-model support in chatRoutes
 export const genAIInstance = useVertexAI
   ? {
-    getGenerativeModel: (options) => vertexAI.preview.getGenerativeModel(options)
+    getGenerativeModel: (options) => vertexAI.getGenerativeModel(options)
   }
   : genAI;
 
