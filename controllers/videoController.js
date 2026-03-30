@@ -48,7 +48,9 @@ export const generateVideo = async (req, res) => {
     let imageMimeType = null;
     if (imageFile) {
         const bucketName = 'aisageneratedvideo';
-        const fileName = `uploads/img_${uuidv4()}_${imageFile.originalname}`;
+        // Sanitize originalname to prevent URI errors in Vertex AI Veo
+        const sanitizedName = imageFile.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        const fileName = `uploads/img_${uuidv4()}_${sanitizedName}`;
         const fileRef = storage.bucket(bucketName).file(fileName);
         await fileRef.save(imageFile.buffer, { metadata: { contentType: imageFile.mimetype } });
         imageGcsUri = `gs://${bucketName}/${fileName}`;
