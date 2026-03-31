@@ -16,6 +16,8 @@ import QueryLog from '../models/QueryLog.model.js';
 import userIntelligenceService from './userIntelligence.service.js';
 import * as configService from './configService.js';
 import { detectLanguage } from '../utils/languageDetector.js';
+import { classifyIntent } from './intent/intentClassifier.js';
+import { getLegalPrompt } from './legal/legalPrompts.js';
 
 
 // Real RAG Storage (MongoDB Atlas)
@@ -158,6 +160,22 @@ ProjectRoot/
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
         }
 
+        // --- INTENT CLASSIFICATION (NEW: LEGAL SMART) ---
+        let legalInstruction = "";
+        try {
+            // Build simple conversation summary for classifier
+            const chatSummary = (combinedHistory || []).slice(-3).map(m => `${m.role}: ${m.content || m.text}`).join(' | ');
+            const classification = await classifyIntent(message, images || documents || [], chatSummary);
+            
+            if (classification && classification.intent && classification.intent.startsWith('legal_')) {
+                logger.info(`[AI-Service] Legal Intent Detected: ${classification.intent}. Applying specialized prompts.`);
+                legalInstruction = `\n\n### SPECIALIZED LEGAL TOOL: ${classification.intent}\n${getLegalPrompt(classification.intent)}`;
+            }
+        } catch (intentErr) {
+            logger.warn(`[AI-Service] Intent classification failed: ${intentErr.message}`);
+        }
+
+        // Construct dynamic instruction without legal rule (it will be added at the absolute end)
         const dynamicSystemInstruction = (systemInstruction || "") + personaContext + toolRestrictions;
 
         // Helper to build context-aware prompt
@@ -239,7 +257,10 @@ ProjectRoot/
 
                 let needsRAG = false;
 
-                if (hasCompanyKeyword) {
+                if (mode === 'LEGAL_TOOLKIT' || legalInstruction) {
+                    needsRAG = true;
+                    logger.info(`[RAG-Logic] LEGAL MODE detected. Forcing RAG.`);
+                } else if (hasCompanyKeyword) {
                     needsRAG = true; // High confidence it's about the company or its abilities
                     logger.info(`[RAG-Logic] Decision: YES (Keyword/Capability match) for: "${lowerMsg}"`);
                 } else if (startsWithGeneral && !hasCompanyKeyword) {
@@ -256,8 +277,18 @@ ProjectRoot/
                     // Step 1: Query Rewriting
                     rewrittenQuery = await vertexService.rewriteQuery(message);
                     
-                    // Step 2: Retrieval using Rewritten Query
-                    ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8);
+                    // Step 2: Retrieval using Rewritten Query and Category Isolation
+                    const targetCategory = (mode === 'LEGAL_TOOLKIT' || legalInstruction) ? 'LEGAL' : 'GENERAL';
+                    logger.info(`[RAG-Logic] Target Category: ${targetCategory}`);
+                    
+                    ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, targetCategory);
+                    
+                    // Step 3: Strict Isolation Rule
+                    // If RAG was triggered (needsRAG=true) but no content was found for the category,
+                    // we must not fallback to general model if it was a legal request that failed.
+                    if (needsRAG && !ragContext) {
+                        return "No relevant data found in selected category";
+                    }
                     
                     // --- Step 3: Logging (Optional but requested) ---
                     try {
@@ -280,8 +311,12 @@ ProjectRoot/
                 }
             }
 
-            if (hasCompanyKeyword || (ragContext && ragContext.text)) {
-                if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
+            // Step 4: Final Processing
+            if (needsRAG || (ragContext && ragContext.text)) {
+                // If it was a forced RAG (e.g. Legal tool) and no context was found, we MUST return the error msg.
+                if (needsRAG && !ragContext) {
+                    finalResponseData = { text: "No relevant data found in selected category", isRealTime: false, sources: [], mode: 'RAG_ERROR' };
+                } else if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
                     if (hasCompanyKeyword) {
                         ragContext = ragContext || {};
                         ragContext.sources = [{
@@ -322,8 +357,9 @@ ProjectRoot/
                         ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in English. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                         : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
+                    const finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
-                        systemInstruction: `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
+                        systemInstruction: finalSystemInstruction,
                         userName
                     });
                 } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
@@ -335,7 +371,7 @@ ProjectRoot/
                     const greetings = ['hi', 'hello', 'hii', 'hey', 'yo', 'namaste', 'greeting'];
                     const isGreeting = greetings.some(g => lowerMsg === g || lowerMsg.startsWith(g + ' '));
 
-                    const systemInstructionToUse = isGreeting 
+                    const basePersona = isGreeting 
                         ? configService.getGreetingSystemInstruction(personaContext)
                         : configService.getGeneralSystemInstruction(personaContext);
 
@@ -345,9 +381,11 @@ ProjectRoot/
                         ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                         : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
+                    const finalSystemInstruction = `${basePersona}\n\n${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
+
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, { 
                         userName, 
-                        systemInstruction: `${systemInstructionToUse}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
+                        systemInstruction: finalSystemInstruction,
                         mode: mode || 'GENERAL',
                         images,
                         documents

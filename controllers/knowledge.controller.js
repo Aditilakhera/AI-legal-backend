@@ -91,7 +91,9 @@ export const uploadDocument = async (req, res) => {
             });
         }
 
-        const category = req.body.category || 'General';
+        let category = req.body.category || 'LEGAL';
+        category = category.toUpperCase();
+        if (!['LEGAL', 'GENERAL'].includes(category)) category = 'LEGAL';
 
         // 3. Always Store Metadata (for listing)
         try {
@@ -325,7 +327,10 @@ export const downloadDocument = async (req, res) => {
 // @access  Public
 export const uploadUrl = async (req, res) => {
     try {
-        const { url, category = 'Web', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
+        let { url, category = 'LEGAL', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
+        
+        category = category.toUpperCase();
+        if (!['LEGAL', 'GENERAL'].includes(category)) category = 'LEGAL';
 
         if (!url) {
             return res.status(400).json({ success: false, message: 'URL is required' });
@@ -349,11 +354,12 @@ export const uploadUrl = async (req, res) => {
             source = await KnowledgeSource.create({
                 url: url,
                 domain: parsedUrl.hostname,
+                category: category,
                 crawl_depth: depth,
                 max_pages: maxPages,
                 update_frequency: frequency,
                 status: 'active',
-                next_crawl_at: new Date() // Force immediate crawl
+                next_crawl_at: new Date()
             });
         }
 

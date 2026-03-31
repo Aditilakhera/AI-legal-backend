@@ -39,6 +39,7 @@ import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './routes/legalRoutes.js';
 import intentRoutes from './routes/intentRoutes.js';
+import legalToolkitRoutes from './routes/legalToolkitRoutes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -111,6 +112,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoute);
 app.use('/api/user', dataRoutes);  // GDPR data deletion & export
 app.use('/api/legal', legalRoutes);
+app.use('/api/legal-toolkit', legalToolkitRoutes);
 
 // Intelligence Features
 app.use('/api/chat', chatRoutes);
@@ -137,7 +139,6 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check" }));
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api', dashboardRoutes);
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);

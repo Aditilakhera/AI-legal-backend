@@ -42,10 +42,15 @@ ${toolList}
 6. You MUST handle Hinglish, Hindi, Arabic, and all major world languages — detect and note the language.
 7. For image+video combos ("edit this image" with attachment), prefer image_edit or image_to_video over text_to_image.
 8. "Make a video with music" = text_to_video + text_to_audio (two separate tools, listed in order).
-9. estimated_credits = sum of creditCost for all tools in the pipeline.
+9. If the user asks a general legal question, explains a situation, or asks about a law without requesting a specific advanced task (like drafting, analysis, or prediction), use legal_free_chat.
+10. **LEGAL SMART SUGGESTIONS**: If the intent is legal (starts with legal_), you MUST provide 2-3 extra relevant tool IDs in the "suggestions" array that could help the user further.
+    - Example: User wants a "Legal Notice for non-payment" -> intent: legal_notice_generator, suggestions: ["legal_evidence_checker", "legal_case_predictor", "legal_strategy_engine"].
+    - Example: User asks "Is this contract safe?" -> intent: legal_contract_analyzer, suggestions: ["legal_clause_scanner", "legal_clause_rewriter"].
+11. estimated_credits = sum of creditCost for all tools in the pipeline.
 
 ## Tool Credit Costs (for estimated_credits calculation)
 - normal_chat: 0
+- legal_free_chat: 0
 - text_to_image: 60
 - image_edit: 60
 - text_to_video: 300 (base, 5 sec fast model 1080p)
@@ -57,6 +62,20 @@ ${toolList}
 - file_analysis: 5
 - file_conversion: 15
 - knowledge_base: 10
+- legal_draft_maker: 100
+- legal_nda_generator: 80
+- legal_contract_analyzer: 150
+- legal_case_predictor: 200
+- legal_evidence_checker: 120
+- legal_notice_generator: 90
+- legal_affidavit_generator: 85
+- legal_clause_scanner: 110
+- legal_clause_rewriter: 75
+- legal_strategy_engine: 180
+- legal_research_assistant: 130
+- legal_timeline_generator: 95
+- legal_compliance_checker: 140
+- legal_law_comparator: 160
 
 ## Output JSON Schema (return EXACTLY this structure)
 {
@@ -70,7 +89,8 @@ ${toolList}
   "clarification_question": null,
   "estimated_credits": 0,
   "detected_language": "English",
-  "frontend_mode": "string (the mode key to set in frontend, e.g. IMAGE_GEN, VIDEO_GEN, web_search, DEEP_SEARCH, CODING_HELP, FILE_CONVERSION, IMAGE_EDIT, IMAGE_TO_VIDEO, AUDIO_TALK, or NORMAL_CHAT)",
+  "frontend_mode": "string (the mode key to set in frontend)",
+  "suggestions": ["array of 2-3 relevant tool IDs for further action"],
   "metadata": {
     "suggested_duration": null,
     "suggested_model": null,

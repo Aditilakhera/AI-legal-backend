@@ -62,10 +62,15 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     if (document && (Array.isArray(document) ? document.length > 0 : document.base64Data)) toolsRequested.push('convert_document');
 
     if (req.user) {
-      try {
-        await subscriptionService.checkCredits(req.user.id, toolsRequested, req.body);
-      } catch (subError) {
-        return res.status(403).json({ success: false, code: subError.message === "PREMIUM_RESTRICTED" ? "PREMIUM_ONLY" : "OUT_OF_CREDITS", message: subError.message });
+      // Early Admin Bypass
+      if (req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com') {
+        console.log(`[Admin-Bypass] Granting immediate access to admin@uwo24.com`);
+      } else {
+        try {
+          await subscriptionService.checkCredits(req.user.id || req.user._id, toolsRequested, req.body);
+        } catch (subError) {
+          return res.status(403).json({ success: false, code: subError.message === "PREMIUM_RESTRICTED" ? "PREMIUM_ONLY" : "OUT_OF_CREDITS", message: subError.message });
+        }
       }
     }
 
@@ -184,7 +189,13 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       await session.save();
     }
 
-    if (req.user) await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId, req.body);
+    const finalUserId = req.user?.id || req.user?._id;
+    if (finalUserId) {
+        // Skip deduction for admin
+        if (!(req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com')) {
+            await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body);
+        }
+    }
 
     if (session) {
         finalResponse.title = session.title;
