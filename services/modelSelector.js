@@ -25,7 +25,7 @@ export const selectImageModel = (requestedModelId, quality = 'fast', isPremium =
     };
 
     // If a valid model was explicitly selected, respect it
-    const knownModels = ['imagen-3.0-generate-001', 'imagen-3.0-generate-002', 'imagen-4.0-ultra-generate-001', 'gemini-2.5-flash-image'];
+    const knownModels = ['imagen-3.0-generate-001', 'imagen-3.0-generate-002', 'imagen-4.0-ultra-generate-001', 'gemini-1.5-pro'];
     if (requestedModelId && knownModels.includes(requestedModelId)) {
         // Restrict ultra to premium users
         if (requestedModelId === 'imagen-4.0-ultra-generate-001' && !isPremium) {

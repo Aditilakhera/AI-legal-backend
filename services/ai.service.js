@@ -241,6 +241,7 @@ ProjectRoot/
             let ragContext = null;
             let rewrittenQuery = message;
             let hasCompanyKeyword = false;
+            let needsRAG = false;
 
             const manualCorpusId = process.env.VERTEX_RAG_CORPUS_ID;
             if (docCount > 0 || manualCorpusId) {
@@ -254,8 +255,6 @@ ProjectRoot/
                 const startsWithGeneral = generalPhrases.some(p => lowerMsg.startsWith(p));
                 
                 logger.info(`[RAG-Logic] Msg: "${lowerMsg}" | hasKeyword: ${hasCompanyKeyword} | startsGen: ${startsWithGeneral}`);
-
-                let needsRAG = false;
 
                 if (mode === 'LEGAL_TOOLKIT' || legalInstruction) {
                     needsRAG = true;
