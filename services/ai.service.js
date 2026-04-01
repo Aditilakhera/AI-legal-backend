@@ -229,8 +229,19 @@ ProjectRoot/
             // Memory save handled at end
         } else if ((activeDocContent && activeDocContent.length > 0) || (images && images.length > 0) || (documents && documents.length > 0)) {
             // PRIORITY 1: Chat-Uploaded Document / Images
+            
+            // --- NEW: Legal Context Merging ---
+            let combinedContext = null;
+            if (mode === 'LEGAL_TOOLKIT') {
+                logger.info(`[LegalToolkit] Merging Case Context and RAG for Priority Rule.`);
+                const rewrittenQuery = await vertexService.rewriteQuery(message);
+                const ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, 'LEGAL');
+                
+                combinedContext = `📄 CASE CONTEXT (PRIMARY):\n${activeDocContent || "Refer to attached file contents."}\n\n📚 LEGAL KNOWLEDGE (RAG - REFERENCE):\n${ragContext?.text || "No relevant legal references found."}`;
+            }
+
             const promptWithMemory = buildMemoryPrompt(message);
-            const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
+            const vertexResponse = await vertexService.askVertex(promptWithMemory, combinedContext || activeDocContent, {
                 systemInstruction: dynamicSystemInstruction, 
                 mode, 
                 images, 
@@ -338,7 +349,12 @@ ProjectRoot/
                     ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                     : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
-                const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext?.text, { 
+                // --- NEW: Unified Context Labeling for RAG-Only ---
+                const labeledRagContext = (mode === 'LEGAL_TOOLKIT')
+                    ? `📄 CASE CONTEXT: No specific document uploaded. Relying on legal principles.\n\n📚 LEGAL KNOWLEDGE (RAG):\n${ragContext?.text}`
+                    : ragContext?.text;
+
+                const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, { 
                     userName, 
                     systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
                     mode: 'RAG' 

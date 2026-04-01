@@ -200,9 +200,16 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
 
         // 🔥 STEP 2: FORCE TOOL MODE (ALIGNED WITH DRAFT-FIRST WORKFLOW)
         const isArgumentBuilder = toolName === 'legal_argument_builder';
-        const enforcedMessage = isArgumentBuilder 
-            ? `🚨 TOOL MODE ACTIVE: ${toolName}\n\nSTRICT INSTRUCTIONS:\n- DO NOT generate a PREVIEW DRAFT.\n- DO NOT ask for MISSING DETAILS.\n- Provide the final structured arguments directly.\n\nUser Request:\n${message}`
-            : `🚨 TOOL MODE ACTIVE: ${toolName}\n\nSTRICT INSTRUCTIONS:\n- You MUST follow the tool workflow defined in the system prompt.\n- ALWAYS generate a PREVIEW DRAFT even if some details are missing.\n- Use [Placeholders] for any missing information.\n- Provide the list of missing details AFTER the draft.\n\nUser Request:\n${message}`;
+        const enforcedMessage = `🚨 TOOL MODE: ${toolName}
+
+### 🎯 TASK:
+${message}
+
+### INSTRUCTIONS:
+- Follow the vertical report structure defined in your rules.
+- Prioritize Uploaded Document (CASE CONTEXT).
+- Use Legal Knowledge (RAG) for references.
+`;
 
         logger.info(`[LegalToolkit] Tool: ${toolName} | User: ${req.user?._id}`);
 
@@ -231,6 +238,12 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
         // 🧪 SAFETY: Strip any legacy disclaimers if they appear at the top from model hallucinations
         const disclaimerRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE):.*?\n+/i;
         finalReply = finalReply.replace(disclaimerRegex, '').trim();
+
+        // 🏷️ ENSURE TOOL TAG EXISTS (UI FIX)
+        if (!finalReply.startsWith('**[ACTIVE TOOL:')) {
+            const toolDisplayName = tool.name || toolName;
+            finalReply = `**[ACTIVE TOOL: ${toolDisplayName}]**\n\n` + finalReply;
+        }
 
         // 🔗 ATTACH CENTRAL DISCLAIMER AT THE VERY BOTTOM
         finalReply = finalReply + '\n\n' + LEGAL_DISCLAIMER;
