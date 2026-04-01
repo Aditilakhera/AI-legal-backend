@@ -441,6 +441,21 @@ export const TOOL_REGISTRY = {
         isInternal: false,
         emoji: '↔️',
         modeKey: 'LEGAL_TOOLKIT'
+    },
+    legal_argument_builder: {
+        name: 'Argument Builder',
+        description: 'Generate structured, courtroom-ready legal arguments',
+        inputs: ['text'],
+        outputs: ['text'],
+        handler: 'legalToolkitRoutes',
+        endpoint: '/api/legal-toolkit/execute',
+        creditCost: 250,
+        isPremium: true,
+        requiresAssets: false,
+        dependencies: [],
+        isInternal: false,
+        emoji: '🏛️',
+        modeKey: 'LEGAL_TOOLKIT'
     }
 };
 

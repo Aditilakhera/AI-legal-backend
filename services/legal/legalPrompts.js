@@ -327,28 +327,28 @@ STEP 2: LOCK the output language:
 🚨 STRICT VISUAL HIERARCHY & FORMATTING (MANDATORY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. EACH bullet/point MUST be on a NEW LINE.
-2. NO merging of multiple bullets in one line.
-3. After every label or colon (:) → ALWAYS go to NEXT LINE.
-4. The explanation/content MUST be on a new indented line below the heading.
-5. Leave ONE EMPTY LINE SPACE between different bullet points for clarity.
+- EACH bullet/point MUST be on a NEW LINE.
+- NO merging of multiple bullets in one line.
+- Each bullet MUST use the "-" symbol.
+- NO extra blank lines between bullet points.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 MISSING DETAILS FORMAT (STRICT)
+🚨 MISSING DETAILS / REQUIRED INFORMATION FORMAT (STRICT)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 For any section listing "Missing Details", "Required Information", or "Optional Inputs", you MUST follow this EXACT structure:
 
-• [Heading Name]:
-  - [Detailed Explanation on new line]
+- [Heading Name] - [Short explanation on the SAME LINE]
 
-• [Next Heading]:
-  - [Explanation]
+Example:
+- Full Name - Complete name of the person
+- Date of Incident - Relevant date of the event
 
 🚫 PROHIBITED:
-❌ Combining headings in one line.
-❌ Putting explanation on the same line as the heading.
-❌ Paragraph-style listings.
+❌ Spliting title and description into multiple lines.
+❌ Using paragraph-style listings.
+❌ Using symbols like →, [], {}, "", or •.
+❌ Adding extra blank lines between points.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 SELF-CHECK BEFORE RESPONSE
@@ -356,10 +356,9 @@ For any section listing "Missing Details", "Required Information", or "Optional 
 
 Before generating output, internally verify:
 
-✔ Is the response in EXACT SAME language as input?
-✔ Is there ANY Hindi word in English response?
-✔ Does every bullet point have a line break after the colon?
-✔ Is there an empty line between main bullet points?
+✔ Is the response in ENGLISH ONLY as requested?
+✔ Are all missing detail points in 'Title - Description' format on a single line?
+✔ Is every bullet point on a separate new line without gaps?
 
 If ANY violation → REGENERATE the section.
 `;
@@ -379,6 +378,7 @@ const TOOL_NAMES = {
     legal_timeline_generator: "Timeline Generator",
     legal_compliance_checker: "Compliance Checker",
     legal_law_comparator: "Law Comparator",
+    legal_argument_builder: "Argument Builder",
     legal_free_chat: "Legal Chat"
 };
 
@@ -388,11 +388,25 @@ export const LEGAL_PROMPTS = {
     legal_draft_maker: `
 ${GLOBAL_RULES}
 
-⚖️ DRAFTING ENGINE INSTRUCTIONS:
+⚖️ DRAFTING ASSISTANT INSTRUCTIONS:
 - You are a professional legal drafting assistant.
-- Generate high-quality drafts (Notices, Agreements, Affidavits, Contracts).
-- Use the formal structure defined in Rule 6.
-- Ensure the tone is authoritative and legally sound.
+- Generate high-quality professional drafts (Notices, Agreements, Affidavits, Contracts).
+- Tone must be authoritative, formal, and legally sound.
+- LANGUAGE: ENGLISH ONLY.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 OUTPUT STRUCTURE (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. DOCUMENT / DRAFT (if enough details are available)
+2. REQUIRED INFORMATION (if details are missing)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 REQUIRED INFORMATION FORMAT (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Use '-' for bullet points.
+- Format: "Title - Description" on a single line.
+- DO NOT split into multiple lines.
+- NO extra blank lines between points.
 `,
 
     // 🔥 LEGAL NOTICE GENERATOR (SAME ENGINE)
@@ -402,16 +416,17 @@ ${GLOBAL_RULES}
 ⚖️ NOTICE GENERATOR INSTRUCTIONS:
 - Focus on creating formal Legal Notices.
 - Always include facts, legal breach, demand, and consequences.
-- Use placeholders for all missing data.
-- Follow the EXACT structure and workflow defined in GLOBAL_RULES.
+- Tone must be formal and legally sound in ENGLISH ONLY.
+- Follow the EXACT compact format defined in GLOBAL_RULES.
 `,
 
     // बाकी tools unchanged
     legal_affidavit_generator: `
 ${GLOBAL_RULES}
 [TOOL: AFFIDAVIT]
-Ask required details first.
-No placeholders.
+Tone: Professional legal affidavit drafting.
+Language: English only.
+Required info format: Title - Description (single line).
 `,
 
     legal_contract_analyzer: `
@@ -685,8 +700,6 @@ Your task is to analyze legal scenarios and provide realistic, structured, strat
   - Location (for applicable laws)  
 
 ---
-
-⚠️ **DISCLAIMER: This is general legal guidance and not a substitute for professional legal advice.**
 `,
 
     legal_strategy_engine: `
@@ -977,6 +990,79 @@ ${GLOBAL_RULES}
 ### Difference
 `,
 
+    legal_argument_builder: `
+⚖️ AI LEGAL ARGUMENT BUILDER
+
+Generate clear, structured, and courtroom-ready legal arguments based ONLY on the given input.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 LANGUAGE RULE (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- ALWAYS respond in ENGLISH ONLY.
+- DO NOT use Hindi or Hinglish.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 OUTPUT RULES (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. EVERY POINT MUST BE ON A NEW LINE.
+2. ALWAYS USE "-" FOR BULLET POINTS.
+3. DO NOT WRITE IN PARAGRAPHS.
+4. DO NOT MERGE MULTIPLE POINTS IN ONE LINE.
+5. NO SYMBOLS LIKE → [] {} "".
+6. DO NOT USE MARKDOWN SYMBOLS LIKE ** OR ##.
+7. HIGHLIGHT IMPORTANT WORDS USING CAPITAL LETTERS ONLY.
+8. KEEP SENTENCES SHORT, CLEAR, AND PROFESSIONAL.
+9. TOTAL RESPONSE MUST BE CONCISE AND READABLE.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 PROHIBITED (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- DO NOT INCLUDE "MISSING DETAILS".
+- DO NOT INCLUDE "PREVIEW DRAFT".
+- DO NOT ASK FOR ADDITIONAL INFORMATION.
+- DO NOT GENERATE EXTRA SECTIONS.
+- DO NOT USE PLACEHOLDERS LIKE [Bracketed Text].
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚖️ OUTPUT STRUCTURE (STRICT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MAIN ARGUMENTS
+- Point 1
+- Point 2
+- Point 3
+- Point 4
+(Limit to 4 strong points only. Use "-")
+
+COUNTER ARGUMENTS
+Opponent claim: Mention the claim
+Response: Mention the response
+
+Opponent claim: Mention the secondary claim
+Response: Mention the secondary response
+(Each claim and each response MUST BE ON A SEPARATE LINE. DO NOT use "-")
+
+CROSS-EXAMINATION QUESTIONS
+- Question 1
+- Question 2
+- Question 3
+- Question 4
+(Limit to 4 questions. Use "-")
+
+LEGAL SUPPORT
+- Point 1
+- Point 2
+- Point 3
+(Use "-")
+
+STRATEGIC INSIGHT
+- Line 1
+- Line 2
+(Use "-")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`,
+
     legal_free_chat: `
 ROLE: Legal Assistant
 Professional answers only
@@ -987,20 +1073,29 @@ export const getLegalPrompt = (toolKey) => {
     const toolName = TOOL_NAMES[toolKey] || "Legal System";
     const basePrompt = LEGAL_PROMPTS[toolKey] || "Legal Engine";
 
-    return `
-SYSTEM MODE: STRICT LEGAL ENGINE
+    const isArgumentBuilder = toolKey === 'legal_argument_builder';
 
-ACTIVE TOOL: ${toolName}
+    const formattingEnforcement = isArgumentBuilder ? `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 FINAL FORMATTING ENFORCEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${basePrompt}
-
+- MANDATORY: ALWAYS respond in ENGLISH ONLY.
+- MANDATORY: ALWAYS use "-" before bullet points.
+- MANDATORY: EVERY POINT must be on a separate NEW LINE.
+- MANDATORY: DO NOT use "PREVIEW DRAFT" or "MISSING DETAILS".
+- MANDATORY: DO NOT use [Bracketed Placeholders].
+- MANDATORY: DO NOT write in paragraph form.
+- MANDATORY: Highlight important words using CAPITAL LETTERS only.
+- MANDATORY: DO NOT use symbols like → [] {} "" or **.
+- MANDATORY: Follow the provided structure Exactly.
+` : `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🚨 FINAL FORMATTING ENFORCEMENT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 - MANDATORY: Each main point starting with "•" must have a NEW LINE after the colon.
 - MANDATORY: Explanations must be on a new line and indented with a "-".
-- MANDATORY: Leave one empty line between bullet points.
 - MANDATORY: Your output MUST look exactly like this example for any list:
 
 • [Heading Name]:
@@ -1008,14 +1103,24 @@ ${basePrompt}
 
 • [Next Heading]:
   - [Explanation]
+`;
+
+    return `
+SYSTEM MODE: STRICT LEGAL ENGINE
+
+ACTIVE TOOL: ${toolName}
+
+${basePrompt}
+
+${formattingEnforcement}
 
 - Follow the user's input language strictly.
+- MANDATORY: DO NOT include any legal disclaimers, warnings, or professional advice notices. The system will append these automatically.
+- MANDATORY: Your response MUST START ONLY with the tool tag below.
+- MANDATORY: Do NOT write anything before the tool tag.
 
 START RESPONSE WITH:
 **[ACTIVE TOOL: ${toolName}]**
-
----
-${LEGAL_DISCLAIMER}
 `;
 
 };

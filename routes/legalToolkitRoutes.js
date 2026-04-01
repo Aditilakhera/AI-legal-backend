@@ -199,18 +199,10 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
         const systemPrompt = getLegalPrompt(toolName);
 
         // 🔥 STEP 2: FORCE TOOL MODE (ALIGNED WITH DRAFT-FIRST WORKFLOW)
-        const enforcedMessage = `
-🚨 TOOL MODE ACTIVE: ${toolName}
-
-STRICT INSTRUCTIONS:
-- You MUST follow the tool workflow defined in the system prompt.
-- ALWAYS generate a PREVIEW DRAFT even if some details are missing.
-- Use [Placeholders] for any missing information.
-- Provide the list of missing details AFTER the draft.
-
-User Request:
-${message}
-`;
+        const isArgumentBuilder = toolName === 'legal_argument_builder';
+        const enforcedMessage = isArgumentBuilder 
+            ? `🚨 TOOL MODE ACTIVE: ${toolName}\n\nSTRICT INSTRUCTIONS:\n- DO NOT generate a PREVIEW DRAFT.\n- DO NOT ask for MISSING DETAILS.\n- Provide the final structured arguments directly.\n\nUser Request:\n${message}`
+            : `🚨 TOOL MODE ACTIVE: ${toolName}\n\nSTRICT INSTRUCTIONS:\n- You MUST follow the tool workflow defined in the system prompt.\n- ALWAYS generate a PREVIEW DRAFT even if some details are missing.\n- Use [Placeholders] for any missing information.\n- Provide the list of missing details AFTER the draft.\n\nUser Request:\n${message}`;
 
         logger.info(`[LegalToolkit] Tool: ${toolName} | User: ${req.user?._id}`);
 
@@ -233,8 +225,15 @@ ${message}
             throw new Error('Empty response from AI');
         }
 
-        // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG
-        const finalReply = responseData.reply.trim();
+        // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG + DISCLAIMER
+        let finalReply = responseData.reply.trim();
+        
+        // 🧪 SAFETY: Strip any legacy disclaimers if they appear at the top from model hallucinations
+        const disclaimerRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE):.*?\n+/i;
+        finalReply = finalReply.replace(disclaimerRegex, '').trim();
+
+        // 🔗 ATTACH CENTRAL DISCLAIMER AT THE VERY BOTTOM
+        finalReply = finalReply + '\n\n' + LEGAL_DISCLAIMER;
 
 
         return res.json({
