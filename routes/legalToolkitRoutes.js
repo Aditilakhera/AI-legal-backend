@@ -198,15 +198,15 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
         // 🔥 STEP 1: Get STRICT TOOL PROMPT from Centralized Service
         const systemPrompt = getLegalPrompt(toolName);
 
-        // 🔥 STEP 2: FORCE TOOL MODE (STRICTER ENFORCEMENT)
+        // 🔥 STEP 2: FORCE TOOL MODE (ALIGNED WITH DRAFT-FIRST WORKFLOW)
         const enforcedMessage = `
 🚨 TOOL MODE ACTIVE: ${toolName}
 
 STRICT INSTRUCTIONS:
-- You MUST follow tool workflow.
-- DO NOT provide a draft or final answer until all mandatory questions are answered by the user.
-- IF detail is missing, ONLY ask for missing data.
-- NEVER use placeholders like [Your Name].
+- You MUST follow the tool workflow defined in the system prompt.
+- ALWAYS generate a PREVIEW DRAFT even if some details are missing.
+- Use [Placeholders] for any missing information.
+- Provide the list of missing details AFTER the draft.
 
 User Request:
 ${message}
@@ -220,7 +220,7 @@ ${message}
             enforcedMessage,
             systemPrompt,
             attachments,
-            'English',
+            null, // Auto-detect language (English/Hindi/Hinglish)
             null,
             'LEGAL_TOOLKIT',
             sessionId,
