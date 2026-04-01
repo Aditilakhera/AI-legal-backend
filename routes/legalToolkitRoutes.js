@@ -223,15 +223,19 @@ ${message}
             'English',
             null,
             'LEGAL_TOOLKIT',
-            null
+            sessionId,
+            null, // projectId
+            toolName
         );
+
 
         if (!responseData || !responseData.reply) {
             throw new Error('Empty response from AI');
         }
 
         // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG
-        const finalReply = responseData.reply.trim() + '\n\n' + LEGAL_DISCLAIMER;
+        const finalReply = responseData.reply.trim();
+
 
         return res.json({
             success: true,

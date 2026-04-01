@@ -14,7 +14,8 @@ export const generateChatResponse = async (
     abortSignal = null,
     mode = 'GENERAL',
     sessionId = null,
-    projectId = null
+    projectId = null,
+    toolName = null
 ) => {
     // Transform attachments to the format expected by aiService.chat
     const images = [];
@@ -52,8 +53,10 @@ export const generateChatResponse = async (
         language,
         conversationId: sessionId,
         projectId,
-        history
+        history,
+        toolName
     });
+
 
     // Return the response in the expected format (legalToolkitRoutes expects responseData.reply)
     return {

@@ -17,7 +17,7 @@ import userIntelligenceService from './userIntelligence.service.js';
 import * as configService from './configService.js';
 import { detectLanguage } from '../utils/languageDetector.js';
 import { classifyIntent } from './intent/intentClassifier.js';
-import { getLegalPrompt } from './legal/legalPrompts.js';
+import { getLegalPrompt, LEGAL_DISCLAIMER } from './legal/legalPrompts.js';
 
 
 // Real RAG Storage (MongoDB Atlas)
@@ -81,7 +81,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName } = options;
 
         // --- LANGUAGE DETECTION ---
         const detected = detectLanguage(message);
@@ -156,7 +156,10 @@ ProjectRoot/
 `;
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
+        } else if (mode === 'LEGAL_TOOLKIT') {
+            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. Always add a disclaimer that this is not a substitute for professional legal advice.";
         } else {
+
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
         }
 
@@ -282,12 +285,11 @@ ProjectRoot/
                     
                     ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, targetCategory);
                     
-                    // Step 3: Strict Isolation Rule
-                    // If RAG was triggered (needsRAG=true) but no content was found for the category,
-                    // we must not fallback to general model if it was a legal request that failed.
+                    // Step 3: Strict Isolation Rule (Relaxed: allow fallback if no context found)
                     if (needsRAG && !ragContext) {
-                        return "No relevant data found in selected category";
+                        logger.warn(`[RAG-Logic] No context found for ${targetCategory}. Allowing fallback to general model.`);
                     }
+
                     
                     // --- Step 3: Logging (Optional but requested) ---
                     try {
@@ -312,10 +314,9 @@ ProjectRoot/
 
             // Step 4: Final Processing
             if (needsRAG || (ragContext && ragContext.text)) {
-                // If it was a forced RAG (e.g. Legal tool) and no context was found, we MUST return the error msg.
-                if (needsRAG && !ragContext) {
-                    finalResponseData = { text: "No relevant data found in selected category", isRealTime: false, sources: [], mode: 'RAG_ERROR' };
-                } else if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
+                // If context is missing but RAG was needed, we still proceed to provide a general AI response.
+                if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
+
                     if (hasCompanyKeyword) {
                         ragContext = ragContext || {};
                         ragContext.sources = [{
