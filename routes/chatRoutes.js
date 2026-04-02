@@ -228,7 +228,7 @@ router.get('/', optionalVerifyToken, identifyGuest, async (req, res) => {
     if (userId) {
       const query = { userId: userId };
       if (projectId) query.projectId = projectId;
-      else query.projectId = { $exists: false }; // Or handle default project logic
+      else query.$or = [{ projectId: { $exists: false } }, { projectId: null }];
 
       sessions = await ChatSession.find(query)
         .select('sessionId title lastModified userId projectId')
