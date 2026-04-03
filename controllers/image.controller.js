@@ -3,7 +3,7 @@ import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
 import { GoogleGenAI, Modality } from '@google/genai';
-import { refineAdvancedEditPrompt } from '../utils/imagePromptController.js';
+import { refineAdvancedEditPrompt, generateFollowUpPrompts } from '../utils/imagePromptController.js';
 import { getConfig } from '../services/configService.js';
 import { subscriptionService } from '../services/subscriptionService.js';
 import { selectImageModel } from '../services/modelSelector.js';
@@ -301,6 +301,9 @@ export const generateImage = async (req, res, next) => {
         const imageUrl = pipelineResult.url;
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
 
+        // 3. Generate follow-up suggestions based on BOTH prompt and the generated image
+        const followUpPrompts = await generateFollowUpPrompts(prompt, imageUrl).catch(() => []);
+
         // 💰 Deduct credits on successful output
         if (req.creditMeta && req.creditMeta.cost > 0) {
             await subscriptionService.deductCreditsFromMeta(req.creditMeta);
@@ -310,7 +313,8 @@ export const generateImage = async (req, res, next) => {
             success: true, 
             data: imageUrl,
             refinedPrompt: pipelineResult.finalPrompt,
-            modelUsed: pipelineResult.modelId
+            modelUsed: pipelineResult.modelId,
+            followUpPrompts
         });
     } catch (error) {
         logger?.error
@@ -369,12 +373,15 @@ export const editImage = async (req, res, next) => {
         const modifiedImageUrl = await generateImageFromPrompt(finalPrompt, imageToProcess, aspectRatio, modelId, suggestedEditMode);
         if (!modifiedImageUrl) throw new Error('Failed to retrieve modified image URL.');
 
+        // Generate follow-up suggestions based on BOTH the edit prompt and the modified image
+        const followUpPrompts = await generateFollowUpPrompts(finalPrompt, modifiedImageUrl).catch(() => []);
+
         // 💰 Deduct credits on successful output
         if (req.creditMeta && req.creditMeta.cost > 0) {
             await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
-        res.status(200).json({ success: true, data: modifiedImageUrl });
+        res.status(200).json({ success: true, data: modifiedImageUrl, followUpPrompts });
     } catch (error) {
         console.error(`[Image Editing] Error: ${error.message}`);
         res.status(500).json({ success: false, message: `Image editing failed: ${error.message}` });
