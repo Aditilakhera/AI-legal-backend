@@ -170,7 +170,11 @@ ProjectRoot/
             const chatSummary = (combinedHistory || []).slice(-3).map(m => `${m.role}: ${m.content || m.text}`).join(' | ');
             const classification = await classifyIntent(message, images || documents || [], chatSummary);
             
-            if (classification && classification.intent && classification.intent.startsWith('legal_')) {
+            // Only apply specialized prompt if we aren't ALREADY in LEGAL_TOOLKIT mode with this tool
+            // Or if we came from generic chat and discovered a legal intent.
+            const isRedundant = mode === 'LEGAL_TOOLKIT' && (toolName === classification?.intent);
+
+            if (!isRedundant && classification && classification.intent && classification.intent.startsWith('legal_')) {
                 logger.info(`[AI-Service] Legal Intent Detected: ${classification.intent}. Applying specialized prompts.`);
                 legalInstruction = `\n\n### SPECIALIZED LEGAL TOOL: ${classification.intent}\n${getLegalPrompt(classification.intent)}`;
             }
@@ -438,12 +442,26 @@ ProjectRoot/
         if (finalResponseData.text && (mode === 'LEGAL_TOOLKIT' || legalInstruction)) {
             let cleanText = finalResponseData.text.trim();
 
-            // Strip legacy hallucinations at top
-            const disclaimerRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE):.*?\n+/i;
-            cleanText = cleanText.replace(disclaimerRegex, '').trim();
+            // 1. Strip redundant disclaimers/hallucinated warnings anywhere in text (case-insensitive)
+            // This catches "DISCLAIMER:", "NOTE:", "⚠️", etc. at start or end
+            const disclaimerKeywords = [
+                "professional legal advice",
+                "consult a qualified lawyer",
+                "not a substitute for legal advice",
+                "general legal guidance",
+                "legal disclaimer"
+            ];
 
-            // Append centralized disclaimer if not already present
-            if (!cleanText.includes("professional legal advice") && LEGAL_DISCLAIMER) {
+            // If the AI generated its own disclaimer, use that and don't append another
+            const hasExistingDisclaimer = disclaimerKeywords.some(key => cleanText.toLowerCase().includes(key));
+
+            // 2. Strip standard hallucinated headers if they appear at the top
+            const headerHallucinationRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE|WARNING):.*?\n+/i;
+            cleanText = cleanText.replace(headerHallucinationRegex, '').trim();
+
+            // 3. Append centralized disclaimer ONLY if no disclaimer was found in the text
+            if (!hasExistingDisclaimer && LEGAL_DISCLAIMER) {
+                // Ensure there's a clean break
                 cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
             }
             
