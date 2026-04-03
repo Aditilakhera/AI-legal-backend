@@ -232,22 +232,14 @@ ${message}
             throw new Error('Empty response from AI');
         }
 
-        // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG + DISCLAIMER
+        // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG
         let finalReply = responseData.reply.trim();
         
-        // 🧪 SAFETY: Strip any legacy disclaimers if they appear at the top from model hallucinations
-        const disclaimerRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE):.*?\n+/i;
-        finalReply = finalReply.replace(disclaimerRegex, '').trim();
-
         // 🏷️ ENSURE TOOL TAG EXISTS (UI FIX)
         if (!finalReply.startsWith('**[ACTIVE TOOL:')) {
             const toolDisplayName = tool.name || toolName;
             finalReply = `**[ACTIVE TOOL: ${toolDisplayName}]**\n\n` + finalReply;
         }
-
-        // 🔗 ATTACH CENTRAL DISCLAIMER AT THE VERY BOTTOM
-        finalReply = finalReply + '\n\n' + LEGAL_DISCLAIMER;
-
 
         return res.json({
             success: true,

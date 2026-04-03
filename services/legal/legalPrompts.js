@@ -1119,9 +1119,6 @@ export const getLegalPrompt = (toolKey) => {
 
 ### ✅ Final Recommendation
 - [Final Advice in 2-3 lines]
-
-### ⚠️ Disclaimer
-- This is general legal guidance and not a substitute for professional legal advice.
 `;
 
     return `

@@ -157,7 +157,7 @@ ProjectRoot/
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
         } else if (mode === 'LEGAL_TOOLKIT') {
-            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. Always add a disclaimer that this is not a substitute for professional legal advice.";
+            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. DO NOT include any legal disclaimers, warnings, or professional advice notices. The system will append these automatically.";
         } else {
 
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
@@ -433,6 +433,23 @@ ProjectRoot/
         }
 
         finalResponseData.suggestions = suggestions;
+
+        // --- POST-PROCESSING: Handle Legal Disclaimers & Cleanup ---
+        if (finalResponseData.text && (mode === 'LEGAL_TOOLKIT' || legalInstruction)) {
+            let cleanText = finalResponseData.text.trim();
+
+            // Strip legacy hallucinations at top
+            const disclaimerRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE):.*?\n+/i;
+            cleanText = cleanText.replace(disclaimerRegex, '').trim();
+
+            // Append centralized disclaimer if not already present
+            if (!cleanText.includes("professional legal advice") && LEGAL_DISCLAIMER) {
+                cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
+            }
+            
+            finalResponseData.text = cleanText;
+        }
+
         return finalResponseData;
 
     } catch (error) {
