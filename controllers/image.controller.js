@@ -2,11 +2,22 @@ import { uploadToCloudinary } from '../services/cloudinary.service.js';
 import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
+import { GoogleGenAI, Modality } from '@google/genai';
 import { refineAdvancedEditPrompt } from '../utils/imagePromptController.js';
 import { getConfig } from '../services/configService.js';
 import { subscriptionService } from '../services/subscriptionService.js';
 import { selectImageModel } from '../services/modelSelector.js';
 import { executeImagePipeline } from '../services/generationPipeline.js';
+
+// ------------------------------------------------------------------
+// @google/genai SDK client (Vertex AI mode)
+// Used for gemini-2.5-flash-image edits via the official GenAI SDK
+// ------------------------------------------------------------------
+const getGenAIClient = () => new GoogleGenAI({
+    vertexai: true,
+    project: process.env.GCP_PROJECT_ID,
+    location: process.env.GCP_LOCATION || 'us-central1',
+});
 
 // -------------------------------------------------------------------
 // Smart editMode detection for imagen-3.0-capability-001
@@ -55,133 +66,176 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         const projectId = await auth.getProjectId();
         const { token } = await client.getAccessToken();
         const location = 'us-central1';
+        // -------------------------------------------------------
+        // callGeminiSDK — uses @google/genai SDK (gemini-2.5-flash-image)
+        // -------------------------------------------------------
+        const callGeminiSDK = async (modelId) => {
+            console.log(`[GENAI SDK] Calling ${modelId} via @google/genai SDK...`);
+
+            const defaultInst = `You are an advanced AI image editor. The user has uploaded a reference image and provided specific transformation instructions.
+
+YOUR TASK:
+- Carefully follow ALL of the user's instructions to transform, stylize, or modify the image.
+- You MUST generate a new image that matches the user's described scene while using the uploaded image as a "face/identity reference" for the subject.
+- Apply the requested style, outfit, background, pose, and composition described in the prompt.
+- PRESERVE the person's face and likeness from the reference image but apply everything else as instructed.
+- If the user requests a completely new background or scene, generate it as described.
+- TEXT ACCURACY: render any text CHARACTER-BY-CHARACTER.
+- Output a high-quality, photorealistic result unless a specific style is requested.
+
+IMPORTANT: DO NOT just return the original image unchanged. You MUST apply the transformation.`;
+
+            const systemInstruction = getConfig('IMAGE_EDIT_INSTRUCTIONS', defaultInst);
+            const editPrompt = originalImage
+                ? `${systemInstruction}\n\n=== USER TRANSFORMATION REQUEST ===\n${prompt}\n\nNow generate the transformed image based on the instructions above and the reference image provided.`
+                : prompt;
+
+            // Build content parts
+            const parts = [];
+
+            // Attach source image if editing
+            if (originalImage) {
+                let base64Data = typeof originalImage === 'string'
+                    ? originalImage
+                    : (originalImage.base64Data || originalImage.image || originalImage.data);
+
+                if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
+                    base64Data = base64Data.split('base64,')[1];
+                }
+
+                parts.push({
+                    inlineData: {
+                        mimeType: 'image/png',
+                        data: base64Data,
+                    },
+                });
+            }
+
+            // Add text instruction after image
+            parts.push({ text: editPrompt });
+
+            const genaiClient = getGenAIClient();
+            const sdkResponse = await genaiClient.models.generateContent({
+                model: modelId,
+                contents: [{ role: 'user', parts }],
+                config: {
+                    responseModalities: [Modality.TEXT, Modality.IMAGE],
+                },
+            });
+
+            return sdkResponse;
+        };
+
+        // -------------------------------------------------------
+        // callVertex — used for Imagen models (non-Gemini) via REST
+        // -------------------------------------------------------
         const callVertex = async (modelId) => {
-            const isGemini = modelId.startsWith('gemini-');
-            const method = isGemini ? 'generateContent' : 'predict';
+            const method = 'predict';
             const endpoint =
                 `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}` +
                 `/locations/${location}/publishers/google/models/${modelId}:${method}`;
 
-            console.log(`[VERTEX] Calling ${modelId} (${originalImage ? 'edit' : 'generate'}) via ${method}...`);
+            console.log(`[VERTEX] Calling ${modelId} (Imagen) via REST predict...`);
 
-            let payload;
-            if (isGemini) {
-                // Gemini "Nano Banana" Style Structure
-                let finalPrompt = prompt;
-                if (originalImage) {
-            const defaultInst = `You are a high-precision IMAGE MODIFYING assistant. 
-1. DO NOT REGENERATE the image. 
-2. PRESERVE EVERY PIXEL that is not explicitly requested to change. 
-3. KEEP THE ORIGINAL background, subjects, composition, colors, and layout. 
-4. TEXT ACCURACY: You MUST render text CHARACTER-BY-CHARACTER. DO NOT OMIT ANY LETTERS.
-5. ERASE & REPLACE: first completely remove any existing text or objects being changed.
-Return only the modified image.`;
-                    const systemInstruction = getConfig('IMAGE_EDIT_INSTRUCTIONS', defaultInst);
-                    finalPrompt = `${systemInstruction}\n\nACTUAL USER REQUEST: ${prompt}`;
+            let instanceStruct = { prompt };
+            let paramStruct = {
+                sampleCount: 1,
+                guidanceScale: originalImage ? 100.0 : 25.0,
+                personGeneration: 'allow_all',
+                negativePrompt: "misspelled text, garbled letters, overlapping characters, blurry text, extra characters"
+            };
+
+            if (originalImage) {
+                let base64Data = typeof originalImage === 'string'
+                    ? originalImage
+                    : (originalImage.base64Data || originalImage.image || originalImage.data);
+
+                if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
+                    base64Data = base64Data.split('base64,')[1];
                 }
 
-                const parts = [{ text: finalPrompt }];
-                if (originalImage) {
-                    let base64Data = typeof originalImage === 'string'
-                        ? originalImage
-                        : (originalImage.base64Data || originalImage.image || originalImage.data);
-
-                    if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
-                        base64Data = base64Data.split('base64,')[1];
+                const rawEditMode = manualEditMode || detectEditMode(prompt);
+                instanceStruct.referenceImages = [
+                    {
+                        referenceType: 'REFERENCE_TYPE_RAW',
+                        referenceId: 1,
+                        referenceImage: { bytesBase64Encoded: base64Data }
                     }
-
-                    parts.push({
-                        inlineData: {
-                            mimeType: 'image/png',
-                            data: base64Data
-                        }
-                    });
-                }
-                payload = { contents: [{ parts }] };
-
-                // Optional: Add generation config for safety/guidance if supported by the specific model
-                payload.generationConfig = {
-                    candidateCount: 1,
-                    // guidanceScale: 25.0 // Some Gemini-image versions might use this
-                };
+                ];
+                paramStruct.editConfig = { editMode: rawEditMode };
             } else {
-                // Imagen Style Structure
-                let instanceStruct = { prompt };
-                let paramStruct = {
-                    sampleCount: 1,
-                    guidanceScale: originalImage ? 100.0 : 25.0, // High precision for edits
-                    personGeneration: 'allow_all',
-                    negativePrompt: "misspelled text, garbled letters, overlapping characters, blurry text, extra characters"
-                };
-
-                if (originalImage) {
-                    let base64Data = typeof originalImage === 'string'
-                        ? originalImage
-                        : (originalImage.base64Data || originalImage.image || originalImage.data);
-
-                    if (typeof base64Data === 'string' && base64Data.includes('base64,')) {
-                        base64Data = base64Data.split('base64,')[1];
-                    }
-
-                    const rawEditMode = manualEditMode || detectEditMode(prompt);
-                    instanceStruct.referenceImages = [
-                        {
-                            referenceType: 'REFERENCE_TYPE_RAW',
-                            referenceId: 1,
-                            referenceImage: { bytesBase64Encoded: base64Data }
-                        }
-                    ];
-                    paramStruct.editConfig = { editMode: rawEditMode };
-                } else {
-                    let vertexRatio = '1:1';
-                    if (aspectRatio === '16:9') vertexRatio = '16:9';
-                    else if (aspectRatio === '4:5') vertexRatio = '3:4';
-                    else if (aspectRatio === '4:7') vertexRatio = '9:16';
-                    paramStruct.aspectRatio = vertexRatio;
-                }
-                payload = { instances: [instanceStruct], parameters: paramStruct };
+                let vertexRatio = '1:1';
+                if (aspectRatio === '16:9') vertexRatio = '16:9';
+                else if (aspectRatio === '4:5') vertexRatio = '3:4';
+                else if (aspectRatio === '4:7') vertexRatio = '9:16';
+                paramStruct.aspectRatio = vertexRatio;
             }
 
             return axios.post(
                 endpoint,
-                payload,
+                { instances: [instanceStruct], parameters: paramStruct },
                 { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 60000 }
             );
         };
 
-        // Model selection for Editing:
-        // Use "Magic Editor" (imagen-3.0-capability-001) as primary for best text/layout editing.
-        const primaryModel = originalImage ? 'imagen-3.0-capability-001' : selectedModelId;
-        const fallbackModel = originalImage ? 'gemini-2.5-flash-image' : (selectedModelId === 'imagen-4.0-ultra-generate-001' ? 'imagen-3.0-generate-001' : 'imagen-3.0-generate-002');
+        // -------------------------------------------------------
+        // Model Routing:
+        //  - Editing  → PRIMARY: gemini-2.5-flash-image (via @google/genai SDK)
+        //               FALLBACK: imagen-3.0-capability-001 (REST, for precise inpainting)
+        //  - Generation → use selectedModelId (Imagen REST)
+        // -------------------------------------------------------
+        const GEMINI_EDIT_MODEL  = 'gemini-2.5-flash-image';
+        const IMAGEN_FALLBACK     = 'imagen-3.0-capability-001';
+        const IMAGEN_GEN_FALLBACK = selectedModelId === 'imagen-4.0-ultra-generate-001'
+            ? 'imagen-3.0-generate-001'
+            : 'imagen-3.0-generate-002';
 
-        let response;
-        let usedModel = primaryModel;
-
-        try {
-            response = await callVertex(primaryModel);
-        } catch (err) {
-            const detail = err.response?.data?.error?.message || err.message;
-            console.warn(`[VERTEX] ${primaryModel} failed: ${detail}`);
-
-            if (fallbackModel) {
-                console.warn(`[VERTEX] Trying fallback model: ${fallbackModel}`);
-                usedModel = fallbackModel;
-                response = await callVertex(fallbackModel);
-            } else {
-                throw err;
-            }
-        }
-
-        console.log(`[VERTEX RESPONSE] HTTP ${response.status} from ${usedModel}`);
-
-        // Parsing prediction based on model type
         let base64Data = null;
-        if (usedModel.startsWith('gemini-')) {
-            const candidate = response.data?.candidates?.[0];
-            const part = candidate?.content?.parts?.find(p => p.inlineData);
-            base64Data = part?.inlineData?.data;
+        let usedModel;
+
+        if (originalImage) {
+            // ---- Path A: Image EDITING via Gemini SDK ----
+            usedModel = GEMINI_EDIT_MODEL;
+            try {
+                console.log(`[GENAI SDK] Using ${GEMINI_EDIT_MODEL} for image edit...`);
+                const sdkResponse = await callGeminiSDK(GEMINI_EDIT_MODEL);
+                const candidateParts = sdkResponse?.candidates?.[0]?.content?.parts || [];
+                const imagePart = candidateParts.find(
+                    p => p.inlineData && (p.inlineData.mimeType?.startsWith('image/') || p.inlineData.data)
+                );
+                if (imagePart) {
+                    base64Data = imagePart.inlineData.data;
+                }
+                if (!base64Data) {
+                    console.warn(`[GENAI SDK] ${GEMINI_EDIT_MODEL} returned no image part — falling back to Imagen.`);
+                }
+            } catch (sdkErr) {
+                console.warn(`[GENAI SDK] ${GEMINI_EDIT_MODEL} failed: ${sdkErr.message} — falling back to Imagen.`);
+            }
+
+            // ---- Fallback: Imagen inpainting (REST) ----
+            if (!base64Data) {
+                usedModel = IMAGEN_FALLBACK;
+                console.log(`[VERTEX] Falling back to ${IMAGEN_FALLBACK} for image edit...`);
+                const fallbackResponse = await callVertex(IMAGEN_FALLBACK);
+                console.log(`[VERTEX RESPONSE] HTTP ${fallbackResponse.status} from ${usedModel}`);
+                const prediction = fallbackResponse.data?.predictions?.[0];
+                base64Data = prediction?.bytesBase64Encoded || (typeof prediction === 'string' ? prediction : null);
+            }
         } else {
-            const prediction = response.data?.predictions?.[0];
+            // ---- Path B: Image GENERATION via Imagen REST ----
+            usedModel = selectedModelId;
+            const genFallback = IMAGEN_GEN_FALLBACK;
+            let genResponse;
+            try {
+                genResponse = await callVertex(selectedModelId);
+            } catch (genErr) {
+                console.warn(`[VERTEX] ${selectedModelId} failed: ${genErr.message} — trying ${genFallback}`);
+                usedModel = genFallback;
+                genResponse = await callVertex(genFallback);
+            }
+            console.log(`[VERTEX RESPONSE] HTTP ${genResponse.status} from ${usedModel}`);
+            const prediction = genResponse.data?.predictions?.[0];
             base64Data = prediction?.bytesBase64Encoded || (typeof prediction === 'string' ? prediction : null);
         }
 
@@ -199,7 +253,7 @@ Return only the modified image.`;
             }
         }
 
-        throw new Error(`Vertex AI (${usedModel}) returned no image data.`);
+        throw new Error(`Image pipeline (${usedModel}) returned no image data.`);
 
     } catch (error) {
         const errorMsg = error.message || 'Unknown error';
