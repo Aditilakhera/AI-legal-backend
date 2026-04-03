@@ -157,7 +157,7 @@ ProjectRoot/
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
         } else if (mode === 'LEGAL_TOOLKIT') {
-            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. Always add a disclaimer that this is not a substitute for professional legal advice.";
+            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. DO NOT include any legal disclaimers, warnings, or professional advice notices. The system will append these automatically.";
         } else {
 
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
@@ -170,7 +170,11 @@ ProjectRoot/
             const chatSummary = (combinedHistory || []).slice(-3).map(m => `${m.role}: ${m.content || m.text}`).join(' | ');
             const classification = await classifyIntent(message, images || documents || [], chatSummary);
             
-            if (classification && classification.intent && classification.intent.startsWith('legal_')) {
+            // Only apply specialized prompt if we aren't ALREADY in LEGAL_TOOLKIT mode with this tool
+            // Or if we came from generic chat and discovered a legal intent.
+            const isRedundant = mode === 'LEGAL_TOOLKIT' && (toolName === classification?.intent);
+
+            if (!isRedundant && classification && classification.intent && classification.intent.startsWith('legal_')) {
                 logger.info(`[AI-Service] Legal Intent Detected: ${classification.intent}. Applying specialized prompts.`);
                 legalInstruction = `\n\n### SPECIALIZED LEGAL TOOL: ${classification.intent}\n${getLegalPrompt(classification.intent)}`;
             }
@@ -229,8 +233,19 @@ ProjectRoot/
             // Memory save handled at end
         } else if ((activeDocContent && activeDocContent.length > 0) || (images && images.length > 0) || (documents && documents.length > 0)) {
             // PRIORITY 1: Chat-Uploaded Document / Images
+            
+            // --- NEW: Legal Context Merging ---
+            let combinedContext = null;
+            if (mode === 'LEGAL_TOOLKIT') {
+                logger.info(`[LegalToolkit] Merging Case Context and RAG for Priority Rule.`);
+                const rewrittenQuery = await vertexService.rewriteQuery(message);
+                const ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, 'LEGAL');
+                
+                combinedContext = `📄 CASE CONTEXT (PRIMARY):\n${activeDocContent || "Refer to attached file contents."}\n\n📚 LEGAL KNOWLEDGE (RAG - REFERENCE):\n${ragContext?.text || "No relevant legal references found."}`;
+            }
+
             const promptWithMemory = buildMemoryPrompt(message);
-            const vertexResponse = await vertexService.askVertex(promptWithMemory, activeDocContent, {
+            const vertexResponse = await vertexService.askVertex(promptWithMemory, combinedContext || activeDocContent, {
                 systemInstruction: dynamicSystemInstruction, 
                 mode, 
                 images, 
@@ -338,7 +353,12 @@ ProjectRoot/
                     ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
                     : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
 
-                const ragResponse = await vertexService.askVertex(promptWithMemory, ragContext?.text, { 
+                // --- NEW: Unified Context Labeling for RAG-Only ---
+                const labeledRagContext = (mode === 'LEGAL_TOOLKIT')
+                    ? `📄 CASE CONTEXT: No specific document uploaded. Relying on legal principles.\n\n📚 LEGAL KNOWLEDGE (RAG):\n${ragContext?.text}`
+                    : ragContext?.text;
+
+                const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, { 
                     userName, 
                     systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
                     mode: 'RAG' 
@@ -417,6 +437,37 @@ ProjectRoot/
         }
 
         finalResponseData.suggestions = suggestions;
+
+        // --- POST-PROCESSING: Handle Legal Disclaimers & Cleanup ---
+        if (finalResponseData.text && (mode === 'LEGAL_TOOLKIT' || legalInstruction)) {
+            let cleanText = finalResponseData.text.trim();
+
+            // 1. Strip redundant disclaimers/hallucinated warnings anywhere in text (case-insensitive)
+            // This catches "DISCLAIMER:", "NOTE:", "⚠️", etc. at start or end
+            const disclaimerKeywords = [
+                "professional legal advice",
+                "consult a qualified lawyer",
+                "not a substitute for legal advice",
+                "general legal guidance",
+                "legal disclaimer"
+            ];
+
+            // If the AI generated its own disclaimer, use that and don't append another
+            const hasExistingDisclaimer = disclaimerKeywords.some(key => cleanText.toLowerCase().includes(key));
+
+            // 2. Strip standard hallucinated headers if they appear at the top
+            const headerHallucinationRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE|WARNING):.*?\n+/i;
+            cleanText = cleanText.replace(headerHallucinationRegex, '').trim();
+
+            // 3. Append centralized disclaimer ONLY if no disclaimer was found in the text
+            if (!hasExistingDisclaimer && LEGAL_DISCLAIMER) {
+                // Ensure there's a clean break
+                cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
+            }
+            
+            finalResponseData.text = cleanText;
+        }
+
         return finalResponseData;
 
     } catch (error) {
