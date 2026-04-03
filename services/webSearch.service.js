@@ -78,7 +78,8 @@ export const performSearch = async (query, userLanguage = 'English') => {
                         role: 'system',
                         content: configService.getConfig('WEB_SEARCH_RULES') + `
                         TODAY'S DATE: ${currentDate}
-                        LANGUAGE: ${targetLang}`
+                        LANGUAGE: ${targetLang}
+                        MANDATORY RULE: You MUST match the EXACT script and tongue used by the user. If the user asks in ${targetLang}, you MUST respond 100% in ${targetLang}.`
                     },
                     { role: 'user', content: query }
                 ]

@@ -142,6 +142,12 @@ export const performDeepSearch = async (query, userLanguage = 'English') => {
                 insights: 'Key Insights',
                 facts: 'Important Facts',
                 sources: 'Sources'
+            },
+            'Arabic': {
+                intro: 'نظرة عامة',
+                insights: 'أبرز الأفكار الأساسية',
+                facts: 'حقائق هامة',
+                sources: 'المصادر'
             }
         };
 
@@ -151,26 +157,25 @@ export const performDeepSearch = async (query, userLanguage = 'English') => {
         You are AISA Deep Research Agent. You have been provided with raw data from multiple sources.
         
         USER QUERY: "${query}"
-        LANGUAGE: ${userLanguage}
+        TARGET LANGUAGE: ${userLanguage}
         
         DATA:
         ${truncatedContent}
         
-        Your task is to synthesize this into a structured but natural-sounding response that feels like a conversation with an expert.
+        Your task is to synthesize this into a structured but natural-sounding response that feels like a conversation with an expert in ${userLanguage}.
         
         ### REQUIRED STRUCTURE (In ${userLanguage}):
-        1.  **${titles.intro}**: Summarize the situation naturally.
-        2.  **${titles.insights}**: Clear details extracted from the data.
-        3.  **${titles.facts}**: Precise details, names, stats.
+        1.  **${titles.intro}**: Summarize the situation naturally in ${userLanguage}.
+        2.  **${titles.insights}**: Clear details extracted from the data, written in ${userLanguage}.
+        3.  **${titles.facts}**: Precise details, names, stats, written in ${userLanguage}.
         4.  **${titles.sources}**: Bulleted list of URLs.
         
         ### RULES:
         - **Citations**: Cite sources in-text using [1], [2], etc.
-        - **TONE (CRITICAL)**: Respond in a natural, empathetic, and human-like conversational tone. If the query is personal, be supportive and human, not robotic.
-        - **LANGUAGE RULE (STRICT)**: You MUST respond in the EXACT SAME language that the user used for their question (Currently detected as: ${userLanguage}).
-        - **NO ENGLISH LABELS**: All headers (e.g., Intro, Analysis, Facts) MUST be translated to the user's language.
-        - If the language is Hinglish, the entire response (including every title and header) MUST be in Hinglish script.
-        - If the data is insufficient, state what is missing naturally.
+        - **TONE (CRITICAL)**: Respond in a natural, empathetic, and human-like conversational tone.
+        - **LANGUAGE MATCH (MANDATORY)**: You MUST respond entirely in ${userLanguage}. Even if the source data is English or Hindi, translate EVERYTHING into ${userLanguage} for the user.
+        - **NO CODE-SWITCHING**: Do not use languages other than ${userLanguage} for headers or explanations.
+        - **NO ENGLISH LABELS**: All headers MUST be in ${userLanguage}.
         `;
 
         try {
