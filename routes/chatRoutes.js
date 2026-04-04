@@ -16,6 +16,7 @@ import { performWebSearch } from "../services/searchService.js";
 import { convertFile } from "../utils/fileConversion.js";
 import { generateVideoFromPrompt } from "../controllers/videoController.js";
 import { generateImageFromPrompt } from "../controllers/image.controller.js";
+import { generateFollowUpPrompts } from "../utils/imagePromptController.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
 import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
@@ -118,6 +119,10 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         if (imageUrl) {
           finalResponse.imageUrl = imageUrl;
           finalResponse.reply = reply;
+
+          // 🧠 Generate Smart Prompts for the Image
+          const followUpPrompts = await generateFollowUpPrompts(data.prompt, imageUrl).catch(() => []);
+          finalResponse.suggestions = followUpPrompts;
         }
       } else if (data.action === 'modify_image' && data.prompt) {
         let sourceImage = (Array.isArray(image) && image.length > 0) ? image[0] : (image || null);
@@ -126,6 +131,10 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
           if (imageUrl) {
             finalResponse.imageUrl = imageUrl;
             finalResponse.reply = reply;
+
+            // 🧠 Generate Smart Prompts for the Edited Image
+            const followUpPrompts = await generateFollowUpPrompts(data.prompt, imageUrl).catch(() => []);
+            finalResponse.suggestions = followUpPrompts;
           }
         }
       } else if (data.action === 'generate_video' && data.prompt) {
