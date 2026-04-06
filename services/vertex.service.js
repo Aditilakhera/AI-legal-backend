@@ -1,4 +1,4 @@
-import { generativeModel, genAIInstance, modelName } from '../config/vertex.js';
+import { generativeModel, genAIInstance, modelName, vertexAI, useVertexAI } from '../config/vertex.js';
 import { HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
@@ -275,22 +275,67 @@ export const detectRAGNeed = async (query) => {
 }
 
 /**
- * Internal helper for basic text generation
+ * Internal helper for basic text generation - creates a fresh lightweight model
+ * This is used by CashFlow, QueryRewrite, RAG Detector etc.
  */
 export const AskVertexRaw = async (prompt, options = {}) => {
     try {
-        const result = await generativeModel.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
-        const response = await result.response;
-        
+        if (!generativeModel && !genAIInstance && !vertexAI) {
+            throw new Error('No AI model initialized. Check GEMINI_API_KEY or GCP_PROJECT_ID in .env');
+        }
+
+        let model;
+
+        // Always create a fresh, simple model without heavy system instructions
+        // This avoids issues with system instruction format incompatibilities
+        if (useVertexAI && vertexAI) {
+            // Use Vertex AI with fresh model (no system instruction for raw calls)
+            const { HarmCategory, HarmBlockThreshold } = await import('@google-cloud/vertexai');
+            model = vertexAI.getGenerativeModel({
+                model: modelName,
+                safetySettings: [
+                    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }
+                ],
+                generationConfig: {
+                    maxOutputTokens: options.maxOutputTokens || 4096,
+                    temperature: options.temperature || 0.7,
+                }
+            });
+        } else if (genAIInstance) {
+            // Use Gemini API (API key mode)
+            model = genAIInstance.getGenerativeModel({
+                model: modelName,
+                generationConfig: {
+                    maxOutputTokens: options.maxOutputTokens || 4096,
+                    temperature: options.temperature || 0.7,
+                }
+            });
+        } else {
+            throw new Error('AI model instance not available');
+        }
+
+        const result = await model.generateContent({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+        });
+
+        // Handle both @google-cloud/vertexai and @google/generative-ai response formats
+        const response = result.response || result;
+
         if (typeof response.text === 'function') {
             return response.text();
-        } else if (response.text) {
-            return response.text;
         } else if (response.candidates && response.candidates[0]?.content?.parts[0]?.text) {
             return response.candidates[0].content.parts[0].text;
+        } else if (response.text && typeof response.text === 'string') {
+            return response.text;
         }
-        return "";
+
+        logger.warn('[AskVertexRaw] Unexpected response structure:', JSON.stringify(response).substring(0, 200));
+        return '';
     } catch (err) {
+        // Log full error details for debugging
+        logger.error(`[AskVertexRaw] FULL ERROR: ${err.message}`);
+        if (err.response?.data) logger.error(`[AskVertexRaw] API Response Error: ${JSON.stringify(err.response.data)}`);
+        if (err.status) logger.error(`[AskVertexRaw] HTTP Status: ${err.status}`);
         throw err;
     }
 };

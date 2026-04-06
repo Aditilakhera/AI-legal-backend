@@ -39,6 +39,8 @@ import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './routes/legalRoutes.js';
 import intentRoutes from './routes/intentRoutes.js';
+import cashflowRoutes from './routes/cashflowRoutes.js';
+import stockRoutes from './routes/stockRoutes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -122,6 +124,8 @@ app.use('/api/video', videoRoutes);
 
 // Intent Routing & Orchestration System
 app.use('/api/intent', intentRoutes);
+app.use('/api/cashflow', cashflowRoutes);
+app.use('/api/stock', stockRoutes);
 
 // Utility & Support
 app.use('/api/notifications', notificationRoutes);

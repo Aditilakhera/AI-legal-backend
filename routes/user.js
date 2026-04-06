@@ -128,6 +128,11 @@ route.put("/personalizations", verifyToken, async (req, res) => {
             }
         });
 
+        // FORCE UI language to English always - UI language must stay English
+        if (user.personalizations?.general) {
+            user.personalizations.general.language = 'English';
+        }
+
         // CRITICAL for Mongoose 'Mixed' type update detection
         user.markModified('personalizations');
 
