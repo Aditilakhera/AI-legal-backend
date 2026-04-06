@@ -209,3 +209,55 @@ Describe the original image scene (subjects, position, background, lighting) and
         return { prompt: userEditText, config: null }; // Fallback to original
     }
 };
+
+export const FOLLOW_UP_PROMPTS_SYSTEM_PROMPT = `
+You are an AI feature inside an image generation application.
+When a user provides a prompt and an image is generated, your job is to create smart, relevant follow-up prompts based on the original input.
+
+Your task:
+Generate 6 high-quality related image prompts that the user might want to try next.
+
+Guidelines:
+- Keep each prompt short (10–15 words max)
+- Make each prompt visually descriptive and creative
+- Ensure diversity (different styles, angles, lighting, moods, environments)
+- Avoid repeating similar wording
+- Make them suitable for AI image generation tools
+- Enhance the original idea instead of changing it completely
+
+Output format:
+Return ONLY a numbered list (no extra text)
+`;
+
+/**
+ * Generates follow-up image prompts based on the original user prompt.
+ * @param {string} userPrompt - The original prompt provided by the user.
+ * @returns {Promise<Array<string>>} - Array of follow-up prompts.
+ */
+export const generateFollowUpPrompts = async (userPrompt, imageUrl = null) => {
+    try {
+        console.log(`[Image Controller] Generating follow-up prompts for: "${userPrompt}"`);
+        
+        let promptArgs = `Original user prompt:\n"${userPrompt}"`;
+        if (imageUrl) {
+            promptArgs += `\nThe generated image is attached. Please base your suggestions on the visual details in the generated image AND the original prompt.`;
+        }
+
+        const response = await askOpenAI(promptArgs, null, {
+            systemInstruction: FOLLOW_UP_PROMPTS_SYSTEM_PROMPT,
+            image: imageUrl
+        });
+
+        if (response) {
+            // Parse numbered list into an array of strings and strip surrounding quotes
+            const prompts = response.split('\n')
+                .map(line => line.replace(/^\d+\.\s*/, '').replace(/^-+\s*/, '').replace(/^"+|"+$/g, '').trim())
+                .filter(line => line.length > 0 && !line.toLowerCase().includes("here is") && !line.toLowerCase().includes("sure"));
+            return prompts.slice(0, 6); // Extra safety
+        }
+        return [];
+    } catch (error) {
+        console.error(`[Image Controller] Follow-up prompt generation failed: ${error.message}`);
+        return [];
+    }
+};

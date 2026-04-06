@@ -87,8 +87,8 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         const detected = detectLanguage(message);
         // Special: If detected as English, we don't force it in the prompt as strictly
         // to allow the AI's internal detection to pick up subtle nuances (like French/Spanish)
-        const userLanguage = detected !== 'English' ? detected : (language || 'English');
-        const isDefaultEnglish = detected === 'English' && (!language || language === 'English');
+        const userLanguage = detected; // Prioritize actual query language for response context
+        const isDefaultEnglish = detected === 'English'; 
         
         const langSwitchRule = `### LANGUAGE BEHAVIOR: 
         1. If the user changes their script or language (e.g. from English to Arabic), you MUST immediately switch your entire response to that new language. 

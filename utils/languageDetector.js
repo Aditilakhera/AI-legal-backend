@@ -3,10 +3,10 @@
  */
 
 const SCRIPTS = {
-    'Urdu/Arabic/Persian': /[\u0600-\u06FF]/,
+    'Arabic': /[\u0600-\u06FF]/,
     'Bengali': /[\u0980-\u09FF]/,
-    'Hindi/Marathi/Nepalese': /[\u0900-\u097F]/, // Devanagari
-    'Russian/Cyrillic': /[\u0400-\u04FF]/,
+    'Hindi': /[\u0900-\u097F]/, // Devanagari
+    'Cyrillic': /[\u0400-\u04FF]/,
     'Chinese': /[\u4E00-\u9FFF]/,
     'Japanese': /[\u3040-\u309F\u30A0-\u30FF]/,
     'Korean': /[\uAC00-\uD7AF]/,
