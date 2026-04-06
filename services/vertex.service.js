@@ -78,7 +78,7 @@ const findOrCreateCorpus = async () => {
 /**
  * Retrieve search results from Vertex RAG Corpus
  */
-export const retrieveContextFromRag = async (query, topK = 8) => {
+export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL') => {
     try {
         const corpusId = await findOrCreateCorpus();
         if (!corpusId) {
@@ -111,67 +111,67 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
             }
         };
 
-        logger.info(`[Vertex RAG] Querying v1beta1 API for corpus: ${corpusId}`);
         const response = await axios.post(retrieveUrl, payload, {
             headers: { Authorization: `Bearer ${token.token}`, 'Content-Type': 'application/json' }
         });
 
         const contexts = response.data?.contexts?.contexts || [];
         if (contexts.length === 0) {
-            logger.info(`[Vertex RAG] No matching documents found in bucket for this query.`);
             return null;
         }
 
-        // Apply Confidence Logic (Filter out highly distant chunks if distance property exists)
-        // Distance is usually 0 to 1, where lower is better. We filter out chunks with distance > 0.8
+        // Apply Confidence Logic
         const validContexts = contexts.filter(c => {
-            if (c.distance === undefined || c.distance === null) return true; // Keep if no distance metric
-            return c.distance < 0.8; // Reject low confidence chunks
+            if (c.distance === undefined || c.distance === null) return true;
+            return c.distance < 0.8; 
         });
 
-        if (validContexts.length === 0) {
-            logger.info(`[Vertex RAG] Found chunks but all were below confidence threshold.`);
-            return null;
-        }
-
-        // Extract sources and build combined text with source citing
         const Knowledge = (await import('../models/Knowledge.model.js')).default;
         
         const sources = [];
-        const contextText = await Promise.all(validContexts.map(async (c, idx) => {
-            const gcsUri = c.sourceUri;
-            let sourceName = `Document_${idx + 1}`;
-            let sourceUrl = '';
+        const retrievedTexts = [];
 
-            if (gcsUri) {
-                const doc = await Knowledge.findOne({ gcsUri });
-                if (doc) {
-                    sourceUrl = doc.sourceUrl || '';
-                    if (sourceUrl) {
-                        try {
-                            const urlObj = new URL(sourceUrl);
-                            sourceName = urlObj.hostname.replace('www.', '');
-                        } catch (e) {
-                            sourceName = "Official Website";
-                        }
-                    } else {
-                        // Internal file with no URL - use generic brand title instead of filename
-                        sourceName = "UWO Internal Resource";
-                    }
+        for (const context of validContexts) {
+            const gcsUri = context.sourceUri;
+            if (!gcsUri) continue;
+
+            // Strict Filter: Find document metadata to check category
+            const doc = await Knowledge.findOne({ gcsUri });
+            
+            // If document doesn't match the requested category, skip it entirely
+            if (!doc || doc.category !== category) {
+                continue;
+            }
+
+            let sourceName = doc.filename || "Knowledge Resource";
+            let sourceUrl = doc.sourceUrl || '';
+
+            if (sourceUrl) {
+                try {
+                    const urlObj = new URL(sourceUrl);
+                    sourceName = urlObj.hostname.replace('www.', '');
+                } catch (e) {
+                    sourceName = "Official Website";
                 }
             }
+
             sources.push({
                 title: sourceName,
                 url: sourceUrl || 'https://uwo24.com/',
-                snippet: c.text ? c.text.substring(0, 150) + '...' : '',
+                snippet: context.text ? context.text.substring(0, 150) + '...' : '',
                 document_title: sourceName,
                 source_type: 'URL',
-                chunk_id: `chunk_${idx}_${Date.now()}`
+                chunk_id: `chunk_${Date.now()}_${Math.random()}`
             });
 
             const citation = sourceUrl ? `[Ref: ${sourceName}]` : `[Internal Knowledge]`;
-            return `${citation}\n${c.text}`;
-        }));
+            retrievedTexts.push(`${citation}\n${context.text}`);
+        }
+
+        if (retrievedTexts.length === 0) {
+            logger.info(`[Vertex RAG] No matching documents found for category: ${category}`);
+            return null;
+        }
 
         // Deduplicate sources aggressively by Title (since URLs might be internal GCS paths)
         const uniqueSources = [];
@@ -195,7 +195,7 @@ export const retrieveContextFromRag = async (query, topK = 8) => {
         }
 
         const template = configService.getConfig('RAG_CONTEXT_TEMPLATE', 'Use this context: {retrieved_text}');
-        const ragContext = template.replace('{retrieved_text}', contextText.join('\n\n'));
+        const ragContext = template.replace('{retrieved_text}', retrievedTexts.join('\n\n'));
 
         logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
         // Return max 3 sources to keep the UI clean as requested by the user

@@ -16,6 +16,7 @@ import { performWebSearch } from "../services/searchService.js";
 import { convertFile } from "../utils/fileConversion.js";
 import { generateVideoFromPrompt } from "../controllers/videoController.js";
 import { generateImageFromPrompt } from "../controllers/image.controller.js";
+import { generateFollowUpPrompts } from "../utils/imagePromptController.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
 import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
@@ -62,10 +63,15 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     if (document && (Array.isArray(document) ? document.length > 0 : document.base64Data)) toolsRequested.push('convert_document');
 
     if (req.user) {
-      try {
-        await subscriptionService.checkCredits(req.user.id, toolsRequested, req.body);
-      } catch (subError) {
-        return res.status(403).json({ success: false, code: subError.message === "PREMIUM_RESTRICTED" ? "PREMIUM_ONLY" : "OUT_OF_CREDITS", message: subError.message });
+      // Early Admin Bypass
+      if (req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com') {
+        console.log(`[Admin-Bypass] Granting immediate access to admin@uwo24.com`);
+      } else {
+        try {
+          await subscriptionService.checkCredits(req.user.id || req.user._id, toolsRequested, req.body);
+        } catch (subError) {
+          return res.status(403).json({ success: false, code: subError.message === "PREMIUM_RESTRICTED" ? "PREMIUM_ONLY" : "OUT_OF_CREDITS", message: subError.message });
+        }
       }
     }
 
@@ -113,6 +119,10 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         if (imageUrl) {
           finalResponse.imageUrl = imageUrl;
           finalResponse.reply = reply;
+
+          // 🧠 Generate Smart Prompts for the Image
+          const followUpPrompts = await generateFollowUpPrompts(data.prompt, imageUrl).catch(() => []);
+          finalResponse.suggestions = followUpPrompts;
         }
       } else if (data.action === 'modify_image' && data.prompt) {
         let sourceImage = (Array.isArray(image) && image.length > 0) ? image[0] : (image || null);
@@ -121,6 +131,10 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
           if (imageUrl) {
             finalResponse.imageUrl = imageUrl;
             finalResponse.reply = reply;
+
+            // 🧠 Generate Smart Prompts for the Edited Image
+            const followUpPrompts = await generateFollowUpPrompts(data.prompt, imageUrl).catch(() => []);
+            finalResponse.suggestions = followUpPrompts;
           }
         }
       } else if (data.action === 'generate_video' && data.prompt) {
@@ -184,7 +198,13 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       await session.save();
     }
 
-    if (req.user) await subscriptionService.deductCredits(req.user.id, toolsRequested, sessionId, req.body);
+    const finalUserId = req.user?.id || req.user?._id;
+    if (finalUserId) {
+        // Skip deduction for admin
+        if (!(req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com')) {
+            await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body);
+        }
+    }
 
     if (session) {
         finalResponse.title = session.title;
@@ -217,7 +237,7 @@ router.get('/', optionalVerifyToken, identifyGuest, async (req, res) => {
     if (userId) {
       const query = { userId: userId };
       if (projectId) query.projectId = projectId;
-      else query.projectId = { $exists: false }; // Or handle default project logic
+      else query.$or = [{ projectId: { $exists: false } }, { projectId: null }];
 
       sessions = await ChatSession.find(query)
         .select('sessionId title lastModified userId projectId')

@@ -41,6 +41,7 @@ import legalRoutes from './routes/legalRoutes.js';
 import intentRoutes from './routes/intentRoutes.js';
 import cashflowRoutes from './routes/cashflowRoutes.js';
 import stockRoutes from './routes/stockRoutes.js';
+import legalToolkitRoutes from './routes/legalToolkitRoutes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -65,6 +66,10 @@ connectDB().then(async () => {
     // Initialize Automatic Knowledge Update System (Crawler Scheduler)
     const { initScheduler } = await import('./services/scheduler.service.js');
     initScheduler();
+
+    // Initialize Multi Schedule Reminder System
+    const { initReminderScheduler } = await import('./services/reminderScheduler.js');
+    initReminderScheduler();
 
   } catch (err) {
     console.error("❌ Failed to pre-initialize AI services:", err.message);
@@ -113,6 +118,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoute);
 app.use('/api/user', dataRoutes);  // GDPR data deletion & export
 app.use('/api/legal', legalRoutes);
+app.use('/api/legal-toolkit', legalToolkitRoutes);
 
 // Intelligence Features
 app.use('/api/chat', chatRoutes);
@@ -141,7 +147,6 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check" }));
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api', dashboardRoutes);
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
@@ -192,3 +197,4 @@ server.timeout = 900000; // 15 mins
 
 // Keep process alive for local development
 setInterval(() => { }, 1000 * 60 * 60); // Keep alive process
+// trigger restart

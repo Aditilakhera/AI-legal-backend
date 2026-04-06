@@ -50,6 +50,7 @@ const getActionLabel = (url, body) => {
     }
     if (url.includes('/api/voice')) return { action: 'convert_audio', description: 'AISA Audio Magic' };
     if (url.includes('/api/knowledge/upload') || url.includes('/api/knowledge/upload-url')) return { action: 'knowledge_base', description: 'AISA Knowledge Base' };
+    if (url.includes('/api/legal-toolkit')) return { action: 'legal_toolkit', description: 'AISA AI Legal' };
     return { action: 'other', description: 'AISA Feature' };
 };
 
@@ -77,7 +78,9 @@ export const creditMiddleware = async (req, res, next) => {
         );
 
     // Admins bypass PLAN_RESTRICTED checks only
-    const isAdmin = req.user && req.user.role === 'admin';
+    const userRec = await User.findById(req.user.id || req.user._id);
+    const isAdmin = (req.user && (req.user.role === 'admin' || (req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com'))) || 
+                    (userRec && (userRec.role === 'admin' || (userRec.email && userRec.email.toLowerCase() === 'admin@uwo24.com')));
 
     if (isPaidOnlyRoute && !isAdmin) {
         const freeTier = await isFreeTierUser(req.user.id || req.user._id);
@@ -164,10 +167,10 @@ export const creditMiddleware = async (req, res, next) => {
             }
         }
 
-        const user = await User.findById(req.user.id || req.user._id);
+        const user = userRec || await User.findById(req.user.id || req.user._id);
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        if (user.credits < cost && !isAdmin) {
+        if (!isAdmin && user.credits < cost) {
             return res.status(403).json({
                 error: "Insufficient credits",
                 code: "OUT_OF_CREDITS",

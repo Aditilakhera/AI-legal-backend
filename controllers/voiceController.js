@@ -83,7 +83,7 @@ const synthesizeChunks = async (chunks, languageCode, voiceName, gender, isNarra
             if (isUnsupportedVoice && isModified) {
                 // Infer correct gender for fallback if it's a known male voice
                 let finalGender = gender;
-                const maleVoices = ['Alnilam', 'Charon', 'Enceladus', 'Fenrir', 'Iapetus', 'Orus', 'Puck', 'Rasalgethi', 'Sadachbia', 'Sadaltager', 'Schedar', 'Umbriel', 'Zubenelgenubi'];
+                const maleVoices = ['Algieba', 'Alnilam', 'Charon', 'Enceladus', 'Fenrir', 'Iapetus', 'Orus', 'Puck', 'Rasalgethi', 'Sadachbia', 'Sadaltager', 'Schedar', 'Umbriel', 'Zubenelgenubi'];
                 if (voiceName && maleVoices.some(m => voiceName.includes(m))) {
                     finalGender = 'MALE';
                 }
@@ -134,11 +134,11 @@ export const synthesizeSpeech = async (req, res) => {
 
         const voiceMap = {
             'hi-IN': { 'FEMALE': 'hi-IN-Chirp3-HD-Kore', 'MALE': 'hi-IN-Chirp3-HD-Charon' },
-            'en-US': { 'FEMALE': 'en-US-Chirp3-HD-Algieba', 'MALE': 'en-US-Chirp3-HD-Puck' },
+            'en-US': { 'FEMALE': 'en-US-Chirp3-HD-Autonoe', 'MALE': 'en-US-Chirp3-HD-Puck' },
             'en-IN': { 'FEMALE': 'en-IN-Neural2-A', 'MALE': 'en-IN-Neural2-B' }
         };
 
-        let voiceName = reqVoiceName || voiceMap[languageCode]?.[gender] || `${languageCode}-Chirp3-HD-${gender === 'MALE' ? 'Puck' : 'Algieba'}`;
+        let voiceName = reqVoiceName || voiceMap[languageCode]?.[gender] || `${languageCode}-Chirp3-HD-${gender === 'MALE' ? 'Puck' : 'Autonoe'}`;
         const isNarrative = tone === 'narrative' || (tone !== 'conversational' && processedText.length > 600);
 
         const chunks = chunkText(processedText, 2500);
@@ -210,7 +210,7 @@ export const synthesizeFile = async (req, res) => {
         const isHindi = (textToRead.match(/[\u0900-\u097F]/g) || []).length > 20;
         const chunks = chunkText(textToRead, isHindi ? 1200 : 2500);
         const langCode = reqLangCode || (isHindi ? 'hi-IN' : 'en-US');
-        const voiceName = reqVoiceName || (isHindi ? 'hi-IN-Chirp3-HD-Kore' : (gender === 'MALE' ? 'en-US-Chirp3-HD-Puck' : 'en-US-Chirp3-HD-Algieba'));
+        const voiceName = reqVoiceName || (isHindi ? 'hi-IN-Chirp3-HD-Kore' : (gender === 'MALE' ? 'en-US-Chirp3-HD-Puck' : 'en-US-Chirp3-HD-Autonoe'));
 
         console.log(`📖 [VoiceController] File Synthesis: ${chunks.length} chunks, ${textToRead.length} chars`);
         const audioData = await synthesizeChunks(chunks, langCode, voiceName, gender, true, pitch, speakingRate);
