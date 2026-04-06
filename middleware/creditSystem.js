@@ -50,6 +50,7 @@ const getActionLabel = (url, body) => {
     }
     if (url.includes('/api/voice')) return { action: 'convert_audio', description: 'AISA Audio Magic' };
     if (url.includes('/api/knowledge/upload') || url.includes('/api/knowledge/upload-url')) return { action: 'knowledge_base', description: 'AISA Knowledge Base' };
+    if (url.includes('/api/legal-toolkit')) return { action: 'legal_toolkit', description: 'AISA AI Legal' };
     return { action: 'other', description: 'AISA Feature' };
 };
 

@@ -65,6 +65,10 @@ connectDB().then(async () => {
     const { initScheduler } = await import('./services/scheduler.service.js');
     initScheduler();
 
+    // Initialize Multi Schedule Reminder System
+    const { initReminderScheduler } = await import('./services/reminderScheduler.js');
+    initReminderScheduler();
+
   } catch (err) {
     console.error("❌ Failed to pre-initialize AI services:", err.message);
   }

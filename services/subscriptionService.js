@@ -36,7 +36,7 @@ export const getToolCost = (toolName, body = {}) => {
         chat: 2, web_search: 60, deep_search: 85, agent_chat: 60, realtime_chat: 60,
         knowledge_base: 3, generate_image: 66, generate_image_hd: 100, generate_image_ultra: 135,
         edit_image: 66, video_multipliers: { "veo-3.1-fast-generate-001": { "4k": 585, "default": 250 }, "veo-3.1-generate-001": { "4k": 666, "default": 333 } },
-        code_writer: 3, convert_audio: 90, document_convert: 3
+        code_writer: 3, convert_audio: 90, document_convert: 3, legal_toolkit: 250
     };
 
     if (toolName === 'chat') {
@@ -82,6 +82,7 @@ const getToolLabel = (toolName) => {
         case 'generate_video': return 'AISA Video Generation';
         case 'code_writer': return 'AISA Code Writer';
         case 'convert_document': return 'AISA Document Analysis';
+        case 'legal_toolkit': return 'AISA AI Legal';
         default: return 'AISA Service';
     }
 };

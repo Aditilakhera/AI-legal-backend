@@ -12,26 +12,38 @@ const reminderSchema = new mongoose.Schema({
         required: true,
         trim: true
     },
+    description: {
+        type: String,
+        default: ''
+    },
     datetime: {
         type: Date,
         required: true,
         index: true
     },
-    notification: {
-        type: Boolean,
-        default: true
+    repeat: {
+        type: String,
+        enum: ['none', 'daily', 'weekly', 'monthly', 'custom'],
+        default: 'none'
     },
-    alarm: {
-        type: Boolean,
-        default: false
+    customDays: [{
+        type: Number, // 0 for Sunday, 1 for Monday, etc.
+        min: 0,
+        max: 6
+    }],
+    notificationType: {
+        type: String,
+        enum: ['in-app', 'email', 'both'],
+        default: 'in-app'
     },
     voice: {
-        type: Boolean,
-        default: false
-    },
-    voiceMessage: {
         type: String,
-        default: ''
+        enum: ['none', 'en-US-female', 'en-US-male', 'hi-IN-female', 'hi-IN-male'],
+        default: 'none'
+    },
+    isActive: {
+        type: Boolean,
+        default: true
     },
     status: {
         type: String,
@@ -47,7 +59,7 @@ const reminderSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Index for querying pending reminders
-reminderSchema.index({ userId: 1, status: 1, datetime: 1 });
+reminderSchema.index({ userId: 1, status: 1, datetime: 1, isActive: 1 });
 
 const Reminder = mongoose.model('Reminder', reminderSchema);
 
