@@ -60,6 +60,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     let toolsRequested = ['chat'];
     if (mode === 'DEEP_SEARCH' || mode === 'web_search') toolsRequested.push(mode);
     if (mode === 'CODE_WRITER') toolsRequested.push('code_writer');
+    if (mode === 'LEGAL_TOOLKIT') toolsRequested.push('legal_toolkit');
     if (document && (Array.isArray(document) ? document.length > 0 : document.base64Data)) toolsRequested.push('convert_document');
 
     if (req.user) {
