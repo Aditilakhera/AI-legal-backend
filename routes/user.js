@@ -1,6 +1,7 @@
 import express from "express"
 import userModel from "../models/User.js"
 import mongoose from "mongoose";
+import Subscription from "../models/Subscription.js"
 import { verifyToken } from "../middleware/authorization.js"
 
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
@@ -362,13 +363,23 @@ route.get("/all", verifyToken, async (req, res) => {
 
         const spendMap = {};
 
+        const subscriptions = await Subscription.find({}).populate('planId');
+        const subMap = subscriptions.reduce((acc, sub) => {
+            acc[sub.userId.toString()] = sub.planId?.planName || 'Free Plan';
+            return acc;
+        }, {});
+
         const usersWithDetails = users.map(user => ({
             id: user._id,
             name: user.name,
             email: user.email,
+            avatar: user.avatar,
             role: user.role,
+            isBlocked: user.isBlocked,
+            planName: subMap[user._id.toString()] || 'Free Plan',
             status: user.isVerified ? 'Active' : 'Pending',
             agents: user.agents || [],
+            credits: user.credits || 0,
             spent: spendMap[user._id.toString()] || 0
         }));
 
