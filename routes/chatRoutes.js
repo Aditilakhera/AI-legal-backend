@@ -6,7 +6,8 @@ import userModel from "../models/User.js";
 import Guest from "../models/Guest.js";
 import { verifyToken, optionalVerifyToken } from "../middleware/authorization.js";
 import { identifyGuest } from "../middleware/guestMiddleware.js";
-import { uploadToCloudinary, upload } from "../services/cloudinary.service.js";
+import { upload } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename, getSignedUrl } from "../services/gcs.service.js";
 import mammoth from "mammoth";
 import { detectMode, getModeSystemInstruction } from "../utils/modeDetection.js";
 import { detectIntent, extractReminderDetails, detectLanguage, getVoiceSystemInstruction } from "../utils/voiceAssistant.js";
@@ -48,7 +49,7 @@ const checkGuestLimits = async (req, sessionId) => {
 
 // --- CORE CHAT ENDPOINT ---
 router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
-  const { content, history, systemInstruction, image, video, document, language, model, mode, sessionId } = req.body;
+  const { content, history, systemInstruction, image, video, document, language, model, mode, sessionId, userMsgId, aiMsgId } = req.body;
 
   try {
     // 1. LIMIT & CREDIT CHECKS
@@ -188,16 +189,41 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     } else if (session && isGenericTitle) {
       const aiTitle = await aiService.generateConversationTitle(content);
       if (aiTitle) session.title = aiTitle;
-    }
-
-    if (session) {
-      // NOTE: We do NOT push messages to session.messages here.
-      // The frontend maintains the chat state with explicit unique IDs (e.g. user-1234)
-      // and forcefully syncs them via `chatStorageService.saveMessage()` which hits POST /:sessionId/message.
-      // Pushing them here without those IDs causes double messages in chat history.
       session.lastModified = Date.now();
       await session.save();
+      finalResponse.title = session.title;
+      finalResponse.sessionId = session.sessionId;
     }
+
+    // 5. ATOMIC DB SYNC (Critical Fallback for Chat Persistence)
+    // Check if user message already pushed by frontend sync endpoint to prevent duplicates
+    const hasUserMsg = session.messages.some(m => m.id === userMsgId || (m.role === 'user' && m.content === content));
+    if (!hasUserMsg) {
+      session.messages.push({
+        id: userMsgId || `be_${Date.now()}`,
+        role: 'user',
+        content: content || (image ? "Image interaction" : "Action"),
+        timestamp: Date.now()
+      });
+    }
+
+    // Always push the AI response generated in this turn
+    session.messages.push({
+      id: aiMsgId || `be_ai_${Date.now() + 1}`,
+      role: 'model',
+      content: finalResponse.reply || "Thinking...",
+      timestamp: Date.now() + 1,
+      isRealTime: finalResponse.isRealTime,
+      sources: finalResponse.sources,
+      imageUrl: finalResponse.imageUrl,
+      videoUrl: finalResponse.videoUrl,
+      conversion: finalResponse.conversion
+    });
+
+    session.lastModified = Date.now();
+    await session.save();
+    finalResponse.title = session.title;
+    finalResponse.sessionId = session.sessionId;
 
     const finalUserId = req.user?.id || req.user?._id;
     if (finalUserId) {
@@ -205,11 +231,6 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         if (!(req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com')) {
             await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body);
         }
-    }
-
-    if (session) {
-        finalResponse.title = session.title;
-        finalResponse.sessionId = session.sessionId;
     }
 
     return res.status(200).json(finalResponse);
@@ -277,6 +298,43 @@ router.get('/:sessionId', optionalVerifyToken, identifyGuest, async (req, res) =
       }
     } else if (guestId) {
       if (session.guestId !== guestId) return res.status(403).json({ error: 'Access denied' });
+    }
+
+    if (session) {
+      // 🔄 Dynamic Re-signing of expired media URLs
+      // This ensures that images/videos stored with ephemeral 6-hour URLs are refreshed on load
+      let needsSave = false;
+      const bucketName = 'aisa_objects';
+
+      for (let msg of session.messages) {
+        // Refreash Image URLs
+        if (msg.imageUrl && msg.imageUrl.includes(bucketName)) {
+           // Extract path: everything between 'aisa_objects/' and the '?' (if present) or end of string
+           const pathPart = msg.imageUrl.split(`${bucketName}/`)[1]?.split('?')[0];
+           if (pathPart) {
+             const newUrl = await getSignedUrl(decodeURIComponent(pathPart));
+             if (newUrl !== msg.imageUrl) {
+               msg.imageUrl = newUrl;
+               needsSave = true;
+             }
+           }
+        }
+        // Refresh Video URLs
+        if (msg.videoUrl && msg.videoUrl.includes(bucketName)) {
+           const pathPart = msg.videoUrl.split(`${bucketName}/`)[1]?.split('?')[0];
+           if (pathPart) {
+             const newUrl = await getSignedUrl(decodeURIComponent(pathPart));
+             if (newUrl !== msg.videoUrl) {
+               msg.videoUrl = newUrl;
+               needsSave = true;
+             }
+           }
+        }
+      }
+
+      if (needsSave) {
+        await session.save();
+      }
     }
 
     res.json(session);
@@ -456,13 +514,12 @@ router.delete('/:sessionId', optionalVerifyToken, identifyGuest, async (req, res
 router.post('/upload-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No PDF provided' });
-    const result = await uploadToCloudinary(req.file.buffer, {
-      resource_type: 'raw',
+    const result = await uploadToGCS(req.file.buffer, {
       folder: 'aisa_pdfs',
-      format: 'pdf',
-      public_id: `aisa_pdf_${Date.now()}`,
+      filename: gcsFilename('aisa_pdf', 'pdf'),
+      mimeType: 'application/pdf',
     });
-    return res.status(200).json({ url: result.secure_url });
+    return res.status(200).json({ url: result.publicUrl });
   } catch (err) {
     console.error('[PDF UPLOAD ERROR]', err);
     return res.status(500).json({ error: 'PDF upload failed' });

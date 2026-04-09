@@ -3,7 +3,7 @@ import { subscriptionService } from '../services/subscriptionService.js';
 import logger from '../utils/logger.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.js';
-import { uploadToCloudinary } from '../services/cloudinary.service.js';
+import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import xlsx from 'xlsx';
@@ -154,17 +154,21 @@ export const uploadAttachment = async (req, res, next) => {
             parsedText = fileBuffer.toString('utf8');
         }
 
-        // Helper to upload to cloudinary for visual reference (image/pdf link)
-        const cloudResult = await uploadToCloudinary(fileBuffer, {
-            resource_type: 'auto',
-            public_id: 'chat_upload_' + Date.now()
+        // Upload to GCS aisa_objects bucket for visual reference (image/pdf link)
+        const ext = req.file.originalname.split('.').pop() || 'bin';
+        const gcsResult = await uploadToGCS(fileBuffer, {
+            folder: 'chat_uploads',
+            filename: gcsFilename(`chat_${Date.now()}`, ext),
+            mimeType: mimeType,
+            isPublic: false,
+            useSignedUrl: true,
         });
 
         // Return text so frontend can send it back as context
         res.status(200).json({
             success: true,
             data: {
-                url: cloudResult.secure_url,
+                url: gcsResult.publicUrl,
                 mimetype: mimeType,
                 filename: req.file.originalname,
                 size: req.file.size,

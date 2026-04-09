@@ -6,7 +6,7 @@ import { verifyToken } from "../middleware/authorization.js"
 
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
 import uploadMiddleware from "../middlewares/upload.middleware.js";
-import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 
 const route = express.Router()
 
@@ -179,14 +179,16 @@ route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
             return res.status(400).json({ error: "No file uploaded" });
         }
 
-        const cloudRes = await uploadToCloudinary(req.file.buffer, {
+        const ext = req.file.originalname.split('.').pop() || 'png';
+        const gcsResult = await uploadToGCS(req.file.buffer, {
             folder: 'user_avatars',
-            public_id: `avatar_${req.user.id || req.user._id}_${Date.now()}`
+            filename: gcsFilename(`avatar_${req.user.id || req.user._id}`, ext),
+            mimeType: req.file.mimetype,
         });
 
         const user = await userModel.findByIdAndUpdate(
             req.user.id || req.user._id,
-            { avatar: cloudRes.secure_url },
+            { avatar: gcsResult.publicUrl },
             { new: true }
         ).select("-password");
 
