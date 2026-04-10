@@ -1,4 +1,4 @@
-import { uploadToCloudinary } from '../services/cloudinary.service.js';
+import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
 import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
@@ -240,16 +240,19 @@ IMPORTANT: DO NOT just return the original image unchanged. You MUST apply the t
         }
 
         if (base64Data) {
-            console.log(`[CLOUDINARY] Uploading result from ${usedModel}...`);
+            console.log(`[GCS] Uploading result from ${usedModel}...`);
             const buffer = Buffer.from(base64Data, 'base64');
-            const cloudResult = await uploadToCloudinary(buffer, {
+            const gcsResult = await uploadToGCS(buffer, {
                 folder: 'generated_images',
-                public_id: `aisa_${originalImage ? 'edit' : 'gen'}_${Date.now()}`
+                filename: gcsFilename(`aisa_${originalImage ? 'edit' : 'gen'}`),
+                mimeType: 'image/png',
+                isPublic: false,
+                useSignedUrl: true,
             });
 
-            if (cloudResult?.secure_url) {
-                console.log(`[IMAGE SUCCESS] ${cloudResult.secure_url}`);
-                return cloudResult.secure_url;
+            if (gcsResult?.publicUrl) {
+                console.log(`[IMAGE SUCCESS] ${gcsResult.publicUrl}`);
+                return gcsResult.publicUrl;
             }
         }
 

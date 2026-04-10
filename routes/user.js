@@ -1,11 +1,12 @@
 import express from "express"
 import userModel from "../models/User.js"
 import mongoose from "mongoose";
+import Subscription from "../models/Subscription.js"
 import { verifyToken } from "../middleware/authorization.js"
 
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
 import uploadMiddleware from "../middlewares/upload.middleware.js";
-import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 
 const route = express.Router()
 
@@ -183,14 +184,16 @@ route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
             return res.status(400).json({ error: "No file uploaded" });
         }
 
-        const cloudRes = await uploadToCloudinary(req.file.buffer, {
+        const ext = req.file.originalname.split('.').pop() || 'png';
+        const gcsResult = await uploadToGCS(req.file.buffer, {
             folder: 'user_avatars',
-            public_id: `avatar_${req.user.id || req.user._id}_${Date.now()}`
+            filename: gcsFilename(`avatar_${req.user.id || req.user._id}`, ext),
+            mimeType: req.file.mimetype,
         });
 
         const user = await userModel.findByIdAndUpdate(
             req.user.id || req.user._id,
-            { avatar: cloudRes.secure_url },
+            { avatar: gcsResult.publicUrl },
             { new: true }
         ).select("-password");
 
@@ -367,13 +370,23 @@ route.get("/all", verifyToken, async (req, res) => {
 
         const spendMap = {};
 
+        const subscriptions = await Subscription.find({}).populate('planId');
+        const subMap = subscriptions.reduce((acc, sub) => {
+            acc[sub.userId.toString()] = sub.planId?.planName || 'Free Plan';
+            return acc;
+        }, {});
+
         const usersWithDetails = users.map(user => ({
             id: user._id,
             name: user.name,
             email: user.email,
+            avatar: user.avatar,
             role: user.role,
+            isBlocked: user.isBlocked,
+            planName: subMap[user._id.toString()] || 'Free Plan',
             status: user.isVerified ? 'Active' : 'Pending',
             agents: user.agents || [],
+            credits: user.credits || 0,
             spent: spendMap[user._id.toString()] || 0
         }));
 

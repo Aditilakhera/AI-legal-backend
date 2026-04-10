@@ -6,7 +6,7 @@ import util from 'util';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 import Knowledge from '../models/Knowledge.model.js';
 import * as aiService from '../services/ai.service.js';
-import { uploadToCloudinary } from '../services/cloudinary.service.js';
+
 import mammoth from 'mammoth';
 import xlsx from 'xlsx';
 import officeParser from 'officeparser';
