@@ -288,6 +288,9 @@ export const AskVertexRaw = async (prompt, options = {}) => {
 
         // Always create a fresh, simple model without heavy system instructions
         // This avoids issues with system instruction format incompatibilities
+        const selectedModelName = options.modelOverride || modelName;
+        logger.info(`[AskVertexRaw] Using model: ${selectedModelName}`);
+
         if (useVertexAI && vertexAI) {
             // Use Vertex AI with fresh model (no system instruction for raw calls)
             const { HarmCategory, HarmBlockThreshold } = await import('@google-cloud/vertexai');
@@ -304,7 +307,7 @@ export const AskVertexRaw = async (prompt, options = {}) => {
         } else if (genAIInstance) {
             // Use Gemini API (API key mode)
             model = genAIInstance.getGenerativeModel({
-                model: modelName,
+                model: selectedModelName,
                 generationConfig: {
                     maxOutputTokens: options.maxOutputTokens || 4096,
                     temperature: options.temperature || 0.7,
@@ -334,8 +337,25 @@ export const AskVertexRaw = async (prompt, options = {}) => {
     } catch (err) {
         // Log full error details for debugging
         logger.error(`[AskVertexRaw] FULL ERROR: ${err.message}`);
-        if (err.response?.data) logger.error(`[AskVertexRaw] API Response Error: ${JSON.stringify(err.response.data)}`);
+        if (err.stack) logger.debug(`[AskVertexRaw] Stack Trace: ${err.stack}`);
+        if (err.response?.data) {
+            logger.error(`[AskVertexRaw] API Response Error: ${JSON.stringify(err.response.data)}`);
+            // Specific check for model not found - trigger fallback
+            if (JSON.stringify(err.response.data).includes("NOT_FOUND") && !options.isFallback) {
+                logger.warn("[AskVertexRaw] Primary model not found. Attempting fallback to gemini-1.5-flash...");
+                return AskVertexRaw(prompt, { ...options, modelOverride: 'gemini-1.5-flash', isFallback: true });
+            }
+        }
         if (err.status) logger.error(`[AskVertexRaw] HTTP Status: ${err.status}`);
+        
+        // Final fallback if gemini-2.0-flash is specifically failing
+        if (err.message.includes("404") || err.message.includes("NOT_FOUND")) {
+             if (!options.isFallback) {
+                logger.warn("[AskVertexRaw] 404/NOT_FOUND error. Attempting fallback to gemini-1.5-flash...");
+                return AskVertexRaw(prompt, { ...options, modelOverride: 'gemini-1.5-flash', isFallback: true });
+             }
+        }
+        
         throw err;
     }
 };
@@ -368,12 +388,14 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         let model = generativeModel; // Default model
 
+        const selectedModelName = options.modelOverride || modelName;
+
         // 1. Dynamic Model Creation (if systemInstruction is provided)
         // This is crucial for "File Conversion" mode where specific JSON output instructions are needed.
-        if (systemInstruction && genAIInstance) {
-            logger.info(`[VERTEX] Creating dynamic model instance with Custom System Instruction.`);
+        if (selectedModelName && genAIInstance) {
+            logger.info(`[VERTEX] Creating dynamic model instance (${selectedModelName}) with Custom System Instruction.`);
             model = genAIInstance.getGenerativeModel({
-                model: modelName,
+                model: selectedModelName,
                 safetySettings: [
                     {
                         category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -448,6 +470,14 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
     } catch (error) {
         logger.error(`[VERTEX] Error: ${error.message}`);
+        if (error.stack) logger.debug(`[VERTEX] Stack: ${error.stack}`);
+        
+        // Fallback for model not found
+        if ((error.message.includes("404") || error.message.includes("NOT_FOUND")) && !options.isFallback) {
+            logger.warn(`[VERTEX] Primary model ${modelName} failed. Attempting fallback to gemini-1.5-flash...`);
+            return askVertex(prompt, context, { ...options, modelOverride: 'gemini-1.5-flash', isFallback: true });
+        }
+
         // Fallback for safety blocks or specific quota issues
         if (error.message.includes("SAFETY")) {
             return "I cannot fulfill this request due to safety guidelines.";

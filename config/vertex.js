@@ -10,7 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Dual-mode initialization: Try Gemini API Key first, fallback to Vertex AI
 const apiKey = process.env.GEMINI_API_KEY;
 const projectId = process.env.GCP_PROJECT_ID;
-const location = process.env.GCP_LOCATION || 'asia-south1';
+const location = process.env.GCP_LOCATION || 'us-central1'; // Defaulting to us-central1 for better model availability
 const keyFilePath = path.join(__dirname, '../google_cloud_credentials.json');
 
 let genAI;
@@ -58,11 +58,15 @@ export const modelName = "gemini-2.0-flash";
  * Dynamic System Instruction Getter
  */
 export const getDynamicSystemInstruction = () => {
-  return getFullSystemInstruction();
+  try {
+    return getFullSystemInstruction();
+  } catch (e) {
+    console.warn('⚠️ Could not fetch system instructions from ConfigService:', e.message);
+    return '';
+  }
 };
 
-// Legacy support for static imports
-export const systemInstructionText = getFullSystemInstruction();
+// Removed static systemInstructionText to avoid race conditions
 
 // VertexAI-compatible safety settings (from @google-cloud/vertexai package)
 const vertexSafetySettings = [
@@ -84,13 +88,12 @@ export const generativeModel = (() => {
         model: modelName,
         safetySettings: vertexSafetySettings,
         generationConfig: { maxOutputTokens: 8192 },
-        systemInstruction: systemInstructionText,
+        // Instruction will be applied dynamically in services for better flexibility
       });
     } else if (genAI) {
       return genAI.getGenerativeModel({
         model: modelName,
         generationConfig: { maxOutputTokens: 8192 },
-        systemInstruction: systemInstructionText,
       });
     } else {
       console.error('❌ CRITICAL: No AI provider available for generativeModel!');

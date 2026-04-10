@@ -2,6 +2,7 @@ import yahooFinanceLib from 'yahoo-finance2';
 const yf = new (yahooFinanceLib.YahooFinance || yahooFinanceLib)();
 import logger from '../utils/logger.js';
 import { AskVertexRaw } from './vertex.service.js';
+import { searchAngelOneStocks } from './angelOneService.js';
 
 /**
  * Symbol mapping for Indian stocks (AlphaVantage uses .BSE, Yahoo uses .BO)
@@ -18,14 +19,40 @@ const mapSymbolForYahoo = (symbol) => {
  */
 export const searchStocks = async (keywords) => {
     try {
-        const results = await yf.search(keywords);
-        return results.quotes.map(q => ({
-            symbol: q.symbol,
-            name: q.shortname || q.longname || q.symbol,
-            type: q.quoteType,
-            region: q.region,
-            currency: q.currency
-        }));
+        // Search both Yahoo and Angel One in parallel
+        const [yfResults, angelResults] = await Promise.allSettled([
+            yf.search(keywords),
+            searchAngelOneStocks(keywords)
+        ]);
+
+        const quotes = [];
+        const seenSymbols = new Set();
+
+        // Add Angel One results first (Priority for Indian local stocks)
+        if (angelResults.status === 'fulfilled' && Array.isArray(angelResults.value)) {
+            angelResults.value.forEach(q => {
+                quotes.push(q);
+                seenSymbols.add(q.symbol);
+            });
+        }
+
+        // Add Yahoo results
+        if (yfResults.status === 'fulfilled' && yfResults.value.quotes) {
+            yfResults.value.quotes.forEach(q => {
+                if (!seenSymbols.has(q.symbol)) {
+                    quotes.push({
+                        symbol: q.symbol,
+                        name: q.shortname || q.longname || q.symbol,
+                        type: q.quoteType,
+                        region: q.region,
+                        currency: q.currency
+                    });
+                    seenSymbols.add(q.symbol);
+                }
+            });
+        }
+
+        return quotes;
     } catch (error) {
         logger.error(`[CashFlow Service] Search Error: ${error.message}`);
         return [];
