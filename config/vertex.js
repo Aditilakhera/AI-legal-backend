@@ -51,8 +51,8 @@ else if (projectId) {
 
 import { getConfig, getFullSystemInstruction } from '../services/configService.js';
 
-// Model name - gemini-2.0-flash is latest stable and widely available on Vertex AI
-export const modelName = "gemini-2.0-flash";
+// Model name - gemini-1.5-flash is latest stable and widely available on Vertex AI
+export const modelName = "gemini-2.5-flash";
 
 /**
  * Dynamic System Instruction Getter
