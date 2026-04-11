@@ -708,24 +708,28 @@ router.post("/apple/callback", async (req, res) => {
 
     const { sub: providerId, email } = tokenResponse;
 
-    // 2. If we have a code, we might want to exchange it for an access token (optional but good for validation)
+    // 2. Exchange code for token (Optional but validates the setup)
     if (code) {
-       const clientSecret = appleSignin.getClientSecret({
-         clientID: clientId,
-         teamID: teamId,
-         keyID: keyId,
-         privateKey: privateKey,
-       });
+      try {
+        const clientSecret = appleSignin.getClientSecret({
+          clientID: clientId,
+          teamID: teamId,
+          keyID: keyId,
+          privateKey: privateKey,
+        });
 
-       await appleSignin.getAuthorizationToken(code, {
-         clientID: clientId,
-         clientSecret: clientSecret,
-         redirectUri: `${process.env.BACKEND_URL || 'http://localhost:8080'}/api/auth/apple/callback`,
-       });
+        await appleSignin.getAuthorizationToken(code, {
+          clientID: clientId,
+          clientSecret: clientSecret,
+          redirectUri: `${process.env.BACKEND_URL || 'http://localhost:8080'}/api/auth/apple/callback`,
+        });
+      } catch (clientErr) {
+        console.error(`[Apple Client Secret Error]:`, clientErr.message);
+        // We continue because verifyIdToken already succeeded, but this log helps debug keys
+      }
     }
 
     let name = '';
-    // Apple only sends 'user' JSON on the FIRST login
     if (userJson) {
       const userData = JSON.parse(userJson);
       if (userData.name) {
@@ -744,7 +748,8 @@ router.post("/apple/callback", async (req, res) => {
     return handleSocialUser(profile, res);
 
   } catch (err) {
-    console.error(`[Apple Auth Error]:`, err);
+    console.error(`[Apple Auth Overall Error]:`, err.message);
+    if (err.stack) console.error(err.stack); // Print stack trace to Logs for deep debugging
     const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
     return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent("Apple login failed")}`);
   }
