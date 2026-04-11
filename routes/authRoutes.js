@@ -715,7 +715,7 @@ router.post("/apple/callback", async (req, res) => {
         const clientSecret = appleSignin.getClientSecret({
           clientID: clientId,
           teamID: teamId,
-          keyID: keyId,
+          keyIdentifier: keyId,
           privateKey: privateKey,
         });
 
