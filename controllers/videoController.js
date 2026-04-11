@@ -1,7 +1,7 @@
 import axios from 'axios';
 import logger from '../utils/logger.js';
 import { GoogleAuth } from 'google-auth-library';
-import { uploadToCloudinary } from '../services/cloudinary.service.js';
+import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
 import { Storage } from '@google-cloud/storage';
 import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
@@ -47,13 +47,15 @@ export const generateVideo = async (req, res) => {
     let imageGcsUri = null;
     let imageMimeType = null;
     if (imageFile) {
-        const bucketName = 'aisageneratedvideo';
-        // Sanitize originalname to prevent URI errors in Vertex AI Veo
-        const sanitizedName = imageFile.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-        const fileName = `uploads/img_${uuidv4()}_${sanitizedName}`;
-        const fileRef = storage.bucket(bucketName).file(fileName);
-        await fileRef.save(imageFile.buffer, { metadata: { contentType: imageFile.mimetype } });
-        imageGcsUri = `gs://${bucketName}/${fileName}`;
+        // Upload source image to aisa_objects/video_inputs for Veo
+        const ext = imageFile.originalname.split('.').pop() || 'png';
+        const gcsResult = await uploadToGCS(imageFile.buffer, {
+            folder: 'video_inputs',
+            filename: gcsFilename(`veo_input_${uuidv4()}`, ext),
+            mimeType: imageFile.mimetype,
+            isPublic: false,   // Keep private — only Vertex AI reads it via ADC
+        });
+        imageGcsUri = `gs://aisa_objects/${gcsResult.gcsPath}`;
         imageMimeType = imageFile.mimetype;
     }
 
@@ -206,12 +208,12 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
       logDebug(`Processing video: ${finalFileName}`);
       logger.info(`[VIDEO] Processing video: ${finalFileName}`);
 
-      // 7. DELIVERY STRATEGY: Use shared GCS SDK client (ADC) to download → Cloudinary upload
+      // 7. DELIVERY STRATEGY: Download video from generation bucket → re-upload to aisa_objects
       // In production (App Engine), ADC = App Engine default service account auto-auth
       // In local dev, ADC = gcloud auth application-default login
       try {
         logDebug(`Attempting GCS SDK download via ADC (project: ${projectId})...`);
-        logger.info(`[VIDEO] Attempting GCS SDK download → Cloudinary upload... (ENV: ${process.env.NODE_ENV || 'development'})`);
+        logger.info(`[VIDEO] Attempting GCS SDK download → aisa_objects upload... (ENV: ${process.env.NODE_ENV || 'development'})`);
 
         // Reuse module-level storage client (already initialized with correct credentials)
         const fileRef = storage.bucket(bucketName).file(finalFileName);
@@ -219,18 +221,20 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
         // Download to memory buffer using SDK (internally uses ADC OAuth token)
         const [fileBuffer] = await fileRef.download({ timeout: 180000 });
 
-        logDebug(`GCS SDK download success (${fileBuffer.byteLength} bytes). Uploading to Cloudinary...`);
-        logger.info(`[VIDEO] Downloaded ${fileBuffer.byteLength} bytes. Uploading to Cloudinary...`);
+        logDebug(`GCS SDK download success (${fileBuffer.byteLength} bytes). Uploading to aisa_objects...`);
+        logger.info(`[VIDEO] Downloaded ${fileBuffer.byteLength} bytes. Uploading to aisa_objects...`);
 
-        const cloudResult = await uploadToCloudinary(fileBuffer, {
+        const gcsUploadResult = await uploadToGCS(fileBuffer, {
           folder: 'generated_videos',
-          resource_type: 'video',
-          public_id: `aisa_vid_${Date.now()}`,
+          filename: gcsFilename('aisa_vid', 'mp4'),
+          mimeType: 'video/mp4',
+          isPublic: false,
+          useSignedUrl: true,
         });
 
-        const url = cloudResult.secure_url;
-        logDebug(`Success! Cloudinary URL: ${url}`);
-        logger.info(`[VIDEO] Successfully uploaded to Cloudinary: ${url}`);
+        const url = gcsUploadResult.publicUrl;
+        logDebug(`Success! GCS URL: ${url}`);
+        logger.info(`[VIDEO] Successfully uploaded to aisa_objects: ${url}`);
         return url;
 
       } catch (downloadError) {
@@ -238,11 +242,11 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
         logger.warn(`[VIDEO] GCS SDK download failed [${downloadError.code}]: ${downloadError.message}`);
         logger.warn(`[VIDEO] HINT: In production, grant 'Storage Object Admin' role to App Engine service account: ${projectId}@appspot.gserviceaccount.com on bucket '${bucketName}'`);
 
-        // Fallback: makePublic → return direct public GCS URL (no download needed)
+        // Fallback: makePublic the file in aisageneratedvideo and return its URL
         try {
           const fileRef = storage.bucket(bucketName).file(finalFileName);
 
-          logDebug(`Attempting makePublic()...`);
+          logDebug(`Attempting makePublic() on source bucket...`);
           logger.info(`[VIDEO] Attempting makePublic() on GCS file...`);
           await fileRef.makePublic();
 

@@ -147,7 +147,8 @@ const userSchema = new mongoose.Schema({
         desc: String,
         type: { type: String, enum: ['promo', 'update', 'alert'], default: 'promo' },
         time: { type: Date, default: Date.now },
-        isRead: { type: Boolean, default: false }
+        isRead: { type: Boolean, default: false },
+        voice: { type: String, default: 'none' }
     }]
 }, { timestamps: true });
 

@@ -94,3 +94,5 @@ Understand the user's expertise level and topic preference implicitly from their
     }
 };
 
+export const AskOpenAIRaw = askOpenAI;
+

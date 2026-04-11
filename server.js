@@ -12,6 +12,8 @@ import emailVerification from "./routes/emailVerification.js"
 import userRoute from './routes/user.js'
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Server } from 'socket.io';
+import * as stockService from './services/stockService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +42,15 @@ import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './routes/legalRoutes.js';
 import intentRoutes from './routes/intentRoutes.js';
 import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
+import socialAgentRoutes from './routes/socialMediaGenerator.routes.js';
+import socialReviewRoutes from './routes/socialAgentReview.routes.js';
+import mediaProxyRoutes from './routes/mediaProxy.routes.js';
+import brandRoutes from './routes/brandFetch.route.js';
+import cashflowRoutes from './routes/cashflowRoutes.js';
+import stockRoutes from './routes/stockRoutes.js';
+import legalToolkitRoutes from './routes/legalToolkitRoutes.js';
+import storageRoutes from './routes/storage.routes.js';
+
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -64,6 +75,10 @@ connectDB().then(async () => {
     // Initialize Automatic Knowledge Update System (Crawler Scheduler)
     const { initScheduler } = await import('./services/scheduler.service.js');
     initScheduler();
+
+    // Initialize Multi Schedule Reminder System
+    const { initReminderScheduler } = await import('./services/reminderScheduler.js');
+    initReminderScheduler();
 
   } catch (err) {
     console.error("❌ Failed to pre-initialize AI services:", err.message);
@@ -112,6 +127,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoute);
 app.use('/api/user', dataRoutes);  // GDPR data deletion & export
 app.use('/api/legal', legalRoutes);
+app.use('/api/legal-toolkit', legalToolkitRoutes);
 
 // Intelligence Features
 app.use('/api/chat', chatRoutes);
@@ -123,6 +139,8 @@ app.use('/api/video', videoRoutes);
 
 // Intent Routing & Orchestration System
 app.use('/api/intent', intentRoutes);
+app.use('/api/cashflow', cashflowRoutes);
+app.use('/api/stock', stockRoutes);
 
 // Utility & Support
 app.use('/api/notifications', notificationRoutes);
@@ -140,9 +158,17 @@ app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api', dashboardRoutes);
 app.use('/api/ai-ad', aiAdAgentRoutes);
+app.use('/api/social-agent', socialAgentRoutes);
+app.use('/api/social-agent-review', socialReviewRoutes);
+app.use('/api/media', mediaProxyRoutes);
+app.use('/api/brand', brandRoutes);
+
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+
+// Storage Proxy (for private GCS assets)
+app.use('/api/storage', storageRoutes);
 
 // Projects
 app.use('/api/projects', projectRoutes);
@@ -185,8 +211,74 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, () => {
   console.log(`AISA Backend running on http://localhost:${PORT}`);
 });
+
+// --- WebSockets for Market Data ---
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+const activeRealtimeSubscriptions = new Map(); // socket.id -> { symbol, intervalId }
+
+io.on('connection', (socket) => {
+  console.log(`[Socket] Client connected: ${socket.id}`);
+
+  // Handle Realtime Subscription
+  socket.on('subscribe_realtime', async ({ symbol }) => {
+    console.log(`[Socket] ${socket.id} subscribed to realtime: ${symbol}`);
+    
+    // Clear previous subscription if it exists
+    if (activeRealtimeSubscriptions.has(socket.id)) {
+        clearInterval(activeRealtimeSubscriptions.get(socket.id).intervalId);
+    }
+
+    // Immediately fetch and emit once
+    try {
+        const initialData = await stockService.getQuote(symbol);
+        socket.emit('realtime_update', { quote: initialData });
+    } catch (err) {}
+
+    // Simulated websocket streaming (polling backend API)
+    const intervalId = setInterval(async () => {
+        try {
+            const data = await stockService.getQuote(symbol);
+            if (data) {
+                // Sent exact price without any artificial jitter
+                socket.emit('realtime_update', { quote: data });
+            }
+        } catch (error) {
+            console.error(`[Socket] Live fetch error for ${symbol}:`, error.message);
+        }
+    }, 2000); // 2-second ticks over WebSocket
+
+    activeRealtimeSubscriptions.set(socket.id, { symbol, intervalId });
+  });
+
+  // Handle Historical Request
+  socket.on('request_historical', async ({ symbol }) => {
+    console.log(`[Socket] ${socket.id} requested historical data for: ${symbol}`);
+    try {
+        const historical = await stockService.getHistorical(symbol);
+        socket.emit('historical_data_response', { historical });
+    } catch (error) {
+        socket.emit('historical_data_response', { error: 'Failed to fetch historical data' });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`[Socket] Client disconnected: ${socket.id}`);
+    if (activeRealtimeSubscriptions.has(socket.id)) {
+        clearInterval(activeRealtimeSubscriptions.get(socket.id).intervalId);
+        activeRealtimeSubscriptions.delete(socket.id);
+    }
+  });
+});
+
 server.timeout = 900000; // 15 mins
 
 
 // Keep process alive for local development
 setInterval(() => { }, 1000 * 60 * 60); // Keep alive process
+// trigger restart

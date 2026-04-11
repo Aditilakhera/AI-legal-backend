@@ -6,7 +6,7 @@ import util from 'util';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 import Knowledge from '../models/Knowledge.model.js';
 import * as aiService from '../services/ai.service.js';
-import { uploadToCloudinary } from '../services/cloudinary.service.js';
+
 import mammoth from 'mammoth';
 import xlsx from 'xlsx';
 import officeParser from 'officeparser';
@@ -57,7 +57,7 @@ export const uploadDocument = async (req, res) => {
         const originalName = req.file.originalname;
         const fileBuffer = req.file.buffer;
         const mimeType = req.file.mimetype;
-        const category = req.body.category || 'General';
+        let category = req.body.category || 'General';
         const assetType = req.body.assetType;
         const fileSize = req.file.size;
 
@@ -104,6 +104,16 @@ export const uploadDocument = async (req, res) => {
                 logger.error(`Background Vertex RAG error for ${originalName}: ${err.message}`);
             });
         }
+
+        // 3. Category Normalization (Adopting new defaults while preserving specialized agents)
+        category = req.body.category || 'GENERAL';
+        category = category.toUpperCase();
+        
+        // If it's not a specialized agent category, enforce the platform standard
+        if (!['LEGAL', 'GENERAL', 'AIADASSET'].includes(category)) {
+            category = 'GENERAL';
+        }
+
 
         // 3. Always Store Metadata (for listing)
         try {
@@ -337,7 +347,10 @@ export const downloadDocument = async (req, res) => {
 // @access  Public
 export const uploadUrl = async (req, res) => {
     try {
-        const { url, category = 'Web', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
+        let { url, category = 'LEGAL', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
+        
+        category = category.toUpperCase();
+        if (!['LEGAL', 'GENERAL'].includes(category)) category = 'LEGAL';
 
         if (!url) {
             return res.status(400).json({ success: false, message: 'URL is required' });
@@ -361,11 +374,12 @@ export const uploadUrl = async (req, res) => {
             source = await KnowledgeSource.create({
                 url: url,
                 domain: parsedUrl.hostname,
+                category: category,
                 crawl_depth: depth,
                 max_pages: maxPages,
                 update_frequency: frequency,
                 status: 'active',
-                next_crawl_at: new Date() // Force immediate crawl
+                next_crawl_at: new Date()
             });
         }
 

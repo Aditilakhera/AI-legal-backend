@@ -46,6 +46,7 @@
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^2.2.1",
     "node-cron": "^4.2.1",
+    "node-vibrant": "^3.2.1-alpha.1",
     "nodemailer": "^7.0.12",
     "officeparser": "^4.2.0",
     "paytmchecksum": "^1.5.1",
@@ -53,8 +54,11 @@
     "pdf-parse": "^1.1.1",
     "razorpay": "^2.9.6",
     "resend": "^6.6.0",
+    "socket.io": "^4.8.3",
     "tesseract.js": "^7.0.0",
     "uuid": "^13.0.0",
-    "xlsx": "^0.18.5"
+    "ws": "^8.20.0",
+    "xlsx": "^0.18.5",
+    "yahoo-finance2": "^3.14.0"
   }
 }

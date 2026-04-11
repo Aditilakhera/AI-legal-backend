@@ -9,7 +9,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
-import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 import { OAuth2Client } from "google-auth-library";
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
 import { verifyToken } from "../middleware/authorization.js";
@@ -283,12 +283,13 @@ const handleSocialUser = async (profile, res, isRedirect = true) => {
           if (picture.includes('googleusercontent.com') || picture.includes('fbcdn.net') || picture.includes('twimg.com') || picture.includes('microsoft.com')) {
             try {
               const avatarRes = await axios.get(picture, { responseType: 'arraybuffer', timeout: 5000 });
-              const cloudRes = await uploadToCloudinary(avatarRes.data, {
+              const buffer = Buffer.from(avatarRes.data);
+              const gcsRes = await uploadToGCS(buffer, {
                 folder: 'user_avatars',
-                public_id: `avatar_social_${user.email.split('@')[0]}_${Date.now()}`,
-                overwrite: true
+                filename: gcsFilename(`avatar_social_${user.email.split('@')[0]}`),
+                mimeType: avatarRes.headers['content-type'] || 'image/jpeg',
               });
-              user.avatar = cloudRes.secure_url;
+              user.avatar = gcsRes.publicUrl;
             } catch (e) {
               user.avatar = picture; 
             }

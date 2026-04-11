@@ -1,17 +1,18 @@
 import express from "express"
 import userModel from "../models/User.js"
 import mongoose from "mongoose";
+import Subscription from "../models/Subscription.js"
 import { verifyToken } from "../middleware/authorization.js"
 
 import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
 import uploadMiddleware from "../middlewares/upload.middleware.js";
-import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 
 const route = express.Router()
 
 route.get("/", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
         // DB Down Fallback
@@ -66,7 +67,7 @@ route.get("/", verifyToken, async (req, res) => {
 // PUT /api/user - Update general user fields (name, avatar, etc.)
 route.put("/", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const updates = req.body;
 
         if (!updates || Object.keys(updates).length === 0) {
@@ -95,7 +96,7 @@ route.put("/", verifyToken, async (req, res) => {
 // PUT /api/user/personalizations - Update personalization preferences
 route.put("/personalizations", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const { personalizations } = req.body;
 
         console.log(`[BACKEND] Updating personalizations for user: ${userId}`, personalizations);
@@ -128,6 +129,11 @@ route.put("/personalizations", verifyToken, async (req, res) => {
             }
         });
 
+        // FORCE UI language to English always - UI language must stay English
+        if (user.personalizations?.general) {
+            user.personalizations.general.language = 'English';
+        }
+
         // CRITICAL for Mongoose 'Mixed' type update detection
         user.markModified('personalizations');
 
@@ -146,7 +152,7 @@ route.put("/personalizations", verifyToken, async (req, res) => {
 // PUT /api/user/profile - Update user profile fields (like name)
 route.put("/profile", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const { name } = req.body;
         if (!name) return res.status(400).json({ error: "Name is required" });
 
@@ -178,14 +184,16 @@ route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
             return res.status(400).json({ error: "No file uploaded" });
         }
 
-        const cloudRes = await uploadToCloudinary(req.file.buffer, {
+        const ext = req.file.originalname.split('.').pop() || 'png';
+        const gcsResult = await uploadToGCS(req.file.buffer, {
             folder: 'user_avatars',
-            public_id: `avatar_${req.user.id}_${Date.now()}`
+            filename: gcsFilename(`avatar_${req.user.id || req.user._id}`, ext),
+            mimeType: req.file.mimetype,
         });
 
         const user = await userModel.findByIdAndUpdate(
-            req.user.id,
-            { avatar: cloudRes.secure_url },
+            req.user.id || req.user._id,
+            { avatar: gcsResult.publicUrl },
             { new: true }
         ).select("-password");
 
@@ -208,7 +216,7 @@ route.post("/avatar", verifyToken, uploadMiddleware, async (req, res) => {
 route.delete("/avatar", verifyToken, async (req, res) => {
     try {
         const user = await userModel.findByIdAndUpdate(
-            req.user.id,
+            req.user.id || req.user._id,
             { avatar: "" },
             { new: true }
         ).select("-password");
@@ -231,7 +239,7 @@ route.delete("/avatar", verifyToken, async (req, res) => {
 // GET /api/user/notifications - Get notification inbox
 route.get("/notifications", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
 
         if (mongoose.connection.readyState !== 1) {
             return res.status(200).json([
@@ -281,7 +289,7 @@ route.get("/notifications", verifyToken, async (req, res) => {
 // GET /api/user/subscription - Get user subscription and usage status
 route.get("/subscription", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const subscriptionService = { getUsageStatus: async () => ({}) };
         const status = await subscriptionService.getUsageStatus(userId);
         res.status(200).json(status);
@@ -294,7 +302,7 @@ route.get("/subscription", verifyToken, async (req, res) => {
 // DELETE /api/user/notifications/:notifId - Delete a notification
 route.delete("/notifications/:notifId", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const { notifId } = req.params;
         const user = await userModel.findByIdAndUpdate(userId, {
             $pull: { notificationsInbox: { id: notifId } }
@@ -310,7 +318,7 @@ route.delete("/notifications/:notifId", verifyToken, async (req, res) => {
 // DELETE /api/user/notifications - Clear all notifications
 route.delete("/notifications", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const user = await userModel.findByIdAndUpdate(userId, {
             $set: { notificationsInbox: [] }
         }, { new: true });
@@ -326,7 +334,7 @@ route.delete("/notifications", verifyToken, async (req, res) => {
 // POST /api/user/personalizations/reset - Reset personalization preferences to defaults
 route.post("/personalizations/reset", verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
 
         // DB Down Fallback
         if (mongoose.connection.readyState !== 1) {
@@ -362,13 +370,23 @@ route.get("/all", verifyToken, async (req, res) => {
 
         const spendMap = {};
 
+        const subscriptions = await Subscription.find({}).populate('planId');
+        const subMap = subscriptions.reduce((acc, sub) => {
+            acc[sub.userId.toString()] = sub.planId?.planName || 'Free Plan';
+            return acc;
+        }, {});
+
         const usersWithDetails = users.map(user => ({
             id: user._id,
             name: user.name,
             email: user.email,
+            avatar: user.avatar,
             role: user.role,
+            isBlocked: user.isBlocked,
+            planName: subMap[user._id.toString()] || 'Free Plan',
             status: user.isVerified ? 'Active' : 'Pending',
             agents: user.agents || [],
+            credits: user.credits || 0,
             spent: spendMap[user._id.toString()] || 0
         }));
 
@@ -413,7 +431,7 @@ route.put("/:id/block", verifyToken, async (req, res) => {
 route.delete("/:id", verifyToken, async (req, res) => {
     try {
         const targetUserId = req.params.id;
-        const requesterId = req.user.id;
+        const requesterId = req.user.id || req.user._id;
 
         // DB Down Fallback
         if (mongoose.connection.readyState !== 1) {

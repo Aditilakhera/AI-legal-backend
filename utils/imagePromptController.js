@@ -68,74 +68,64 @@ RESPOND ONLY WITH THE FINAL REFINED PROMPT. DO NOT ADD ANY EXPLANATION OR CONVER
 `;
 
 export const IMAGE_EDIT_CONTROLLER_SYSTEM_PROMPT = `
-You are an advanced IMAGE EDITING controller for AISA™. 
-Your task is to precisely edit an existing image based on the user's request.
+You are an advanced IMAGE TRANSFORMATION controller for AISA™.
+Your task is to write a precise, detailed image generation prompt that will be used by an AI model to transform the provided reference image based on the user's request.
 
-⚠️ CRITICAL: You must MODIFY the image, NOT regenerate it.
+The AI model you are writing for:
+- Receives the original image as a reference/face anchor
+- Generates a NEW image applying the user's requested transformations
+- Preserves the identity/face of the person from the reference image
 
-----------------------------------------
-1. PRESERVE ORIGINAL IMAGE (PARANOID MODE)
-----------------------------------------
-- You MUST describe the original scene (background, lighting) in your refined prompt to remind the model what to lock.
-- Keep EVERY existing detail (furniture, floor, sky) unless specifically asked to remove it.
-- "ADD" means "INTEGRATE INTO THE EXISTING SPACE". It NEVER means "REPLACE THE SCENE".
+⚠️ CRITICAL RULES:
 
 ----------------------------------------
-2. SUBJECT MODIFICATION (POSE / OUTFIT / APPEARANCE)
+1. FOR STYLISTIC / SCENE TRANSFORMS (user wants a different style, location, outfit, background):
 ----------------------------------------
-- 🚨 **AVOID DUPLICATE SUBJECTS:** If the user asks to change the pose (e.g., "make her stand", "change hands"), outfit, or appearance of a person, you MUST explicitly tell the model to REPLACE or MODIFY the existing person.
-- DO NOT lock "people" in the config if the person is the target of the edit.
-- Command phrasing: "Remove the seated person and replace her in the same spot with the same person standing straight up." or "Change her current outfit to a formal black blazer while keeping her face and features identical."
+- Write a FULL image generation prompt describing the NEW scene/style entirely.
+- USE the reference image only to anchor the person's face and identity.
+- Example: "A photo-realistic editorial close-up of a [describe the same person from the reference] wearing [requested outfit], seated on [requested prop], [requested background scene], [camera angle], [lighting]."
+- Be SPECIFIC: describe every visual element from the user's request.
 
 ----------------------------------------
-3. TEXT ACCURACY PROTOCOL
+2. FOR MINOR EDITS (add text, remove background, change small object):
 ----------------------------------------
-- Provide the text exactly as requested inside double quotes. 
-- State: "The text must be exactly [TEXT] with no letters omitted, added, or shortened."
-- Use "CHARACTER-BY-CHARACTER" rendering but phrased as a visual style command.
+- Describe what to KEEP and what to CHANGE precisely.
+- For background removal: "Remove the background, keep the subject with a transparent/white background."
+- For text addition: state the exact text in quotes and exact position.
 
 ----------------------------------------
-4. OBJECT ADDITION & PLACEMENT
+3. FACE / IDENTITY PRESERVATION:
 ----------------------------------------
-- Describe the new object placement using natural spatial language (e.g. "To the right of the center brain", "On the counter next to the bag").
-- Ensure it matches the material and lighting of the scene.
+- Always include "same face and hairstyle as reference image" in the prompt.
+- Never change gender, age, or core identity unless explicitly requested.
 
 ----------------------------------------
-5. OBJECT REMOVAL
+4. TEXT ACCURACY PROTOCOL:
 ----------------------------------------
-- Remove object cleanly using background-aware inpainting.
-- Ensure no artifacts or distortions in the removed area.
+- Render any text CHARACTER-BY-CHARACTER.
+- State text exactly as requested in double quotes.
 
 ----------------------------------------
-6. STYLE & COLOR CONSISTENCY
+5. PRECISION PRIORITY:
 ----------------------------------------
-- Maintain original art style (illustration / realistic / 3D).
-- Keep color palette and ambient lighting identical.
+- Accuracy > creativity. Follow the user's request literally.
+- Output a high-quality, photorealistic prompt unless a specific art style is requested.
 
 ----------------------------------------
-7. PRECISION PRIORITY
-----------------------------------------
-- Accuracy > creativity.
-- Treat edits like Photoshop-level changes.
-
-----------------------------------------
-INPUT IMAGE: [original image]
+INPUT IMAGE: [reference image of person/scene]
 USER REQUEST: {{EDIT_PROMPT}}
 
 ----------------------------------------
 OUTPUT FORMAT:
-Return a technical instruction for the final image editing model. 
-DO NOT include conversational filler.
-START your response with a JSON configuration block, then provide the detailed prompt on a new line.
+Return a JSON configuration block, then the detailed generation prompt on a new line.
 
 {
-  "mode": "edit",
-  "preserve_scene": true,
-  "lock_background": true,
-  "lock_objects": ["furniture", "lighting"],
+  "mode": "transform",
+  "preserve_face": true,
+  "new_scene": true,
   "edit_mode": "inpainting-insert"
 }
-Keep the existing background and lighting. Remove the seated woman and replace her with the exact same woman standing straight, maintaining her facial features and hairstyle. She should now be standing elegantly in a professional pose in the same location.
+A high-end editorial close-up of a stylish young man (same face and hairstyle as reference image) wearing modern glasses, seated on a royal blue armchair. Shot in a tight mid-shot / close-up angle, focusing on facial expression and upper outfit details. The cobalt blue geometric outfit texture is crisp and detailed. Shallow depth of field, blurred background, soft luxury lighting, glossy skin tones, fashion magazine aesthetic, ultra-detailed, 4K.
 ----------------------------------------
 `;
 
@@ -217,5 +207,57 @@ Describe the original image scene (subjects, position, background, lighting) and
     } catch (error) {
         console.error(`[Image Editor Controller] Refinement failed: ${error.message}`);
         return { prompt: userEditText, config: null }; // Fallback to original
+    }
+};
+
+export const FOLLOW_UP_PROMPTS_SYSTEM_PROMPT = `
+You are an AI feature inside an image generation application.
+When a user provides a prompt and an image is generated, your job is to create smart, relevant follow-up prompts based on the original input.
+
+Your task:
+Generate 6 high-quality related image prompts that the user might want to try next.
+
+Guidelines:
+- Keep each prompt short (10–15 words max)
+- Make each prompt visually descriptive and creative
+- Ensure diversity (different styles, angles, lighting, moods, environments)
+- Avoid repeating similar wording
+- Make them suitable for AI image generation tools
+- Enhance the original idea instead of changing it completely
+
+Output format:
+Return ONLY a numbered list (no extra text)
+`;
+
+/**
+ * Generates follow-up image prompts based on the original user prompt.
+ * @param {string} userPrompt - The original prompt provided by the user.
+ * @returns {Promise<Array<string>>} - Array of follow-up prompts.
+ */
+export const generateFollowUpPrompts = async (userPrompt, imageUrl = null) => {
+    try {
+        console.log(`[Image Controller] Generating follow-up prompts for: "${userPrompt}"`);
+        
+        let promptArgs = `Original user prompt:\n"${userPrompt}"`;
+        if (imageUrl) {
+            promptArgs += `\nThe generated image is attached. Please base your suggestions on the visual details in the generated image AND the original prompt.`;
+        }
+
+        const response = await askOpenAI(promptArgs, null, {
+            systemInstruction: FOLLOW_UP_PROMPTS_SYSTEM_PROMPT,
+            image: imageUrl
+        });
+
+        if (response) {
+            // Parse numbered list into an array of strings and strip surrounding quotes
+            const prompts = response.split('\n')
+                .map(line => line.replace(/^\d+\.\s*/, '').replace(/^-+\s*/, '').replace(/^"+|"+$/g, '').trim())
+                .filter(line => line.length > 0 && !line.toLowerCase().includes("here is") && !line.toLowerCase().includes("sure"));
+            return prompts.slice(0, 6); // Extra safety
+        }
+        return [];
+    } catch (error) {
+        console.error(`[Image Controller] Follow-up prompt generation failed: ${error.message}`);
+        return [];
     }
 };

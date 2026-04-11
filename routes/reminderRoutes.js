@@ -7,16 +7,18 @@ const router = express.Router();
 // Create a new reminder
 router.post('/', verifyToken, async (req, res) => {
     try {
-        const { title, datetime, notification, alarm, voice, voiceMessage, intent } = req.body;
+        const { title, description, datetime, repeat, customDays, notificationType, voice, isActive, intent } = req.body;
 
         const reminder = new Reminder({
             userId: req.user.id,
             title,
+            description: description || '',
             datetime,
-            notification: notification !== undefined ? notification : true,
-            alarm: alarm !== undefined ? alarm : false,
-            voice: voice !== undefined ? voice : false,
-            voiceMessage: voiceMessage || '',
+            repeat: repeat || 'none',
+            customDays: customDays || [],
+            notificationType: notificationType || 'in-app',
+            voice: voice || 'none',
+            isActive: isActive !== undefined ? isActive : true,
             intent: intent || 'reminder_notification_only'
         });
 
@@ -72,6 +74,7 @@ router.get('/upcoming', verifyToken, async (req, res) => {
         const reminders = await Reminder.find({
             userId: req.user.id,
             status: 'pending',
+            isActive: true,
             datetime: { $gte: now, $lte: tomorrow }
         }).sort({ datetime: 1 });
 

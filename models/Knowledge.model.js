@@ -22,7 +22,8 @@ const KnowledgeSchema = new mongoose.Schema({
     },
     category: {
         type: String,
-        default: 'General'
+        enum: ['LEGAL', 'GENERAL', 'FINANCE'],
+        default: 'GENERAL'
     },
     sourceUrl: {
         type: String

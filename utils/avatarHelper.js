@@ -1,9 +1,9 @@
 import axios from "axios";
 import crypto from "crypto";
-import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 
 /**
- * Robustly fetches an avatar from various sources and persists it to Cloudinary.
+ * Robustly fetches an avatar from various sources and persists it to GCS (aisa_objects).
  * @param {string} email User email
  * @param {string} name User name (for initials fallback)
  * @returns {Promise<string>} Permanent Cloudinary URL or initials fallback URL
@@ -29,12 +29,13 @@ export const getSmartAvatar = async (email, name) => {
       });
 
       if (response.status === 200 && response.data.length > 1000) { 
-        const result = await uploadToCloudinary(response.data, {
+        const buffer = Buffer.from(response.data);
+        const result = await uploadToGCS(buffer, {
           folder: 'user_avatars',
-          public_id: `avatar_${normalizedEmail.split('@')[0]}_${Date.now()}`,
-          overwrite: true
+          filename: gcsFilename(`avatar_${normalizedEmail.split('@')[0]}`),
+          mimeType: response.headers['content-type'] || 'image/jpeg',
         });
-        return result.secure_url;
+        return result.publicUrl;
       }
     } catch (e) {
       continue;
