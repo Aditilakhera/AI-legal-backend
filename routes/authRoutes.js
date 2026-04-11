@@ -701,6 +701,12 @@ router.post("/apple/callback", async (req, res) => {
     const keyId = process.env.APPLE_KEY_ID;
     const privateKey = process.env.APPLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
+    // EXPLICIT CHECK FOR VARIABLES
+    if (!clientId) throw new Error("APPLE_CLIENT_ID is missing from server env");
+    if (!teamId) throw new Error("APPLE_TEAM_ID is missing from server env");
+    if (!keyId) throw new Error("APPLE_KEY_ID is missing from server env");
+    if (!privateKey) throw new Error("APPLE_PRIVATE_KEY is missing from server env");
+
     let finalIdToken = bodyIdToken;
 
     // 1. If we have a code, exchange it for tokens (this is the standard web flow)
