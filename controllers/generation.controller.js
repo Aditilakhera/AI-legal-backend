@@ -328,13 +328,21 @@ export const exportCalendarExcel = async (req, res) => {
 export const generateVisualPost = async (req, res) => {
   const { workspaceId, calendarEntryId, modelId } = req.body;
 
+  console.log('\n┌─────────────────────────────────────────────────────┐');
+  console.log('│  🚀 POST /generate/visual-post — Request received   │');
+  console.log('└─────────────────────────────────────────────────────┘');
+  console.log(`  👤 User          : ${req.user?.id || 'unknown'}`);
+  console.log(`  🏢 Workspace     : ${workspaceId}`);
+  console.log(`  📋 CalendarEntry : ${calendarEntryId}`);
+  console.log(`  🤖 Model override: ${modelId || 'none (will use default)'}`);
+
   if (!workspaceId || !calendarEntryId) {
+    console.warn('  ⚠️  Missing required fields — rejecting request');
     return res.status(400).json({ success: false, error: 'workspaceId and calendarEntryId are required' });
   }
 
   try {
-    // Fire immediately — do the actual generation in the background
-    // SSE-style: respond with a jobId right away so the frontend can poll
+    // Create a job record immediately so the frontend can poll
     const job = await GenerationJob.create({
       workspaceId,
       generationMode: 'visual_post',
@@ -342,15 +350,21 @@ export const generateVisualPost = async (req, res) => {
       targetEntryId: calendarEntryId,
     });
 
+    console.log(`  ✅ Job created   : ${job._id}`);
+    console.log(`  ⚡ Dispatching pipeline in background...`);
+
     // Fire and forget — background visual generation
     generationService.generateVisualPostForEntry(workspaceId, calendarEntryId, job._id, modelId)
       .catch(err => {
+        console.error(`\n❌ [VisualPost] Background job ${job._id} FAILED: ${err.message}`);
         logger.error(`[VisualPost] Background job ${job._id} failed: ${err.message}`);
         GenerationJob.findByIdAndUpdate(job._id, { status: 'failed', errorSummary: err.message }).catch(() => {});
       });
 
+    console.log(`  📨 Responding 202 with jobId: ${job._id}\n`);
     return res.status(202).json({ success: true, jobId: job._id, message: 'Visual post generation started' });
   } catch (error) {
+    console.error(`\n❌ [VisualPost] Controller error: ${error.message}`);
     logger.error(`[VisualPost] Failed to start job: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
   }

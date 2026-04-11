@@ -446,35 +446,59 @@ const updateUsage = (usage, type) => {
 import { generateImageFromPrompt } from '../controllers/image.controller.js';
 
 /**
- * Generates a brand-aware image for a calendar entry using:
- * 1. GPT-4 → crafts a rich, brand-specific Imagen prompt
- * 2. Vertex AI Imagen 3/4 → renders the high-quality visual
- * 3. GCS upload → saves to organised brand folder
- * 4. GeneratedAsset → stored in DB and linked to job
- *
- * @param {string} workspaceId
- * @param {string} entryId - CalendarEntry _id
- * @param {string} jobId   - GenerationJob _id to update with result
- * @param {string} modelId - Optional Imagen model override
+ * AI ADS AGENT — VISUAL POST GENERATION PIPELINE
+ * ─────────────────────────────────────────────────
+ * Step 1 │ GPT-4    → Brand-aware Imagen prompt engineering
+ * Step 2 │ Vertex AI Imagen 3/4 → High-quality visual render
+ * Step 3 │ GCS      → Secure cloud storage
+ * Step 4 │ MongoDB  → GeneratedAsset + Job update
+ * Step 5 │ Calendar → Entry status marked "generated"
  */
 export const generateVisualPostForEntry = async (workspaceId, entryId, jobId, modelId = 'imagen-3.0-generate-001') => {
-  logger.info(`[VisualPost] Starting visual pipeline: entryId=${entryId}, jobId=${jobId}`);
+  const pipelineStart = Date.now();
 
-  const brand   = await BrandProfile.findOne({ workspaceId });
-  const entry   = await CalendarEntry.findById(entryId);
+  console.log('\n' + '═'.repeat(60));
+  console.log('🎨  AI ADS AGENT — VISUAL POST PIPELINE STARTED');
+  console.log('═'.repeat(60));
+  console.log(`  📋 Entry ID    : ${entryId}`);
+  console.log(`  🏢 Workspace   : ${workspaceId}`);
+  console.log(`  🔧 Job ID      : ${jobId}`);
+  console.log(`  🤖 Model       : ${modelId}`);
+  console.log(`  ⏱  Started at  : ${new Date().toISOString()}`);
+  console.log('─'.repeat(60));
 
-  if (!brand || !entry) throw new Error('Brand or CalendarEntry not found');
+  // ── LOAD: Brand Profile & Calendar Entry ────────────────────────
+  console.log('\n[Step 0/5] 📂 Loading Brand Profile & Calendar Entry...');
+  const dataLoadStart = Date.now();
 
-  // ── Step 1: GPT-4 Prompt Engineering ───────────────────────────────────
-  const brandColors    = (brand.brandColors || []).slice(0, 3).join(', ') || 'brand palette';
-  const tone           = brand.toneOfVoice || brand.structuredIdentity?.tone || 'professional';
-  const companyName    = brand.companyName || 'Brand';
-  const platform       = entry.platform || 'Instagram';
-  const postType       = entry.postType || entry.format || 'image';
-  const title          = entry.title || entry.heading_hook || 'Post';
-  const hook           = entry.hook || entry.captionShort || '';
-  const phase          = entry.phase || 'Awareness';
+  const brand = await BrandProfile.findOne({ workspaceId });
+  const entry = await CalendarEntry.findById(entryId);
+
+  if (!brand || !entry) {
+    console.error(`[VisualPost] ❌ ABORT — Data missing: brand=${!!brand}, entry=${!!entry}`);
+    throw new Error('Brand or CalendarEntry not found');
+  }
+
+  const companyName     = brand.companyName || 'Brand';
+  const brandColors     = (brand.brandColors || []).slice(0, 3).join(', ') || 'brand palette';
+  const tone            = brand.toneOfVoice || brand.structuredIdentity?.tone || 'professional';
+  const platform        = entry.platform || 'Instagram';
+  const postType        = entry.postType || entry.format || 'image';
+  const title           = entry.title || entry.heading_hook || 'Post';
+  const hook            = entry.hook || entry.captionShort || '';
+  const phase           = entry.phase || 'Awareness';
   const targetEthnicity = brand.targetEthnicity || 'Global';
+
+  console.log(`    ✅ Brand        : "${companyName}"`);
+  console.log(`    ✅ Post title   : "${title}"`);
+  console.log(`    ✅ Platform     : ${platform} | Type: ${postType} | Phase: ${phase}`);
+  console.log(`    ✅ Brand colors : ${brandColors}`);
+  console.log(`    ✅ Tone         : ${tone}`);
+  console.log(`    ⏱  Loaded in ${Date.now() - dataLoadStart}ms`);
+
+  // ── STEP 1: GPT-4 Prompt Engineering ────────────────────────────
+  console.log('\n[Step 1/5] 🧠 GPT-4 Prompt Engineering...');
+  const promptStart = Date.now();
 
   const promptEngineeringRequest = `You are an expert AI Image Prompt Engineer for social media advertising.
 
@@ -500,28 +524,45 @@ Requirements for the Imagen prompt:
 
 Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
 
-  logger.info(`[VisualPost] Calling GPT-4 for prompt engineering...`);
+  console.log(`    📤 Sending context to GPT-4 (${promptEngineeringRequest.length} chars)...`);
+
   const imagenPrompt = await AskOpenAIRaw(promptEngineeringRequest, null, {
     systemInstruction: 'You are an AI image prompt engineer. Output only the image generation prompt text.'
   });
 
   if (!imagenPrompt || imagenPrompt.trim().length < 20) {
+    console.error('[VisualPost] ❌ GPT-4 returned empty/invalid prompt');
     throw new Error('GPT-4 returned an empty image prompt');
   }
 
-  logger.info(`[VisualPost] Imagen prompt generated (${imagenPrompt.length} chars). Calling Vertex AI...`);
-  logger.debug(`[VisualPost] Prompt: ${imagenPrompt.substring(0, 200)}...`);
+  const trimmedPrompt = imagenPrompt.trim();
+  console.log(`    ✅ Prompt received (${trimmedPrompt.length} chars) in ${Date.now() - promptStart}ms`);
+  console.log(`    📝 Prompt preview: "${trimmedPrompt.substring(0, 120)}..."`);
 
-  // ── Step 2: Vertex AI Imagen Generation ────────────────────────────────
-  // Prefer Imagen 4 if no override; fallback chain is handled inside generateImageFromPrompt
-  const selectedModel = modelId || 'imagen-4.0-generate-preview-05-20';
-  const imageUrl = await generateImageFromPrompt(imagenPrompt.trim(), null, '1:1', selectedModel);
+  // ── STEP 2: Vertex AI Imagen Generation ─────────────────────────
+  console.log(`\n[Step 2/5] 🖼  Vertex AI Imagen Generation...`);
+  const imagenStart = Date.now();
 
-  if (!imageUrl) throw new Error('Vertex AI Imagen returned no image URL');
+  const selectedModel = modelId || 'imagen-3.0-generate-001';
+  console.log(`    🤖 Calling model: ${selectedModel}`);
+  console.log(`    📐 Aspect ratio : 1:1`);
 
-  logger.info(`[VisualPost] Image generated: ${imageUrl}`);
+  const imageUrl = await generateImageFromPrompt(trimmedPrompt, null, '1:1', selectedModel);
 
-  // ── Step 3: Save GeneratedAsset ─────────────────────────────────────────
+  if (!imageUrl) {
+    console.error('[VisualPost] ❌ Vertex AI returned no image URL');
+    throw new Error('Vertex AI Imagen returned no image URL');
+  }
+
+  const imagenMs = Date.now() - imagenStart;
+  console.log(`    ✅ Image rendered in ${imagenMs}ms`);
+  console.log(`    🔗 GCS URL: ${imageUrl.substring(0, 80)}...`);
+
+  // ── STEP 3: Save GeneratedAsset to DB ────────────────────────────
+  console.log('\n[Step 3/5] 💾 Saving GeneratedAsset to MongoDB...');
+  const assetStart = Date.now();
+
+  const assetName = `visual_${title.replace(/\s+/g, '_').substring(0, 30)}_${Date.now()}.png`;
   const asset = await GeneratedAsset.create({
     workspaceId,
     calendarEntryId: entry._id,
@@ -530,8 +571,8 @@ Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
     gcsUrl: imageUrl,
     mimeType: 'image/png',
     metadata: {
-      prompt: imagenPrompt,
-      originalName: `visual_${title.replace(/\s+/g, '_').substring(0, 30)}_${Date.now()}.png`,
+      prompt: trimmedPrompt,
+      originalName: assetName,
       platform,
       phase,
       generatedAt: new Date(),
@@ -539,19 +580,39 @@ Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
     }
   });
 
-  // ── Step 4: Mark job as completed ───────────────────────────────────────
+  console.log(`    ✅ GeneratedAsset saved: ${asset._id}`);
+  console.log(`    📁 Asset name   : ${assetName}`);
+  console.log(`    ⏱  Saved in ${Date.now() - assetStart}ms`);
+
+  // ── STEP 4: Mark GenerationJob as Completed ──────────────────────
+  console.log('\n[Step 4/5] 🔄 Updating GenerationJob status...');
   await GenerationJob.findByIdAndUpdate(jobId, {
     status: 'completed',
     completedAt: new Date(),
     completedCount: 1,
     resultAssetId: asset._id,
   });
+  console.log(`    ✅ Job ${jobId} → status: "completed"`);
 
-  // ── Step 5: Mark calendar entry as generated ────────────────────────────
+  // ── STEP 5: Mark CalendarEntry as Generated ──────────────────────
+  console.log('\n[Step 5/5] 📅 Updating CalendarEntry status...');
   entry.status = 'generated';
   await entry.save();
+  console.log(`    ✅ Entry ${entryId} → status: "generated"`);
 
-  logger.info(`[VisualPost] Pipeline complete. AssetID=${asset._id}`);
+  // ── PIPELINE COMPLETE ────────────────────────────────────────────
+  const totalMs = Date.now() - pipelineStart;
+  const totalSec = (totalMs / 1000).toFixed(1);
+  console.log('\n' + '═'.repeat(60));
+  console.log('✅  AI ADS AGENT — PIPELINE COMPLETE');
+  console.log('═'.repeat(60));
+  console.log(`  🆔 Asset ID     : ${asset._id}`);
+  console.log(`  🤖 Model used   : ${selectedModel}`);
+  console.log(`  ⏱  Total time   : ${totalSec}s (${totalMs}ms)`);
+  console.log(`  🔗 Image URL    : ${imageUrl.substring(0, 80)}...`);
+  console.log('═'.repeat(60) + '\n');
+
+  logger.info(`[VisualPost] ✅ Pipeline complete in ${totalSec}s | AssetID=${asset._id} | Model=${selectedModel}`);
   return asset;
 };
 
