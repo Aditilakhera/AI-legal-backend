@@ -44,6 +44,7 @@ import intentRoutes from './routes/intentRoutes.js';
 import cashflowRoutes from './routes/cashflowRoutes.js';
 import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './routes/legalToolkitRoutes.js';
+import connectorsRoutes from './routes/connectors.routes.js';
 // import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -142,6 +143,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/personal-assistant', personalTaskRoutes);
 app.use('/api/memory', memoryRoutes);
+app.use('/api/connectors', connectorsRoutes);
 
 // Business & Dashboard
 app.use('/api/pricing', pricingRoutes);
