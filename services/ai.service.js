@@ -210,6 +210,20 @@ ProjectRoot/
             }
         }
 
+        // --- GMAIL ASSISTANT ROUTING ---
+        if (classification && (classification.intent === 'gmail_assistant' || classification.tools?.includes('gmail_assistant'))) {
+            logger.info(`[AI-Service] Gmail Assistant intent detected. Triggering Gmail Service...`);
+            const { handleGmailIntent } = await import('./intent/gmailService.js');
+            const gmailResponse = await handleGmailIntent(userId, message);
+            if (gmailResponse) {
+                finalResponseData = { 
+                    text: gmailResponse.text,
+                    type: 'gmail_assistant_action'
+                };
+                return finalResponseData;
+            }
+        }
+
         // Construct dynamic instruction without legal rule (it will be added at the absolute end)
         const dynamicSystemInstruction = (systemInstruction || "") + personaContext + toolRestrictions;
 

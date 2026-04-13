@@ -36,8 +36,8 @@ router.post('/', verifyToken, upload.single('image'), creditMiddleware, async (r
 
         const client = new GoogleGenAI({
             vertexai: true,
-            project: process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
-            location: 'us-central1', // Force us-central1 because preview models aren't available in asia-south1
+            project: process.env.GCP_PROJECT_ID,
+            location: 'us-central1', 
         });
 
         const imageBase64 = file.buffer.toString('base64');
