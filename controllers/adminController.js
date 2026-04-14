@@ -322,3 +322,13 @@ export const deleteCreditPackage = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+// Returns ALL plans (regardless of isActive) for admin use
+export const getAllPlansAdmin = async (req, res) => {
+    try {
+        const plans = await Plan.find({}).sort({ priceMonthly: 1 });
+        res.status(200).json({ success: true, plans });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
