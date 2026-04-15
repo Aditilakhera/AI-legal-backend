@@ -134,11 +134,13 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         } else if (isActuallyCodeMode) {
             toolRestrictions = `
 \n\n### MODE: CODE WRITER ENABLED.
-- ROLE: You are an expert Software Architect and Senior Lead Developer. Your goal is to provide highly structured, technical, and implementation-ready architecture.
+- ROLE: You are an expert Software Architect and Senior Lead Developer. Your goal is to provide highly structured, technical, and complete implementation-ready code.
 - FORMATTING OVERRIDE: Ignore general rules about "Using bullet points for lists" when displaying project structures.
 - UNIFIED TREE: You MUST display the entire project/folder architecture inside ONE SINGLE markdown code block using a visual tree format (e.g., \`\`\`text).
-- CODE SNIPPETS: Wrap ALL code snippets in proper multi-line markdown code blocks with the correct language tag.
-- NO INLINE PATHS: Do not use single backticks for file names inside paragraphs if they are part of a structure.
+- FULL FILE CONTENT: After the tree structure, you MUST provide the COMPLETE, FULL code for each and every file listed in the tree. Do not just explain what the file does. Do not provide partial code or just the file name. Provide the actual, runnable code.
+- CODE BLOCKS: Wrap ALL code in proper multi-line markdown code blocks with the correct language tag (e.g., \`\`\`javascript, \`\`\`python, \`\`\`html).
+- FILE PATHS: Before every code block, clearly write the file path as a bold header (e.g., **src/server.js**). Do NOT place file names inside code blocks unless it's a comment inside the actual code.
+- NO INLINE PATHS AS CODE: Never output just the file name or folder name inside a code block. Code blocks are STRICTLY for the directory tree and the actual code.
 - EXAMPLE TREE FORMAT (MANDATORY):
 \`\`\`text
 ProjectRoot/
@@ -152,7 +154,7 @@ ProjectRoot/
 │   └── server.js
 └── package.json
 \`\`\`
-- CLEAN OUTPUT: Provide the unified Directory Tree first, then explain specific components or code snippets below the tree.
+- CLEAN OUTPUT: Provide the unified Directory Tree first, and then sequentially provide the bold file name followed by its complete code block for every file.
 `;
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
