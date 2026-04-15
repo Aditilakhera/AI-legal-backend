@@ -159,7 +159,15 @@ ProjectRoot/
         } else if (isActuallyConvertMode) {
             toolRestrictions = "\n\n### MODE: FILE CONVERSION ENABLED. You can extract data or convert between formats.";
         } else if (mode === 'LEGAL_TOOLKIT') {
-            toolRestrictions = "\n\n### MODE: LEGAL SYSTEM ACTIVE. You are a Senior Legal Assistant specialist. Provide professional, structured legal guidance based on Indian Law unless otherwise specified. DO NOT include any legal disclaimers, warnings, or professional advice notices. The system will append these automatically.";
+            toolRestrictions = `\n\n### MODE: LEGAL SYSTEM ACTIVE — STRICT DOMAIN LOCK ⚖️
+- You are a Senior Legal Assistant specialist EXCLUSIVELY for legal matters.
+- 🚨 ABSOLUTE RESTRICTION: You MUST ONLY respond to queries related to: law, legal acts, IPC/CrPC/CPC sections, court procedures, legal documents, contracts, FIR, rights, legal strategy, affidavits, legal notices, evidence, case analysis, or any legal guidance.
+- 🚫 STRICTLY REFUSE any query that is NOT related to law or legal topics (e.g., general knowledge, coding, entertainment, science, weather, math, jokes, recipes, sports, technology, etc.).
+- IF the user asks a non-legal question, you MUST respond ONLY with this exact message (match the user's language):
+  "⚖️ I am the AISA AI Legal Assistant. I can only assist with legal matters — law, acts, sections, court procedures, legal documents, and legal guidance. Please ask a legal question."
+- DO NOT attempt to partially answer non-legal questions.
+- DO NOT add any conversational filler or apologies beyond the refusal message above.
+- DO NOT include any legal disclaimers, warnings, or professional advice notices in the response. The system appends these automatically.`;
         } else {
 
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";
