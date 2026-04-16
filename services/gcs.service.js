@@ -14,17 +14,34 @@ const TARGET_PRINCIPAL = process.env.VIDEO_SERVICE_ACCOUNT || 'video-signer@ai-m
 let storage;
 let bucket;
 
-// Initialize standard Storage using Application Default Credentials
-// We don't impersonate globally because we only need impersonation for Signed URLs,
-// which is handled by the IAM Credentials API via the serviceAccountEmail parameter.
 try {
-    storage = new Storage({ 
-        projectId: process.env.GCP_PROJECT_ID || 'ai-mall-484810' 
+    const auth = new GoogleAuth({
+        scopes: [
+            'https://www.googleapis.com/auth/cloud-platform',
+            'https://www.googleapis.com/auth/iam'
+        ]
     });
+
+    const impersonatedClient = new Impersonated({
+        sourceClient: auth,
+        targetPrincipal: TARGET_PRINCIPAL,
+        lifetime: 3600,
+        delegates: [],
+        targetScopes: [
+            'https://www.googleapis.com/auth/cloud-platform',
+            'https://www.googleapis.com/auth/devstorage.full_control'
+        ]
+    });
+
+    storage = new Storage({ 
+        projectId: process.env.GCP_PROJECT_ID || 'ai-mall-484810',
+        authClient: impersonatedClient
+    });
+    
     bucket = storage.bucket(BUCKET_NAME);
-    logger.info(`[GCS] Standard storage initialized. Signatures will use IAM API for ${TARGET_PRINCIPAL}`);
+    logger.info(`[GCS] Impersonated storage initialized for ${TARGET_PRINCIPAL}`);
 } catch (error) {
-    logger.error(`[GCS] Failed to initialize standard storage: ${error.message}`);
+    logger.error(`[GCS] Failed to initialize storage: ${error.message}`);
 }
 
 /**
@@ -43,8 +60,7 @@ export const getSignedUrl = async (gcsPath, expiresInMinutes = 10080) => {
         const [url] = await file.getSignedUrl({
             version: 'v4',
             action: 'read',
-            expires,
-            serviceAccountEmail: TARGET_PRINCIPAL
+            expires
         });
         return url;
 
