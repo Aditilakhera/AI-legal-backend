@@ -9,8 +9,7 @@ import { executeImagePipeline } from '../services/generationPipeline.js';
 import axios from 'axios';
 
 // ------------------------------------------------------------------
-// Gemini image models — use @google/genai SDK with global endpoint
-// Imagen models — use Vertex AI REST predict API
+// Gemini image generation & editing using @google/genai SDK
 // ------------------------------------------------------------------
 const GEMINI_IMAGE_MODELS = [
     'gemini-3.1-flash-image-preview',
@@ -23,71 +22,6 @@ const getGenAIClient = (location = 'global') => new GoogleGenAI({
     project: process.env.GCP_PROJECT_ID,
     location,
 });
-
-// ------------------------------------------------------------------
-// Gemini SDK Streaming Generator
-// Uses generateContentStream + collects inlineData chunks
-// ------------------------------------------------------------------
-const generateWithGeminiSDK = async (prompt, modelId, aspectRatio = '1:1') => {
-    console.log(`[Gemini GenAI SDK] Generating with model: ${modelId} | Ratio: ${aspectRatio} | Prompt: "${prompt}"`);
-    const client = getGenAIClient('global');
-
-    // Map frontend aspect ratios to Gemini-supported values
-    let geminiRatio = '1:1';
-    if (aspectRatio === '16:9') geminiRatio = '16:9';
-    else if (aspectRatio === '9:16') geminiRatio = '9:16';
-    else if (aspectRatio === '4:5') geminiRatio = '4:5';
-    else if (aspectRatio === '3:4') geminiRatio = '3:4';
-    else if (aspectRatio === '4:3') geminiRatio = '4:3';
-
-    console.log(`[Gemini GenAI SDK] Resolved aspect ratio: "${aspectRatio}" → "${geminiRatio}"`);
-
-    // Build config — always pass aspectRatio explicitly so API never defaults to a different ratio
-    const config = {
-        responseModalities: [Modality.TEXT, Modality.IMAGE],
-        imageConfig: {
-            personGeneration: 'ALLOW_ALL',
-            aspectRatio: geminiRatio,
-        }
-    };
-
-    const response = await client.models.generateContentStream({
-        model: modelId,
-        contents: prompt,
-        config
-    });
-
-    let base64Data = null;
-    let mimeType = 'image/png';
-    let responseText = null;
-
-    for await (const chunk of response) {
-        if (chunk.text) {
-            console.log(`[Gemini GenAI SDK] Model says: ${chunk.text}`);
-            responseText = chunk.text;
-        } else if (chunk.data) {
-            // chunk.data is already a Buffer/Uint8Array of raw image bytes
-            base64Data = Buffer.from(chunk.data).toString('base64');
-            console.log(`[Gemini GenAI SDK] Received image chunk (${base64Data.length} base64 chars)`);
-        }
-        
-        // Also check inlineData format (some SDK versions pack it this way)
-        const parts = chunk.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-            if (part.inlineData?.data) {
-                base64Data = part.inlineData.data;
-                mimeType = part.inlineData.mimeType || 'image/png';
-            }
-        }
-    }
-
-    if (!base64Data) {
-        const reason = responseText ? `Model responded: ${responseText}` : 'No image data in response';
-        throw new Error(`[Gemini GenAI SDK] Generation failed — ${reason}`);
-    }
-
-    return { base64Data, mimeType };
-};
 
 export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'gemini-3.1-flash-image-preview', manualEditMode = null) => {
     try {
@@ -102,26 +36,103 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         let mimeType = 'image/png';
         let usedModel = selectedModelId;
 
-        // Ensure the model is one of the supported Gemini models
         if (!GEMINI_IMAGE_MODELS.includes(usedModel)) {
-            usedModel = 'gemini-3.1-flash-image-preview';
+            usedModel = 'gemini-3.1-flash-image-preview'; // default
         }
 
-        try {
-            const result = await generateWithGeminiSDK(prompt, usedModel, aspectRatio);
-            base64Data = result.base64Data;
-            mimeType = result.mimeType;
-        } catch (geminiErr) {
-            console.warn(`[Gemini GenAI SDK] ${usedModel} failed: ${geminiErr.message} — falling back to gemini-2.5-flash-image`);
-            usedModel = 'gemini-2.5-flash-image';
-            const fallbackResult = await generateWithGeminiSDK(prompt, usedModel, aspectRatio);
-            base64Data = fallbackResult.base64Data;
-            mimeType = fallbackResult.mimeType;
+        const client = getGenAIClient('global');
+
+        if (originalImage) {
+            // EDIT ARCHITECTURE
+            console.log(`[Gemini GenAI SDK] Editing with model: ${usedModel} | Prompt: "${prompt}"`);
+            
+            // Extract base64 part if it's a data url
+            const imageBytes = originalImage.includes('base64,') 
+                ? originalImage.split('base64,')[1] 
+                : originalImage;
+
+            const response = await client.models.generateContent({
+                model: usedModel,
+                contents: [
+                    {
+                        role: 'user',
+                        parts: [
+                            {
+                                inlineData: {
+                                    mimeType: 'image/png',
+                                    data: imageBytes,
+                                }
+                            },
+                            {
+                                text: prompt
+                            }
+                        ]
+                    }
+                ],
+                config: {
+                    responseModalities: [Modality.TEXT, Modality.IMAGE],
+                }
+            });
+
+            const parts = response?.candidates?.[0]?.content?.parts || [];
+            let responseText = null;
+            for (const part of parts) {
+                if (part.text) {
+                    console.log(`[Gemini GenAI SDK Edit Response]: ${part.text}`);
+                    responseText = part.text;
+                } else if (part.inlineData) {
+                    base64Data = part.inlineData.data;
+                    mimeType = part.inlineData.mimeType || 'image/png';
+                }
+            }
+            if (!base64Data) {
+                throw new Error(`Model responded with no image: ${responseText || 'Unknown error'}`);
+            }
+
+        } else {
+            // GENERATION ARCHITECTURE
+            let geminiRatio = '1:1';
+            if (aspectRatio === '16:9') geminiRatio = '16:9';
+            else if (aspectRatio === '9:16') geminiRatio = '9:16';
+            else if (aspectRatio === '4:5') geminiRatio = '4:5';
+
+            console.log(`[Gemini GenAI SDK] Generating with model: ${usedModel} | Ratio: ${geminiRatio} | Prompt: "${prompt}"`);
+
+            const response = await client.models.generateContentStream({
+                model: usedModel,
+                contents: prompt,
+                config: {
+                    responseModalities: [Modality.TEXT, Modality.IMAGE],
+                    imageConfig: {
+                        personGeneration: 'ALLOW_ALL',
+                        aspectRatio: geminiRatio,
+                    }
+                }
+            });
+
+            let responseText = null;
+            for await (const chunk of response) {
+                if (chunk.text) {
+                    console.log(`[Gemini GenAI SDK] Model says: ${chunk.text}`);
+                    responseText = chunk.text;
+                } else if (chunk.data) {
+                    base64Data = Buffer.from(chunk.data).toString('base64');
+                }
+                const parts = chunk.candidates?.[0]?.content?.parts || [];
+                for (const part of parts) {
+                    if (part.inlineData?.data) {
+                        base64Data = part.inlineData.data;
+                        mimeType = part.inlineData.mimeType || 'image/png';
+                    }
+                }
+            }
+
+            if (!base64Data) {
+                throw new Error(`Model responded with no image: ${responseText || 'Unknown error'}`);
+            }
         }
 
-        // -------------------------------------------------------
-        // Upload to GCS
-        // -------------------------------------------------------
+        // Upload to GCS utilizing Impersonated Signed URLs
         if (base64Data) {
             console.log(`[GCS] Uploading result from ${usedModel}...`);
             const buffer = Buffer.from(base64Data, 'base64');
@@ -129,8 +140,6 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                 folder: 'generated_images',
                 filename: gcsFilename(`aisa_${originalImage ? 'edit' : 'gen'}`),
                 mimeType,
-                isPublic: true,
-                useSignedUrl: false,
             });
 
             if (gcsResult?.publicUrl) {
@@ -140,7 +149,6 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         }
 
         throw new Error(`Image pipeline (${usedModel}) returned no image data.`);
-
     } catch (error) {
         const vertexMsg = error.response?.data?.error?.message || error.message || 'Unknown error';
         console.error(`[VERTEX GEN FAILED] ${vertexMsg}`);

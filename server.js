@@ -41,10 +41,16 @@ import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './routes/legalRoutes.js';
 import intentRoutes from './routes/intentRoutes.js';
+import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
+import socialAgentRoutes from './routes/socialMediaGenerator.routes.js';
+import socialReviewRoutes from './routes/socialAgentReview.routes.js';
+import mediaProxyRoutes from './routes/mediaProxy.routes.js';
+import brandRoutes from './routes/brandFetch.route.js';
 import cashflowRoutes from './routes/cashflowRoutes.js';
 import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './routes/legalToolkitRoutes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
+
 import { startPlanExpiryService } from './services/planExpiryService.js';
 
 // End of standard imports
@@ -155,6 +161,13 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check" }));
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api', dashboardRoutes);
+app.use('/api/ai-ad', aiAdAgentRoutes);
+app.use('/api/social-agent', socialAgentRoutes);
+app.use('/api/social-agent-review', socialReviewRoutes);
+app.use('/api/media', mediaProxyRoutes);
+app.use('/api/brand', brandRoutes);
+
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
