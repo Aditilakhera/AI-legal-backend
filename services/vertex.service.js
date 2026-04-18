@@ -308,7 +308,8 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                 generationConfig: {
                     maxOutputTokens: options.maxOutputTokens || 4096,
                     temperature: options.temperature || 0.7,
-                }
+                },
+                tools: options.useSearch ? [{ googleSearchRetrieval: {} }] : []
             });
         } else if (genAIInstance) {
             // Use Gemini API (API key mode)
@@ -317,7 +318,8 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                 generationConfig: {
                     maxOutputTokens: options.maxOutputTokens || 4096,
                     temperature: options.temperature || 0.7,
-                }
+                },
+                tools: options.useSearch ? [{ googleSearchRetrieval: {} }] : []
             });
         } else {
             throw new Error('AI model instance not available');
@@ -398,9 +400,10 @@ export const askVertex = async (prompt, context = null, options = {}) => {
                 ],
                 generationConfig: {
                     maxOutputTokens: 4096,
-                    responseMimeType: systemInstruction.includes("JSON") ? "application/json" : "text/plain"
+                    responseMimeType: (systemInstruction && systemInstruction.includes("JSON")) ? "application/json" : "text/plain"
                 },
                 systemInstruction: systemInstruction,
+                tools: options.useSearch ? [{ googleSearchRetrieval: {} }] : []
             });
         }
 
