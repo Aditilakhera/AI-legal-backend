@@ -119,7 +119,11 @@ app.get("/api/health", (req, res) => {
 })
 // Global Debug middleware
 app.use((req, res, next) => {
-  console.log(`[REQUEST] ${req.method} ${req.url}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[REQUEST] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+  });
   next();
 });
 
@@ -135,7 +139,6 @@ app.use('/api/legal-toolkit', legalToolkitRoutes);
 
 // Intelligence Features
 app.use('/api/chat', chatRoutes);
-app.use('/api', chatRoutes); // Allow /api/public/share/... to work via chatRoutes
 app.use('/api/agents', agentRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/image', imageRoutes);
@@ -162,7 +165,6 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/payment', paymentRoutes);
 app.get('/api/debug-payment', (req, res) => res.json({ msg: "payment route check" }));
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api', dashboardRoutes);
 app.use('/api/ai-ad', aiAdAgentRoutes);
 app.use('/api/social-agent', socialAgentRoutes);
 app.use('/api/social-agent-review', socialReviewRoutes);
@@ -175,6 +177,10 @@ app.use('/api/admin', adminRoutes);
 
 // Projects
 app.use('/api/projects', projectRoutes);
+
+// Broad Fallbacks (should be last and as specific as possible)
+app.use('/api/public', chatRoutes); // Allow /api/public/share/...
+app.use('/api/public', dashboardRoutes);
 
 
 // AIBASE (V3) - With Credit System

@@ -558,16 +558,19 @@ export const reloadVectorStore = async () => {
 
 export const generateRelatedQuestions = async (userMessage, aiResponse, language = 'English') => {
     try {
-        const prompt = `Based on the following conversation, generate 3 follow-up questions that the user might want to ask next.
+        const prompt = `Based on the following conversation, generate 3 to 4 highly intelligent, context-aware follow-up questions that the user might want to ask next to continue the conversation naturally.
         
 User Message: "${userMessage}"
 AI Response: "${aiResponse}"
 
 Rules:
-- Questions must be relevant and helpful.
+- Each suggestion MUST be a complete, meaningful question or prompt that feels like real user intent.
+- Avoid generic actions like "Explain more", "Give examples", or "Summarize".
+- Keep each suggestion short (6-12 words).
+- Make them diverse and directly related to the assistant's last response.
 - Language: Respond in ${language}.
-- Format: Return ONLY a JSON array of 3 strings.
-- Example: ["Question 1?", "Question 2?", "Question 3?"]`;
+- Format: Return ONLY a JSON array of strings.
+- Example: ["Can you show a real-world example?", "How can I use this in my project?", "What are the advantages of this approach?"]`;
 
         const response = await vertexService.AskVertexRaw(prompt, { 
             maxOutputTokens: 150, 
@@ -576,7 +579,7 @@ Rules:
         
         const cleanJson = response.replace(/```json\s*|\s*```/g, '').trim();
         const questions = JSON.parse(cleanJson);
-        return Array.isArray(questions) ? questions.slice(0, 3) : [];
+        return Array.isArray(questions) ? questions.slice(0, 4) : [];
     } catch (error) {
         logger.error(`[RelatedQuestions] Error: ${error.message}`);
         return [];
