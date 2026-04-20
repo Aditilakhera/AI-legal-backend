@@ -1,4 +1,4 @@
-import User from '../models/User.js';
+﻿import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import CreditLog from '../models/CreditLog.js';
 import FeatureCredit from '../models/FeatureCredit.js';
@@ -12,17 +12,17 @@ export const refreshFeatureCostCache = async () => {
         features.forEach(f => {
             newCache[f.featureKey] = f.cost;
         });
-        
+
         // Retain Video Multipliers manually since they are matrix-based
-        newCache['video_multipliers'] = { 
-            "veo-3.1-fast-generate-001": { "4k": newCache['video_veo_fast_4k'] || 585, "default": newCache['video_veo_fast_def'] || 250 }, 
-            "veo-3.1-generate-001": { "4k": newCache['video_veo_pro_4k'] || 666, "default": newCache['video_veo_pro_def'] || 333 } 
+        newCache['video_multipliers'] = {
+            "veo-3.1-fast-generate-001": { "4k": newCache['video_veo_fast_4k'] || 585, "default": newCache['video_veo_fast_def'] || 250 },
+            "veo-3.1-generate-001": { "4k": newCache['video_veo_pro_4k'] || 666, "default": newCache['video_veo_pro_def'] || 333 }
         };
-        
+
         if (Object.keys(newCache).length > 2) {
             featureCostCache = newCache;
         }
-    } catch(e) {
+    } catch (e) {
         console.error("Failed to load Feature Credits into cache");
     }
 };
@@ -33,18 +33,36 @@ refreshFeatureCostCache();
 export const getToolCost = (toolName, body = {}) => {
     // Merge hardcoded defaults with DB costs to ensure new features work
     const defaults = {
-        chat: 2, web_search: 60, deep_search: 85, agent_chat: 60, realtime_chat: 60,
-        knowledge_base: 3, generate_image: 66, generate_image_hd: 100, generate_image_ultra: 135,
-        edit_image: 66, video_multipliers: { "veo-3.1-fast-generate-001": { "4k": 585, "default": 250 }, "veo-3.1-generate-001": { "4k": 666, "default": 333 } },
-        code_writer: 3, convert_audio: 90, document_convert: 3, legal_toolkit: 50, aicashflow_tab: 5
+        chat: 2, 
+        web_search: 60, 
+        deep_search: 85, 
+        agent_chat: 60, 
+        realtime_chat: 60,
+        knowledge_base: 3, 
+        generate_image: 74, // Imagen 3 (₹3.70) -> 50% profit @ 74 credits (₹7.4)
+        generate_image_hd: 110, 
+        generate_image_ultra: 145,
+        ai_ads_agent: 241, // Imagen 3 + GPT-4 Prompting (₹12.04) -> 50% profit @ 241 credits (₹24.1)
+        edit_image: 74,
+        gemini_flash: 19, // Brand DNA Scraping (₹0.93) -> 19 credits
+        activate_strategy: 60, // 30-Day Strategy (₹3.00) -> 60 credits
+        brand_setup: 0, // Saving brand profile manually (no AI cost)
+        generate_content: 5, // One-Click Content (₹0.25) -> 5 credits
+        regenerate_content: 2, // Regeneration (₹0.10) -> 2 credits
+        video_multipliers: { "veo-3.1-fast-generate-001": { "4k": 585, "default": 250 }, "veo-3.1-generate-001": { "4k": 666, "default": 333 } },
+        code_writer: 3, 
+        convert_audio: 90, 
+        document_convert: 3, 
+        legal_toolkit: 50, 
+        aicashflow_tab: 5
     };
 
     const featureCosts = { ...defaults, ...featureCostCache };
 
     if (toolName === 'chat') {
-        return featureCosts.chat; 
+        return featureCosts.chat;
     }
-    
+
     const normalizedTool = typeof toolName === 'string' ? toolName.toLowerCase() : toolName;
     if (normalizedTool === 'deep_search' || normalizedTool === 'web_search' || normalizedTool === 'code_writer') {
         return featureCosts[normalizedTool] || defaults[normalizedTool] || 0;
@@ -52,7 +70,7 @@ export const getToolCost = (toolName, body = {}) => {
     if (normalizedTool === 'convert_document' || normalizedTool === 'document_convert') {
         return featureCosts.document_convert || defaults.document_convert || 0;
     }
-    
+
     if (toolName === 'generate_video') {
         const duration = body?.duration || 5;
         const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
@@ -62,7 +80,7 @@ export const getToolCost = (toolName, body = {}) => {
         const multiplier = resolution === '4k' ? (modelMult['4k'] || 585) : (modelMult['default'] || 250);
         return multiplier * duration;
     }
-    
+
     return featureCosts[toolName] !== undefined ? featureCosts[toolName] : (defaults[toolName] || 0);
 };
 
@@ -83,6 +101,11 @@ const getToolLabel = (toolName) => {
         case 'convert_document': return 'AISA Document Analysis';
         case 'legal_toolkit': return 'AISA AI Legal';
         case 'aicashflow_tab': return 'AISA CashFlow Explorer (Tab Access)';
+        case 'ai_ads_agent': return 'AI Ads Agent (Visual Post)';
+        case 'gemini_flash': return 'AI Ads Agent (Website Scrapping)';
+        case 'activate_strategy': return 'AI Ads Agent (30-Day Strategy)';
+        case 'generate_content': return 'AI Ads Agent (Content Generation)';
+        case 'regenerate_content': return 'AI Ads Agent (Content Refresh)';
         default: return 'AISA Service';
     }
 };
@@ -96,7 +119,8 @@ const premiumTools = [
     'web_search',
     'deep_search',
     'realtime_chat',
-    'agent_chat'
+    'agent_chat',
+    'ai_ads_agent'
 ];
 
 export const checkPremiumAccess = async (userId) => {
@@ -160,7 +184,7 @@ export const subscriptionService = {
             const nonChatTools = toolsUsed.filter(t => t !== 'chat');
             const primaryTool = nonChatTools.length > 0 ? nonChatTools[0] : toolsUsed[0];
             const otherToolsCount = toolsUsed.length > 1 ? toolsUsed.length - 1 : 0;
-            
+
             await CreditLog.create({
                 userId: user._id,
                 action: primaryTool,

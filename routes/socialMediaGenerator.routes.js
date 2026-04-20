@@ -2,6 +2,7 @@ import express from 'express';
 import * as socialAgentController from '../controllers/socialAgent.controller.js';
 import { verifyToken } from '../middleware/authorization.js';
 import { upload } from '../services/cloudinary.service.js';
+import { creditMiddleware } from '../middleware/creditSystem.js';
 
 const router = express.Router();
 
@@ -39,7 +40,7 @@ router.delete('/workspace/:workspaceId', socialAgentController.deleteWorkspace);
 router.post('/brand/upload', upload.fields([
   { name: 'logo', maxCount: 1 }, 
   { name: 'overview', maxCount: 5 }
-]), socialAgentController.uploadBrandAssets);
+]), creditMiddleware, socialAgentController.uploadBrandAssets);
 
 // POST /api/social-agent/profile/upload-image - Upload user profile picture
 router.post('/profile/upload-image', upload.single('image'), socialAgentController.uploadProfileImage);
@@ -71,8 +72,7 @@ router.delete('/calendar/entry/:id', socialAgentController.deleteCalendarEntry);
 // DELETE /api/social-agent/calendar/clear/:workspaceId - Clear all calendar entries for a workspace
 router.delete('/calendar/clear/:workspaceId', socialAgentController.clearCalendarForWorkspace);
 
-// PATCH /api/social-agent/onboarding/reset - Reset onboarding for all user workspaces (called on logout)
-router.patch('/onboarding/reset', socialAgentController.resetOnboarding);
+
 
 /**
  * Usage Tracking
@@ -88,13 +88,10 @@ import * as generationController from '../controllers/generation.controller.js';
  * AI Generation & Job Management
  */
 // POST /api/social-agent/generate - Single post / Daily run
-router.post('/generate', generationController.triggerGeneration);
-
-// POST /api/social-agent/generate/bulk - Batch generate for N days or selected rows
-router.post('/generate/bulk', generationController.triggerGeneration);
+router.post('/generate', creditMiddleware, generationController.triggerGeneration);
 
 // POST /api/social-agent/generate/regenerate - Variations with intent
-router.post('/generate/regenerate', generationController.triggerRegeneration);
+router.post('/generate/regenerate', creditMiddleware, generationController.triggerRegeneration);
 
 // GET /api/social-agent/jobs/:jobId - Poll job status
 router.get('/jobs/:jobId', generationController.getJobStatus);
@@ -117,14 +114,11 @@ router.get('/assets/:workspaceId', generationController.getAssets);
 // DELETE /api/social-agent/assets/:workspaceId - Hard delete all generated media files for a brand
 router.delete('/assets/:workspaceId', generationController.deleteAllBrandAssets);
 
-// POST /api/social-agent/assets/generate - Manual one-off asset creation
-router.post('/assets/generate', socialAgentController.generateOneOffAsset);
-
 // --- Tab-Wise Generation Routes (Stage 3) ---
-router.post('/content/generate/:calendarRowId', generationController.generateFromCalendarRow);
-router.post('/generate/calendar', generationController.generateCalendar);
+router.post('/content/generate/:calendarRowId', creditMiddleware, generationController.generateFromCalendarRow);
+router.post('/generate/calendar', creditMiddleware, generationController.generateCalendar);
 router.post('/generate/hashtags', generationController.getHashtags);
-router.post('/hashtag-insights', generationController.getSocialHashtagInsights);
+router.post('/hashtag-insights', creditMiddleware, generationController.getSocialHashtagInsights);
 router.post('/generate/image-prompt', generationController.getImagePrompt);
 router.get('/export/calendar', generationController.exportCalendarExcel);
 
@@ -132,7 +126,7 @@ router.get('/export/calendar', generationController.exportCalendarExcel);
 // POST /api/social-agent/generate/visual-post
 // Body: { workspaceId, calendarEntryId, modelId? }
 // Returns: { jobId } — poll /jobs/:jobId for status & resultAssetId
-router.post('/generate/visual-post', generationController.generateVisualPost);
+router.post('/generate/visual-post', creditMiddleware, generationController.generateVisualPost);
 
 
 

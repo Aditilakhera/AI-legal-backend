@@ -14,6 +14,7 @@ import ContentCalendar from '../models/ContentCalendar.js';
 import CalendarEntry from '../models/CalendarEntry.js';
 import PlanUsage from '../models/PlanUsage.js';
 import UploadAsset from '../models/UploadAsset.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 
 /**
  * Workspace Management
@@ -201,7 +202,7 @@ export const uploadBrandAssets = async (req, res) => {
       workspaceId, companyName, website, brandColors, themePreference, 
       toneOfVoice, ctaStyle, dosAndDonts, logoUrl, targetEthnicity, 
       extractedBrandSummary, targetIndustry, targetAudience, 
-      contentObjective, campaignMonth, postingFrequency 
+      contentObjective, campaignMonth, postingFrequency, socialMediaLinks
     } = req.body;
 
     let brandProfile = await BrandProfile.findOne({ workspaceId });
@@ -224,6 +225,15 @@ export const uploadBrandAssets = async (req, res) => {
     if (contentObjective) brandProfile.contentObjective = contentObjective;
     if (campaignMonth) brandProfile.campaignMonth = campaignMonth;
     if (postingFrequency) brandProfile.postingFrequency = postingFrequency;
+    
+    // SOCIAL MEDIA LINKS
+    if (socialMediaLinks) {
+      try {
+        brandProfile.socialMediaLinks = typeof socialMediaLinks === 'string' ? JSON.parse(socialMediaLinks) : socialMediaLinks;
+      } catch (e) {
+        console.error("Failed to parse social media links", e);
+      }
+    }
 
     // Handle files (Logo and Overview)
     const logoFile = req.files && req.files.logo ? req.files.logo[0] : null;
@@ -298,6 +308,13 @@ export const uploadBrandAssets = async (req, res) => {
     // Sync Workspace Name for Clean Navigation
     if (brandProfile.companyName) {
       await SocialAgentWorkspace.findByIdAndUpdate(workspaceId, { workspaceName: brandProfile.companyName });
+    }
+
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[BrandUpload] Credit deduction failed: ${e.message}`);
+      });
     }
 
     res.json({ success: true, brandProfile });
@@ -554,6 +571,13 @@ export const generateOneOffAsset = async (req, res) => {
     const assetObj = asset.toObject();
     assetObj.gcsUrl = await socialAgentService.generateSignedUrl(asset.gcsUrl);
 
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[OneOff] Credit deduction failed: ${e.message}`);
+      });
+    }
+
     res.json({ success: true, asset: assetObj });
   } catch (error) {
     logger.error(`[SocialAgent] generateOneOffAsset failed: ${error.message}`);
@@ -765,20 +789,4 @@ export const clearCalendarForWorkspace = async (req, res) => {
   }
 };
 
-/**
- * Reset onboarding status for all workspaces of the current user
- */
-export const resetOnboarding = async (req, res) => {
-  try {
-    const result = await SocialAgentWorkspace.updateMany(
-      { userId: req.user.id },
-      { $set: { "onboarding.completed": false } }
-    );
 
-    logger.info(`[resetOnboarding] Reset onboarding for ${result.modifiedCount} workspaces of user ${req.user.id}`);
-    res.json({ success: true, message: 'Onboarding reset successfully' });
-  } catch (error) {
-    logger.error(`[resetOnboarding] ${error.message}`);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};

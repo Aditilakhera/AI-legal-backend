@@ -161,12 +161,23 @@ export const generate30DayStrategy = async (workspaceId) => {
 
     // 1. STRATEGY
     const strategistPrompt = `
-      Create a 30-day high-performance social media content strategy.
-      BRAND: ${JSON.stringify(brand.structuredIdentity)}
+      Create a high-performance social media content strategy for the month of ${brand.campaignMonth || 'Current'}.
+      
+      --- BRAND CORE ---
+      BRAND NAME: ${brand.companyName || brand.structuredIdentity?.brand_name}
+      TARGET INDUSTRY: ${brand.targetIndustry || brand.structuredIdentity?.industry}
+      TARGET AUDIENCE: ${brand.targetAudience || brand.structuredIdentity?.target_audience}
+      REGION/ETHNICITY: ${brand.targetEthnicity || 'Global'}
+      
+      --- CONTENT GUIDELINES ---
+      CONTENT OBJECTIVE (GOAL): ${brand.contentObjective || "Awareness"}
+      POSTING FREQUENCY: ${brand.postingFrequency || '3x per week'}
+      ARCHETYPE (VOICE/TONE): ${brand.toneOfVoice || brand.structuredIdentity?.tone || 'Professional'}
+      CONVERSION CTA STYLE: ${brand.ctaStyle || brand.structuredIdentity?.cta_style || 'Direct & Authoritative'}
+      
+      --- BRAND KNOWLEDGE ---
       BRAND DNA: ${brand.extractedBrandSummary || 'N/A'}
-      GOAL: ${brand.contentObjective || "Awareness"}
-      CAMPAIGN MONTH: ${brand.campaignMonth || "Current"}
-      TARGET INDUSTRY: ${brand.targetIndustry || "General"}
+      VALUES: ${brand.structuredIdentity?.brand_values?.join(', ') || 'N/A'}
 
       OUTPUT JSON (STRICT):
       {
@@ -193,8 +204,12 @@ export const generate30DayStrategy = async (workspaceId) => {
     });
 
     // 2. CALENDAR (Respect Month & Frequency)
-    const freq = (brand.postingFrequency || 'Daily').toLowerCase();
-    const postsPerWeek = freq.includes('high') ? 5 : freq.includes('regular') ? 3 : freq.includes('low') ? 1 : 7;
+    const freq = (brand.postingFrequency || '3x per week').toLowerCase();
+    let postsPerWeek = 3; // Default
+    if (freq.includes('2x') || freq.includes('high')) postsPerWeek = 14;
+    else if (freq === 'daily') postsPerWeek = 7;
+    else if (freq.includes('3x')) postsPerWeek = 3;
+    else if (freq.includes('1x')) postsPerWeek = 1;
     
     // Map Month String to Starting Date
     const monthMap = {
@@ -223,13 +238,19 @@ export const generate30DayStrategy = async (workspaceId) => {
       const postsForThisChunk = Math.ceil((daysInThisChunk / 7) * postsPerWeek);
 
       const builderPrompt = `
-        Create a ${postsForThisChunk}-day content calendar for ${weekNum === 0 ? 'the first part' : 'Part ' + (weekNum + 1)} of ${brand.campaignMonth} ${currentYear}.
-        BRAND: ${JSON.stringify(brand.structuredIdentity)}
+        Create exactly ${postsForThisChunk} content pipeline entries for ${weekNum === 0 ? 'the first part' : 'Part ' + (weekNum + 1)} of ${brand.campaignMonth} ${currentYear}.
+        
+        --- STRATEGIC CONTEXT ---
+        BRAND: ${brand.companyName || brand.structuredIdentity?.brand_name}
+        TARGET AUDIENCE: ${brand.targetAudience || brand.structuredIdentity?.target_audience}
+        REGION: ${brand.targetEthnicity || 'Global'}
+        TONE/VOICE: ${brand.toneOfVoice || brand.structuredIdentity?.tone || 'Professional'}
+        CTA STYLE: ${brand.ctaStyle || brand.structuredIdentity?.cta_style || 'Direct & Authoritative'}
         THEME: ${strategyDoc.weekly_themes[weekNum] || strategyDoc.weekly_themes[0] || "General"}
         DNA INSIGHTS: ${brand.extractedBrandSummary || ''}
         STRATEGY CONTEXT: ${strategyDoc.strategy_summary}
         PLATFORM FOCUS: ${JSON.stringify(brand.structuredIdentity.platform_focus)}
-        PLAN: ${postsForThisChunk} high-quality posts for this period.
+        PLAN: Generate ${postsForThisChunk} high-quality, unique posts spread across this ${daysInThisChunk}-day period.
 
         OUTPUT JSON (STRICT):
         {
@@ -330,10 +351,18 @@ export const generateContentForSpecificRow = async (workspaceId, entryId) => {
 
   logger.debug(`[GenerationService] Normalized attributes: platform=${platform}, type=${type}`);
 
+  // 🛡️ Ensure complete isolation between Content and Hashtag regeneration.
+  // If this is a regeneration (entry.status is already 'generated'), we strictly KEEP the old hashtags.
+  // We also hard-cap the initial LLM output to 30 to prevent bloated lists on the first run.
+  const isRegeneration = entry.status === 'generated';
+  const finalHashtags = isRegeneration && Array.isArray(entry.hashtags) && entry.hashtags.length > 0 
+    ? entry.hashtags 
+    : (copyOutput.hashtags || []).slice(0, 30);
+
   const post = await GeneratedPost.create({
     workspaceId, calendarEntryId: entry._id, type, platform, version: 1,
     hook: copyOutput.hook, onAssetText: copyOutput.onAssetText, captionShort: copyOutput.captionShort,
-    captionLong: copyOutput.captionLong, hashtags: copyOutput.hashtags, cta: copyOutput.cta, 
+    captionLong: copyOutput.captionLong, hashtags: finalHashtags, cta: copyOutput.cta, 
     variations: copyOutput.variations || [],
     scheduledDate: entry.scheduledDate,
     dateString: entry.scheduledDate ? new Date(entry.scheduledDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : entry.date,
@@ -353,7 +382,7 @@ export const generateContentForSpecificRow = async (workspaceId, entryId) => {
   entry.hook = copyOutput.hook;
   entry.captionShort = copyOutput.captionShort;
   entry.captionLong = copyOutput.captionLong;
-  entry.hashtags = copyOutput.hashtags;
+  entry.hashtags = finalHashtags;
   entry.breakdown = copyOutput.onAssetText; // Syncing visual text as breakdown
   await entry.save();
 

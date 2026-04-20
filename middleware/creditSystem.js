@@ -5,7 +5,7 @@ import Subscription from '../models/Subscription.js';
 import CreditLog from '../models/CreditLog.js';
 
 // Returns true if user has any paid/active subscription or founder status
-const isFreeTierUser = async (userId) => {
+export const isFreeTierUser = async (userId) => {
     const user = await User.findById(userId);
     if (!user) return true;
     if (user.founderStatus) return false;
@@ -52,6 +52,14 @@ const getActionLabel = (url, body) => {
     if (url.includes('/api/knowledge/upload') || url.includes('/api/knowledge/upload-url')) return { action: 'knowledge_base', description: 'AISA Knowledge Base' };
     if (url.includes('/api/legal-toolkit')) return { action: 'legal_toolkit', description: 'AISA AI Legal' };
     if (url.includes('/api/stock/')) return { action: 'aicashflow_tab', description: 'AISA CashFlow Explorer (Tab Access)' };
+    if (url.includes('/api/social-agent/generate/visual-post')) return { action: 'ai_ads_agent', description: 'AI Ads Agent (GPT-4 + Imagen 3)' };
+    if (url.includes('/api/social-agent/brand/upload')) return { action: 'brand_setup', description: 'AI Ads Agent (Brand Setup Save)' };
+    if (url.includes('/api/social-agent/generate/calendar')) return { action: 'activate_strategy', description: 'AI Ads Agent (Strategy Activation)' };
+    if (url.includes('/api/social-agent/content/generate/')) return { action: 'generate_content', description: 'AI Ads Agent (Content Generation)' };
+    if (url.includes('/api/social-agent/generate/regenerate')) return { action: 'regenerate_content', description: 'AI Ads Agent (Regeneration)' };
+    if (url.includes('/api/social-agent/generate')) return { action: 'generate_content', description: 'AI Ads Agent (Content Generation)' };
+    if (url.includes('/api/social-agent/hashtag-insights')) return { action: 'regenerate_content', description: 'AI Ads Agent (Hashtags)' };
+    if (url.includes('/api/brand/fetch') || url.includes('/api/brand/quick-analysis')) return { action: 'gemini_flash', description: 'AI Ads Agent (Website Scrapping)' };
     return { action: 'other', description: 'AISA Feature' };
 };
 
@@ -74,14 +82,15 @@ export const creditMiddleware = async (req, res, next) => {
             url.includes('/api/aibase/chat') ||
             url.includes('/api/aibase/knowledge') ||
             url.includes('/api/voice') ||
+            url.includes('/api/social-agent/generate/visual-post') ||
             req.body?.mode === 'web_search' ||
             req.body?.mode === 'DEEP_SEARCH'
         );
 
     // Admins bypass PLAN_RESTRICTED checks only
     const userRec = await User.findById(req.user.id || req.user._id);
-    const isAdmin = (req.user && (req.user.role === 'admin' || (req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com'))) || 
-                    (userRec && (userRec.role === 'admin' || (userRec.email && userRec.email.toLowerCase() === 'admin@uwo24.com')));
+    const isAdmin = (req.user && (req.user.role === 'admin' || (req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com'))) ||
+        (userRec && (userRec.role === 'admin' || (userRec.email && userRec.email.toLowerCase() === 'admin@uwo24.com')));
 
     if (isPaidOnlyRoute && !isAdmin) {
         const freeTier = await isFreeTierUser(req.user.id || req.user._id);
@@ -121,35 +130,56 @@ export const creditMiddleware = async (req, res, next) => {
     const actionLabel = getActionLabel(url, req.body);
     const action = actionLabel.action;
     let calculatedCost = 0;
-    
+
     try {
         const { getToolCost } = await import('../services/subscriptionService.js');
         if (action === 'video') {
-             calculatedCost = getToolCost('generate_video', req.body);
+            calculatedCost = getToolCost('generate_video', req.body);
         } else if (action === 'chat') {
-             const mode = req.body?.mode || '';
-             if (mode && mode !== 'NORMAL_CHAT') {
-                 calculatedCost = getToolCost(mode, req.body);
-             } else {
-                 calculatedCost = getToolCost('chat', req.body);
-             }
+            const mode = req.body?.mode || '';
+            if (mode && mode !== 'NORMAL_CHAT') {
+                calculatedCost = getToolCost(mode, req.body);
+            } else {
+                calculatedCost = getToolCost('chat', req.body);
+            }
         } else {
-             calculatedCost = getToolCost(action, req.body);
+            calculatedCost = getToolCost(action, req.body);
         }
-    } catch(e) {
+    } catch (e) {
         // Fallback default if subscriptionService fetch fails somehow
-        calculatedCost = action === 'chat' ? 2 : 50; 
+        calculatedCost = action === 'chat' ? 2 : 50;
     }
-    
+
     cost = calculatedCost;
-    
+
     // Define explicitly which actions are premium-only (Free tier cannot access them regardless of credits)
-    const premiumActions = ['video', 'image', 'generate_image', 'generate_image_hd', 'generate_image_ultra', 'edit_image', 'agent_chat', 'realtime_chat', 'voice', 'web_search', 'deep_search', 'knowledge_base'];
-    
+    const premiumActions = ['video', 'image', 'generate_image', 'generate_image_hd', 'generate_image_ultra', 'edit_image', 'agent_chat', 'realtime_chat', 'voice', 'web_search', 'deep_search', 'knowledge_base', 'ai_ads_agent'];
+
     if (premiumActions.includes(action)) {
         isPremiumEndpoint = true;
     } else if (action === 'chat' && req.body?.mode && req.body.mode !== 'NORMAL_CHAT') {
         isPremiumEndpoint = true;
+    }
+
+    // ── WEBSITE SCRAPING LIMIT FOR FREE USERS (max 2 scrapes) ────────────────
+    // Only count against brand FETCH (website scraping), NOT brand/upload (manual save)
+    const isWebsiteScrapeUrl = url.includes('/api/brand/fetch') || url.includes('/api/brand/quick-analysis');
+    if (action === 'gemini_flash' && isWebsiteScrapeUrl && !isAdmin) {
+        const freeTier = await isFreeTierUser(req.user.id || req.user._id);
+        if (freeTier) {
+            const fetchCount = await CreditLog.countDocuments({
+                userId: req.user.id || req.user._id,
+                action: 'gemini_flash'
+            });
+            if (fetchCount >= 2) {
+                return res.status(403).json({
+                    success: false,
+                    code: 'PREMIUM_ONLY',
+                    error: 'Free plan users are limited to 2 AI website scrapes. Upgrade to Pro for unlimited brand syncing.',
+                    message: 'Free plan users are limited to 2 AI website scrapes. Upgrade to Pro for unlimited brand syncing.'
+                });
+            }
+        }
     }
 
     // Pass through if cost is still 0 

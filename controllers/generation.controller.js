@@ -8,6 +8,10 @@ import SocialAgentWorkspace from '../models/SocialAgentWorkspace.js';
 import * as socialAgentService from '../services/socialAgent.service.js';
 import UploadAsset from '../models/UploadAsset.js';
 import CalendarEntry from '../models/CalendarEntry.js';
+import ContentCalendar from '../models/ContentCalendar.js';
+import { subscriptionService } from '../services/subscriptionService.js';
+import { isFreeTierUser } from '../middleware/creditSystem.js';
+
 
 /**
  * AI SOCIAL AGENT - GENERATION CONTROLLER (PHASE 2)
@@ -23,6 +27,14 @@ export const generateFromCalendarRow = async (req, res) => {
     }
 
     const result = await generationService.generateContentForSpecificRow(workspaceId, calendarRowId);
+    
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[ContentGen] Credit deduction failed: ${e.message}`);
+      });
+    }
+
     res.json({ success: true, post: result, message: "Content generated successfully" });
   } catch (error) {
     logger.error(`[GenerationController] generateFromCalendarRow failed: ${error.message}`);
@@ -41,6 +53,13 @@ export const triggerGeneration = async (req, res) => {
       userId: req.user?._id
     });
 
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[Generation] Credit deduction failed: ${e.message}`);
+      });
+    }
+
     res.json({ success: true, jobId: job._id, message: "Generation job started successfully" });
   } catch (error) {
     logger.error(`[GenerationController] triggerGeneration failed: ${error.message}`);
@@ -56,6 +75,14 @@ export const triggerRegeneration = async (req, res) => {
     if (entryId) {
       if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required for calendar regeneration" });
       const entry = await generationService.regenerateCalendarEntry(workspaceId, entryId, toneNudge);
+      
+      // 💰 Deduct credits for the pipeline request
+      if (req.creditMeta) {
+        await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+          logger.error(`[Regen] Credit deduction failed: ${e.message}`);
+        });
+      }
+
       return res.json({ success: true, entry, message: "Calendar entry refreshed successfully" });
     }
 
@@ -63,6 +90,14 @@ export const triggerRegeneration = async (req, res) => {
     if (!postId || !intent) return res.status(400).json({ success: false, error: "postId and intent are required for post regeneration" });
 
     const job = await generationService.regeneratePost(postId, intent);
+
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[RegenPost] Credit deduction failed: ${e.message}`);
+      });
+    }
+
     res.json({ success: true, jobId: job._id, message: "Regeneration job started" });
   } catch (error) {
     logger.error(`[GenerationController] triggerRegeneration failed: ${error.message}`);
@@ -273,8 +308,44 @@ export const generateCalendar = async (req, res) => {
     const { workspaceId } = req.body;
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
 
+    // 🛡️ Free Tier Guard: One AI-Generated Strategy Total per User
+    // Only block if a COMPLETED AI calendar already exists (not in-progress/failed)
+    const isFree = await isFreeTierUser(req.user.id || req.user._id);
+    if (isFree) {
+      const userWorkspaces = await SocialAgentWorkspace.find({ userId: req.user.id || req.user._id });
+      const wsIds = userWorkspaces.map(w => w._id);
+      
+      // Only block on successfully completed AI-generated calendars
+      const completedAiCalendars = await ContentCalendar.countDocuments({ 
+        workspaceId: { $in: wsIds },
+        status: 'generated',
+        $or: [
+          { sourceFileUrl: { $exists: false } },
+          { sourceFileUrl: null },
+          { sourceFileUrl: '' }
+        ]
+      });
+      
+      if (completedAiCalendars > 0) {
+        return res.status(403).json({ 
+          success: false, 
+          code: "CALENDAR_LIMIT_REACHED",
+          error: "You have already generated an AI strategy calendar. Free plan users are limited to one AI strategy total. Please upgrade to Pro for unlimited strategy generation.",
+          message: "You have already generated an AI strategy calendar. Free plan users are limited to one AI strategy total. Please upgrade to Pro for unlimited strategy generation."
+        });
+      }
+    }
+
     console.log(`[Tab 1] Triggering Master Prompt Strategy for Workspace=${workspaceId}`);
     const genData = await generationService.generate30DayStrategy(workspaceId);
+    
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[StrategyGen] Credit deduction failed: ${e.message}`);
+      });
+    }
+
     res.json({ success: true, ...genData, message: "30-Day Content Calendar generated successfully" });
   } catch (error) {
     logger.error(`[GenerationController] generateCalendar failed: ${error.message}`);
@@ -299,13 +370,34 @@ export const getHashtags = async (req, res) => {
 };
 
 export const getSocialHashtagInsights = async (req, res) => {
+  console.log('\n┌─────────────────────────────────────────────────────┐');
+  console.log('│  🚀 POST /hashtag-insights — Request received       │');
+  console.log('└─────────────────────────────────────────────────────┘');
+  console.log(`  👤 User          : ${req.user?.id || 'unknown'}`);
+  console.log(`  🏢 Workspace     : ${req.body?.workspaceId || 'missing'}`);
+  console.log(`  🏷️  Topic         : ${req.body?.topic || 'missing'}`);
+
   try {
     const { workspaceId, topic } = req.body;
-    if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
+    if (!workspaceId) {
+      console.warn('  ⚠️  Missing workspaceId — rejecting request');
+      return res.status(400).json({ success: false, error: "workspaceId is required" });
+    }
 
+    console.log(`  ⚡ Fetching insights from generationService...`);
     const hashtags = await generationService.getHashtagInsights(workspaceId, topic);
+
+    // 💰 Deduct credits for the request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[HashtagGen] Credit deduction failed: ${e.message}`);
+      });
+    }
+
+    console.log(`  ✅ Successfully retrieved hashtag insights\n`);
     res.json({ success: true, hashtags });
   } catch (error) {
+    console.error(`\n❌ [HashtagGen] Controller error: ${error.message}`);
     logger.error(`[GenerationController] getSocialHashtagInsights failed: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
   }
@@ -398,6 +490,14 @@ export const generateVisualPost = async (req, res) => {
     });
 
     console.log(`  ✅ Job created   : ${job._id}`);
+    
+    // 💰 Deduct credits for the pipeline request
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[VisualPost] Credit deduction failed but job started: ${e.message}`);
+      });
+    }
+
     console.log(`  ⚡ Dispatching pipeline in background...`);
 
     // Fire and forget — background visual generation

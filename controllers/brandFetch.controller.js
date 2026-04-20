@@ -3,6 +3,7 @@ import logger from '../utils/logger.js';
 import { uploadToGCS } from '../services/socialAgent.service.js';
 import UploadAsset from '../models/UploadAsset.js';
 import BrandProfile from '../models/BrandProfile.js';
+import { subscriptionService } from '../services/subscriptionService.js';
 
 /**
  * Stage 4: THE REAL MAGIC — Website-to-DNA Synthesis
@@ -48,6 +49,11 @@ export const fetchBrandAssets = async (req, res) => {
       domain: url.replace(/^https?:\/\//, '').split('/')[0],
       success: true
     });
+
+    // 🚀 Deduct Credits
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+    }
 
   } catch (error) {
     logger.error(`[Real Magic] Synthesis failed: ${error.message}`);
@@ -178,7 +184,13 @@ export const quickAnalysis = async (req, res) => {
       }
     }
 
-    return res.json(responseData);
+    res.json(responseData);
+
+    // 🚀 Deduct Credits
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+    }
+    return;
   } catch (error) {
     console.error(`[Real Magic] Fatal Analysis failed: ${error.message}`);
     res.status(500).json({ success: false, error: `DNA analysis failed: ${error.message}.` });

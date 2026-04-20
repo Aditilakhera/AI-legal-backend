@@ -14,6 +14,13 @@ const BrandProfileSchema = new mongoose.Schema({
   ctaStyle: { type: String },
   dosAndDonts: { type: String },
   extractedBrandSummary: { type: String },
+  socialMediaLinks: {
+    instagram: { type: String },
+    linkedin: { type: String },
+    twitter: { type: String },
+    facebook: { type: String },
+    youtube: { type: String }
+  },
   // Preference Memory (Phase 3)
   preferredTone: { type: String },
   preferredHookStyle: { type: String },
