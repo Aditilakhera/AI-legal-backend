@@ -331,18 +331,48 @@ export const AskVertexRaw = async (prompt, options = {}) => {
 
         // Handle both @google-cloud/vertexai and @google/generative-ai response formats
         const response = result.response || result;
-
+        const candidate = response.candidates?.[0];
+        
+        let text = '';
         if (typeof response.text === 'function') {
-            return response.text();
-        } else if (response?.candidates?.[0]?.content?.parts?.[0]?.text) {
-            return response.candidates[0].content.parts[0].text;
+            text = response.text();
+        } else if (candidate?.content?.parts?.[0]?.text) {
+            text = candidate.content.parts[0].text;
         } else if (response?.text && typeof response.text === 'string') {
-            return response.text;
+            text = response.text;
         }
 
-        logger.warn('[AskVertexRaw] Unexpected response structure. FinishReason:', response?.candidates?.[0]?.finishReason || 'N/A');
-        logger.debug('[AskVertexRaw] Full Response Object:', JSON.stringify(response));
-        return '';
+        // Extract Search Grounding Sources if present
+        let sources = [];
+        if (options.useSearch && candidate?.groundingMetadata) {
+            const gm = candidate.groundingMetadata;
+            
+            // Format sources from grounded snippets or search entries
+            if (gm.searchEntryPoint?.htmlContent) {
+                // This is a special part of the response that contains the search UI HTML if requested
+            }
+            
+            if (gm.groundingChunks || gm.searchEntryMetadata) {
+                // Vertex AI usually provides groundingChunks with detailed citations
+                const chunks = gm.groundingChunks || [];
+                sources = chunks.map(chunk => {
+                    if (chunk.web) {
+                        return {
+                            title: chunk.web.title || "Search Result",
+                            url: chunk.web.uri,
+                            snippet: "" // Snippets are usually in the text itself via citations
+                        };
+                    }
+                    return null;
+                }).filter(Boolean);
+            }
+        }
+
+        if (options.returnSources) {
+            return { text, sources };
+        }
+
+        return text;
     } catch (err) {
         // Log full error details for debugging
         logger.error(`[AskVertexRaw] FULL ERROR: ${err.message}`);
@@ -444,26 +474,44 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         // 3. Generate Content
         const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
         const response = await result.response;
+        const candidate = response.candidates?.[0];
 
         let text = '';
         if (typeof response.text === 'function') {
             text = response.text();
-        } else if (response.candidates && response.candidates.length > 0) {
-            text = response.candidates[0]?.content?.parts?.[0]?.text || "No response generated.";
+        } else if (candidate?.content?.parts?.[0]?.text) {
+            text = candidate.content.parts[0].text;
         } else {
             logger.warn(`[VERTEX] Unexpected response format: ${JSON.stringify(response)}`);
             text = "No response generated.";
         }
 
         // 4. JSON Parsing Attempt (If mode expects JSON)
-        // If the instruction asked for JSON, ensure we return it as a string. 
-        // The frontend parses it if possible. 
-        // We clean up markdown code blocks just in case: ```json ... ```
         if (options.mode === 'FILE_CONVERSION' || (systemInstruction && systemInstruction.includes('JSON'))) {
             text = text.replace(/```json\s*|\s*```/g, '').trim();
         }
 
+        // 5. Extract Search Grounding Sources
+        let sources = [];
+        if (options.useSearch && candidate?.groundingMetadata) {
+            const gm = candidate.groundingMetadata;
+            const chunks = gm.groundingChunks || [];
+            sources = chunks.map(chunk => {
+                if (chunk.web) {
+                    return {
+                        title: chunk.web.title || "Google Search Source",
+                        url: chunk.web.uri
+                    };
+                }
+                return null;
+            }).filter(Boolean);
+        }
+
         logger.info(`[VERTEX] Response received successfully (${text.length} chars).`);
+        
+        if (options.returnSources) {
+            return { text, sources };
+        }
         return text;
 
     } catch (error) {

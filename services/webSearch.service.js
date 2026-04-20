@@ -18,7 +18,7 @@ export const shouldSearch = async (query) => {
         // Fast-pass: Check for common real-time keywords to skip AI detection and save time
         const searchKeywords = [
             'today', 'match', 'score', 'weather', 'price', 'news', 'latest', 'live', 
-            'stock', 'cricket', 'ipl', 'football', 'result', 'upcoming'
+            'stock', 'cricket', 'ipl', 'football', 'result', 'upcoming', 'current'
         ];
         
         if (searchKeywords.some(keyword => lower.includes(keyword))) {
@@ -26,36 +26,20 @@ export const shouldSearch = async (query) => {
             return true;
         }
 
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) return false;
+        // Use Gemini 1.5 Flash (faster than GPT-4o-mini for detection)
+        const systemPrompt = `You are a real-time information detector. 
+        Today is ${new Date().toDateString()}.
+        Analyze if the query requires up-to-date, live, or real-time information.
+        Respond ONLY "YES" or "NO".`;
 
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: `You are a real-time information detector. 
-                        Today is ${new Date().toDateString()}.
-                        Analyze if the query requires up-to-date, live, or real-time information.
-                        Respond ONLY "YES" or "NO".`
-                    },
-                    { role: 'user', content: query }
-                ],
-                max_tokens: 5,
-                temperature: 0
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
+        const decision = await askVertex(query, null, {
+            systemInstruction: systemPrompt,
+            modelOverride: 'gemini-1.5-flash',
+            maxOutputTokens: 10,
+            temperature: 0
+        });
 
-        const decision = response.data.choices[0].message.content.trim().toUpperCase();
-        return decision === 'YES';
+        return decision.trim().toUpperCase() === 'YES';
     } catch (error) {
         logger.error(`[WebSearch] Detection Error: ${error.message}`);
         return false;
@@ -68,111 +52,68 @@ export const shouldSearch = async (query) => {
  */
 export const performSearch = async (query, userLanguage = 'English') => {
     try {
-        logger.info(`[WebSearch] Calling OpenAI Search for query: "${query}"`);
-
-        const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
+        logger.info(`[WebSearch] Level 1: super-fast Gemini search for: "${query}"`);
         const targetLang = userLanguage === 'Hinglish' ? 'Hinglish (Romanized Hindi)' : userLanguage;
+        
+        const systemPrompt = configService.getConfig('WEB_SEARCH_RULES') + `
+        LANGUAGE: ${targetLang}
+        MANDATORY: Respond strictly in ${targetLang}. Match user script/tone.`;
 
+        // 1. Primary Engine: Gemini 1.5 Flash + Google Search Grounding
+        const result = await askVertex(query, null, {
+            systemInstruction: systemPrompt,
+            useSearch: true,
+            returnSources: true,
+            modelOverride: 'gemini-1.5-flash'
+        });
+
+        if (result && result.text) {
+            return { summary: result.text, sources: result.sources || [] };
+        }
+    } catch (e) {
+        logger.warn(`[WebSearch] Gemini Search failed, falling back... ${e.message}`);
+    }
+
+    // --- FALLBACK 1: OpenAI Search Preview ---
+    try {
+        logger.info('[WebSearch] Level 2: OpenAI Search Preview fallback...');
         const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-            logger.error('[WebSearch] OPENAI_API_KEY is missing!');
-            return null;
-        }
+        if (apiKey) {
+            const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+                model: 'gpt-4o-search-preview',
+                messages: [{ role: 'user', content: query }]
+            }, { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 45000 });
 
-        const modelName = 'gpt-4o-search-preview';
-        logger.info(`[WebSearch] Calling OpenAI with model: ${modelName}`);
-
-        const response = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-                model: modelName,
-                messages: [
-                    {
-                        role: 'system',
-                        content: configService.getConfig('WEB_SEARCH_RULES') + `
-                        TODAY'S DATE: ${currentDate}
-                        LANGUAGE: ${targetLang}
-                        MANDATORY RULE: You MUST match the EXACT script and tongue used by the user. If the user asks in ${targetLang}, you MUST respond 100% in ${targetLang}.`
-                    },
-                    { role: 'user', content: query }
-                ]
-                // Note: No 'tools' parameter needed for gpt-4o-search-preview as it's built-in
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 90000 // 90s timeout for search
+            if (response.data?.choices?.[0]?.message?.content) {
+                const msg = response.data.choices[0].message;
+                return {
+                    summary: msg.content,
+                    sources: (msg.sources || []).map(s => ({ title: s.title, url: s.url }))
+                };
             }
-        );
-
-        if (response.data && response.data.choices && response.data.choices[0]) {
-            const message = response.data.choices[0].message;
-            const content = message.content;
-
-            // Extract sources from citations or sources field
-            let sources = [];
-            const rawSources = message.sources || message.citations;
-
-            if (rawSources && Array.isArray(rawSources)) {
-                sources = rawSources.map(c => ({
-                    title: c.title || "Source",
-                    url: c.url,
-                    description: c.snippet || c.description || ""
-                }));
-            }
-
-            return {
-                summary: content,
-                sources: sources
-            };
         }
+    } catch (e) {
+        logger.warn(`[WebSearch] OpenAI Search failed: ${e.message}`);
+    }
 
-        throw new Error('No response from search-preview model');
+    // --- FALLBACK 2: Manual Web Search + Gemini Summarization ---
+    try {
+        logger.info('[WebSearch] Level 3: Manual search + AI summary fallback...');
+        const searchData = await performWebSearch(query, 5);
+        if (!searchData || !searchData.results || searchData.results.length === 0) return null;
 
-    } catch (error) {
-        logger.error(`[WebSearch] Primary Search Failed: ${error.response?.data?.error?.message || error.message}`);
+        const snippets = searchData.results.map((r, i) => `${i+1}. [${r.title}] ${r.snippet} (${r.link})`).join('\n\n');
+        const summary = await askVertex(`Answer "${query}" based on:\n${snippets}`, null, {
+            systemInstruction: `Explain in ${userLanguage}. Be direct.`
+        });
 
-        // --- FALLBACK MECHANISM ---
-        try {
-            logger.info(`[WebSearch] Attempting fallback search for: "${query}"`);
-            const searchData = await performWebSearch(query, 5);
-
-            if (!searchData || !searchData.results || searchData.results.length === 0) {
-                logger.warn('[WebSearch] Fallback search also yielded no results.');
-                return null;
-            }
-
-            const formattedSources = searchData.results.map(r => ({
-                title: r.title,
-                url: r.link,
-                description: r.snippet
-            }));
-
-            const snippetsText = searchData.results.map((r, i) => `${i + 1}. [${r.title}] ${r.snippet} (Source: ${r.link})`).join('\n\n');
-
-            const systemPrompt = configService.getConfig('WEB_SEARCH_RULES') + `
-            TODAY'S DATE: ${new Date().toDateString()}
-            
-            Below are search results for the query: "${query}"
-            ${snippetsText}
-            
-            Task: Using ONLY the data above, provide a clear and concise answer in ${userLanguage}. Keep it helpful and direct.`;
-
-            // Use Gemini for summarization via askVertex
-            const summary = await askVertex(query, null, {
-                systemInstruction: systemPrompt
-            });
-
-            return {
-                summary: summary,
-                sources: formattedSources
-            };
-        } catch (fallbackError) {
-            logger.error(`[WebSearch] Fallback Search also failed: ${fallbackError.message}`);
-            return null;
-        }
+        return {
+            summary: summary,
+            sources: searchData.results.map(r => ({ title: r.title, url: r.link }))
+        };
+    } catch (e) {
+        logger.error(`[WebSearch] All search levels failed: ${e.message}`);
+        return null;
     }
 };
 
