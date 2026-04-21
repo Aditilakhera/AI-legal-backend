@@ -2,7 +2,7 @@ import PersonalTask from '../models/PersonalTask.js';
 
 export const getTasks = async (req, res) => {
     try {
-        const userId = req.user.id; // Assumes middleware populates req.user
+        const userId = req.user.id || req.user._id; 
         const { date, status } = req.query;
 
         let query = { user: userId };
@@ -29,7 +29,7 @@ export const getTasks = async (req, res) => {
 
 export const createTask = async (req, res) => {
     try {
-        const userId = req.user.id;
+        const userId = req.user.id || req.user._id;
         const task = new PersonalTask({ ...req.body, user: userId });
         await task.save();
         res.status(201).json(task);
@@ -42,7 +42,7 @@ export const updateTask = async (req, res) => {
     try {
         const { id } = req.params;
         const task = await PersonalTask.findOneAndUpdate(
-            { _id: id, user: req.user.id },
+            { _id: id, user: req.user.id || req.user._id },
             req.body,
             { new: true }
         );
@@ -56,7 +56,7 @@ export const updateTask = async (req, res) => {
 export const deleteTask = async (req, res) => {
     try {
         const { id } = req.params;
-        const task = await PersonalTask.findOneAndDelete({ _id: id, user: req.user.id });
+        const task = await PersonalTask.findOneAndDelete({ _id: id, user: req.user.id || req.user._id });
         if (!task) return res.status(404).json({ message: "Task not found" });
         res.json({ message: "Task deleted" });
     } catch (error) {

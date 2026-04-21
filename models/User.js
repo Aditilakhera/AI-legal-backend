@@ -152,7 +152,7 @@ const userSchema = new mongoose.Schema({
         id: String,
         title: String,
         desc: String,
-        type: { type: String, enum: ['promo', 'update', 'alert'], default: 'promo' },
+        type: { type: String, enum: ['promo', 'update', 'alert', 'success', 'info', 'error'], default: 'promo' },
         time: { type: Date, default: Date.now },
         isRead: { type: Boolean, default: false },
         voice: { type: String, default: 'none' }

@@ -10,7 +10,7 @@ router.post('/', verifyToken, async (req, res) => {
         const { title, description, datetime, repeat, customDays, notificationType, voice, isActive, intent } = req.body;
 
         const reminder = new Reminder({
-            userId: req.user.id,
+            userId: req.user.id || req.user._id,
             title,
             description: description || '',
             datetime,
@@ -43,10 +43,8 @@ router.get('/', verifyToken, async (req, res) => {
     try {
         const { status } = req.query;
 
-        const query = { userId: req.user.id };
-        if (status) {
-            query.status = status;
-        }
+        const query = { userId: req.user.id || req.user._id };
+        if (status) query.status = status;
 
         const reminders = await Reminder.find(query)
             .sort({ datetime: 1 })

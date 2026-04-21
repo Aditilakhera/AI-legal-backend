@@ -6,36 +6,78 @@ import logger from '../utils/logger.js';
 // Add email service if later needed for email reminders, for now let's just log or push notification
 // import * as emailService from './emailService.js';
 
+import PersonalTask from '../models/PersonalTask.js';
+
 export const initReminderScheduler = () => {
-    logger.info('[ReminderScheduler] Initializing Multi Schedule Reminder System...');
+    logger.info('[ReminderScheduler] Initializing Multi Schedule Reminder System (v2)...');
 
     // Runs every minute
     cron.schedule('* * * * *', async () => {
         try {
             const now = new Date();
-            // Start of current minute
             const currentMinute = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
-            // End of current minute
             const nextMinute = new Date(currentMinute.getTime() + 60000);
 
-            // Find all pending, active reminders whose datetime falls exactly in this minute
+            // 1. Process standard Reminders
             const dueReminders = await Reminder.find({
                 isActive: true,
                 status: 'pending',
-                datetime: { $gte: currentMinute, $lt: nextMinute }
+                datetime: { $lt: nextMinute }
             });
 
-            if (dueReminders.length > 0) {
-                logger.info(`[ReminderScheduler] Found ${dueReminders.length} due reminders.`);
+            // 2. Process PersonalTasks from AI Assistant
+            const dueTasks = await PersonalTask.find({
+                status: 'pending',
+                datetime: { $lt: nextMinute }
+            });
+
+            if (dueReminders.length > 0 || dueTasks.length > 0) {
+                logger.info(`[ReminderScheduler] Found ${dueReminders.length} reminders and ${dueTasks.length} tasks due.`);
             }
 
             for (const reminder of dueReminders) {
                 await processDueReminder(reminder, now);
             }
+
+            for (const task of dueTasks) {
+                await processDueTask(task, now);
+            }
         } catch (error) {
             logger.error(`[ReminderScheduler] Error running cron: ${error.message}`);
         }
     });
+};
+
+const processDueTask = async (task, now) => {
+    try {
+        logger.info(`[ReminderScheduler] Processing PersonalTask: ${task.title} - ${task._id}`);
+        
+        // Create in-app notification
+        const { createNotification } = await import('./notificationService.js');
+        await createNotification(task.user, {
+            id: `task_${task._id}`,
+            title: `Task Alert: ${task.title}`,
+            desc: task.description || 'Time for your scheduled routine.',
+            type: task.isUrgent ? 'alert' : 'info',
+            voice: 'none' // PersonalTask doesn't have voice selection in model yet
+        });
+
+        // Handle Recurring logic for PersonalTask
+        if (task.recurring === 'none') {
+            task.status = 'completed';
+        } else {
+            const nextTime = new Date(task.datetime);
+            if (task.recurring === 'daily') nextTime.setDate(nextTime.getDate() + 1);
+            else if (task.recurring === 'weekly') nextTime.setDate(nextTime.getDate() + 7);
+            else if (task.recurring === 'monthly') nextTime.setMonth(nextTime.getMonth() + 1);
+            
+            task.datetime = nextTime;
+        }
+
+        await task.save();
+    } catch (error) {
+        logger.error(`[ReminderScheduler] Error processing task ${task._id}: ${error.message}`);
+    }
 };
 
 const processDueReminder = async (reminder, now) => {
