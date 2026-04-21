@@ -5,6 +5,10 @@ import CreditPackage from '../models/CreditPackage.js';
 import CreditLog from '../models/CreditLog.js';
 import SupportTicket from '../models/SupportTicket.js';
 import FeatureCredit from '../models/FeatureCredit.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
 
 export const getFeatureCredits = async (req, res) => {
     try {
@@ -329,6 +333,110 @@ export const getAllPlansAdmin = async (req, res) => {
         const plans = await Plan.find({}).sort({ priceMonthly: 1 });
         res.status(200).json({ success: true, plans });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const parseLegalDoc = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No file uploaded' });
+        }
+
+        console.log(`[Admin] Parsing legal doc: ${req.file.originalname} (${req.file.mimetype}, ${req.file.size} bytes)`);
+
+        let text = '';
+        const mimetype = req.file.mimetype;
+
+        try {
+            if (mimetype === 'application/pdf') {
+                console.log("[Admin] Detected PDF, using pdf-parse...");
+                const data = await pdf(req.file.buffer);
+                text = data.text;
+            } else if (mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                console.log("[Admin] Detected DOCX, using mammoth...");
+                const data = await mammoth.extractRawText({ buffer: req.file.buffer });
+                text = data.value;
+            } else {
+                console.log("[Admin] Detected Text/MD, converting buffer...");
+                text = req.file.buffer.toString('utf-8');
+            }
+        } catch (parseErr) {
+            console.error("[Admin] Extraction library error:", parseErr);
+            return res.status(500).json({ 
+                success: false, 
+                message: `Error extracting text: ${parseErr.message}. Try a plain text (.txt) version if this continues.` 
+            });
+        }
+
+        if (!text || text.trim().length < 10) {
+            console.error("[Admin] Extracted text is empty or too short.");
+            return res.status(400).json({ success: false, message: 'Could not extract enough text from file. Please ensure it is not an image-based PDF.' });
+        }
+
+        // --- Heuristic Sectioning Logic ---
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        const sections = [];
+        let currentSection = null;
+
+        lines.forEach((line) => {
+            const isMetaInfo = /^(Effective Date|Last Updated|Revision|Version)\s*:?/i.test(line);
+            const isHeader = !isMetaInfo && (
+                /^#+\s+/.test(line) ||
+                /^(ARTICLE|SECTION|CHAPTER|UNIT)\s+([IVXLCDM\d]+)/i.test(line) ||
+                (/^\d+[\.\)]\s+[A-Z][^a-z]/.test(line) && line.length < 60) || // Stricter number-header detection
+                (line.length > 3 && line.length < 50 && line === line.toUpperCase() && !line.includes(':') && !line.endsWith('.'))
+            );
+
+            if (isHeader) {
+                if (currentSection) sections.push(currentSection);
+                currentSection = {
+                    title: line.replace(/^#+\s*/, '').trim(),
+                    content: []
+                };
+            } else if (currentSection) {
+                const isBulletOrList = /^[•\-\*\u2022\u2023\u2043\u2044]/.test(line) || /^\d+[\.\)]\s/.test(line);
+                const isMetaInfoLine = /^(Effective Date|Last Updated|Revision|Version)\s*:?/i.test(line);
+                const isSubtitle = !isBulletOrList && !isMetaInfoLine && ((line.length < 100 && (line.endsWith(':') || !line.endsWith('.'))) || /^###\s+/.test(line));
+
+                if (isSubtitle && !line.includes('http')) {
+                    currentSection.content.push({ 
+                        subtitle: line.replace(/^#+\s*/, '').replace(/:$/, '').trim(), 
+                        text: '' 
+                    });
+                } else {
+                    if (currentSection.content.length === 0) {
+                        currentSection.content.push({ subtitle: 'General Terms', text: line });
+                    } else {
+                        const lastUnit = currentSection.content[currentSection.content.length - 1];
+                        if (lastUnit.text) {
+                            lastUnit.text += '\n\n' + line;
+                        } else {
+                            lastUnit.text = line;
+                        }
+                    }
+                }
+            } else {
+                currentSection = {
+                    title: 'Policy Overview',
+                    content: [{ subtitle: 'Introduction', text: line }]
+                };
+            }
+        });
+
+        if (currentSection) sections.push(currentSection);
+
+        const parsedSections = sections.map(s => ({
+            ...s,
+            content: s.content.map(c => ({
+                ...c,
+                text: (c.text || '').trim()
+            })).filter(c => c.text.length > 0) // Only keep units that actually have text
+        })).filter(s => s.content.length > 0); // Only keep sections that have content
+
+        res.status(200).json({ success: true, sections: parsedSections });
+    } catch (error) {
+        console.error("[parseLegalDoc Error]", error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

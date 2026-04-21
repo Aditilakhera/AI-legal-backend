@@ -1,6 +1,7 @@
 import express from 'express';
 import { verifyToken } from '../middleware/authorization.js';
 import User from '../models/User.js';
+import multer from 'multer';
 // Assuming there is an isAdmin middleware or we check role
 import {
     getAdminStats,
@@ -15,7 +16,8 @@ import {
     deleteCreditPackage,
     getFeatureCredits,
     updateFeatureCredit,
-    getAllPlansAdmin
+    getAllPlansAdmin,
+    parseLegalDoc
 } from '../controllers/adminController.js';
 
 
@@ -39,6 +41,7 @@ const isAdmin = async (req, res, next) => {
         const user = await User.findById(req.user.id);
 
         if (user && (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL)) {
+            console.log(`[Admin Access] Granted for ${user.email}`);
             next();
         } else {
             const identEmail = req.user.email || (user && user.email) || req.user.id;
@@ -50,6 +53,9 @@ const isAdmin = async (req, res, next) => {
         res.status(500).json({ success: false, message: 'Error verifying admin status' });
     }
 };
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 router.get('/stats', verifyToken, isAdmin, getAdminStats);
 router.get('/search-user', verifyToken, isAdmin, searchUserByEmail);
@@ -71,5 +77,11 @@ router.delete('/packages/:packageId', verifyToken, isAdmin, deleteCreditPackage)
 // Feature Credit metrics and adjustments
 router.get('/feature-credits', verifyToken, isAdmin, getFeatureCredits);
 router.put('/feature-credits/:id', verifyToken, isAdmin, updateFeatureCredit);
+
+// Legal Document Parsing
+router.post('/parse-legal-doc', verifyToken, isAdmin, upload.single('file'), (req, res, next) => {
+    console.log(`[Multer Debug] File received: ${req.file ? req.file.originalname : 'NONE'}`);
+    next();
+}, parseLegalDoc);
 
 export default router;
