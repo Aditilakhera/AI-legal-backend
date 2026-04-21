@@ -17,7 +17,7 @@ export const initSocket = (server) => {
             socket.join(userId.toString());
             console.log(`[Socket] User ${userId} joined room`);
             
-            // Optional: Send a login alert
+            /* Optional: Send a login alert
             io.to(userId.toString()).emit('new_notification', {
                 id: `login_${Date.now()}`,
                 title: 'Connected to AISA™',
@@ -25,7 +25,7 @@ export const initSocket = (server) => {
                 type: 'success',
                 time: new Date(),
                 isRead: false
-            });
+            }); */
         });
 
 
