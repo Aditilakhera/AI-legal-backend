@@ -435,12 +435,11 @@ export const extractBrandMetadata = async (targetUrl) => {
   const parsed = new URL(url);
   const domain = parsed.hostname.replace('www.', '');
 
-  // 1. Fetch the homepage HTML
-  let html;
+  let html = '';
   try {
     html = await fetchHtml(url);
   } catch (e) {
-    throw new Error(`Cannot reach ${url}: ${e.message}`);
+    console.warn(`[Scraper] Cannot reach ${url}, proceeding with empty context. Error: ${e.message}`);
   }
 
   const $ = cheerio.load(html);

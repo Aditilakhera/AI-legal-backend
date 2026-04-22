@@ -13,6 +13,10 @@ import GenerationJob from '../models/GenerationJob.js';
 import GenerationPromptLog from '../models/GenerationPromptLog.js';
 import mongoose from 'mongoose';
 import { generateImageFromPrompt } from '../controllers/image.controller.js';
+import { GoogleGenAI, Modality } from '@google/genai';
+import axios from 'axios';
+import { uploadToGCS, gcsFilename } from './gcs.service.js';
+import sharp from 'sharp';
 
 // --- JSON RECOVERY SYSTEM ---
 function safeParse(content) {
@@ -526,15 +530,193 @@ const updateUsage = (usage, type) => {
 
 // --- REAL IMAGE GENERATION (AI Ads Agent pipeline) ---
 
+/**
+ * STEP 2.5 — BRAND LOGO OVERLAY
+ * ─────────────────────────────────────────────────────
+ * Takes a generated image URL + a brand logoUrl, downloads both,
+ * and uses Gemini 2.5 Flash image editing to composite the logo
+ * onto the top-left corner of the generated image.
+ *
+ * Gracefully returns the original imageUrl if:
+ *   - No logoUrl is provided (brand hasn't uploaded a logo)
+ *   - Logo/image download fails
+ *   - Gemini overlay fails (pipeline must not crash due to this step)
+ */
+// Helper: normalise a raw Content-Type header into a Gemini-accepted image MIME type.
+// GCS signed-URL downloads often return 'application/octet-stream' even for PNG files;
+// Gemini rejects anything that isn't a recognised image/* type with INVALID_ARGUMENT.
+const toImageMime = (contentType = '') => {
+  const ct = contentType.toLowerCase().split(';')[0].trim();
+  if (ct.startsWith('image/')) return ct;
+  return 'image/png';
+};
+
+// Gemini inlineData only accepts these image formats.
+// SVG, GIF, BMP, TIFF etc. will cause INVALID_ARGUMENT for the ENTIRE request.
+const GEMINI_SUPPORTED_IMAGE_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/jpg',
+  'image/webp', 'image/heic', 'image/heif',
+]);
+
+const isGeminiSupportedImage = (mime) => GEMINI_SUPPORTED_IMAGE_MIMES.has(mime.toLowerCase());
+
+const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingText) => {
+  if (!logoUrl && !headingText && !subheadingText) {
+    console.log('    [VisualOverlay] ⏭️  Skipping — no text or logo to overlay.');
+    return imageUrl;
+  }
+
+  console.log('    [VisualOverlay] 🏷️  Applying overlays (Logo + Text)...');
+  const overlayStart = Date.now();
+
+  try {
+    // 1. Download the generated image as base64
+    //    Use a longer timeout (45 s) — full-res Gemini images can be several MB.
+    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 45000 });
+    const imageData = imageResponse.data;
+
+    if (!imageData || imageData.byteLength < 100) {
+      console.warn(`    [VisualOverlay] ⚠️  Downloaded image is empty/too small (${imageData?.byteLength ?? 0} bytes) — skipping overlay.`);
+      return imageUrl;
+    }
+
+    const imageBase64 = Buffer.from(imageData).toString('base64');
+    // Force a valid image MIME — GCS signed URLs often return application/octet-stream
+    const imageMime = toImageMime(imageResponse.headers['content-type']);
+    console.log(`    [VisualOverlay] 📦 Image downloaded: ${imageData.byteLength} bytes | MIME: ${imageMime}`);
+
+    // 2. Download the brand logo as base64 (if available)
+    let logoBase64 = null;
+    let logoMime = null;
+    if (logoUrl) {
+      try {
+        const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer', timeout: 20000 });
+        const rawBuffer = Buffer.from(logoResponse.data);
+
+        if (rawBuffer.byteLength >= 100) {
+          try {
+            // Convert any logo format (SVG, ICO, WEBP, etc.) to a standard PNG 
+            // format so that it is always accepted by the Gemini model.
+            const pngBuffer = await sharp(rawBuffer).png().toBuffer();
+            logoBase64 = pngBuffer.toString('base64');
+            logoMime = 'image/png';
+            console.log(`    [VisualOverlay] 🖼  Logo converted to PNG: ${pngBuffer.byteLength} bytes`);
+          } catch (sharpError) {
+             console.warn(`    [VisualOverlay] ⚠️  Logo format conversion failed (${sharpError.message}). Skipping logo, applying text-only overlay.`);
+          }
+        } else {
+          console.warn('    [VisualOverlay] ⚠️  Logo downloaded but appears empty — skipping logo.');
+        }
+      } catch (e) {
+        console.warn(`    [VisualOverlay] ⚠️  Logo download failed (${e.message}), continuing with text only.`);
+      }
+    }
+
+
+    // 3. Use Gemini Flash image editing to composite
+    //    IMPORTANT: use 'global' location — same as generateImageFromPrompt uses;
+    //    sending to a regional endpoint that doesn't host the model causes INVALID_ARGUMENT.
+    const client = new GoogleGenAI({
+      vertexai: true,
+      project: process.env.GCP_PROJECT_ID,
+      location: 'global',
+    });
+
+    const parts = [
+      { inlineData: { mimeType: imageMime, data: imageBase64 } }
+    ];
+
+    if (logoBase64) {
+      parts.push({ inlineData: { mimeType: logoMime, data: logoBase64 } });
+    }
+
+    let overlayPrompt = `You are a professional image compositor and graphic designer for social media ads.
+You are given ${logoBase64 ? 'two images' : 'an image'}:
+- Image 1: A social media ad post (the main image)
+${logoBase64 ? '- Image 2: A brand logo\n' : ''}
+Your task is to overlay the following elements cleanly and beautifully without covering the main subject of the image:
+`;
+
+    if (logoBase64) {
+      overlayPrompt += `
+1. Place the brand logo (Image 2) neatly in the top-left corner.
+2. Size the logo to approximately 10-15% of the image width.
+3. Add a very subtle semi-transparent white padding around the logo for visibility if needed.
+`;
+    }
+
+    if (headingText || subheadingText) {
+      overlayPrompt += `
+${logoBase64 ? '4' : '1'}. Carefully overlay the following text onto the image in a professional, highly readable marketing style:
+   - HEADING: "${headingText || ''}"
+   - SUBHEADING: "${subheadingText || ''}"
+${logoBase64 ? '5' : '2'}. Use a clean, modern, sans-serif font. Make the HEADING bold and prominent, and the SUBHEADING slightly smaller.
+${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark background or black text on light background) and use subtle shadows or a semi-transparent dark banner behind the text to ensure perfect typography legibility. Place it at the top, bottom, or the most empty space of the image.
+`;
+    }
+
+    overlayPrompt += `
+* Preserve the original ad image composition, colors, lighting, and quality.
+* Do NOT alter any other part of the image.
+* Output the final composited image ONLY. No conversational text.`;
+
+    parts.push({ text: overlayPrompt });
+
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: [{ role: 'user', parts }],
+      config: { responseModalities: [Modality.TEXT, Modality.IMAGE] }
+    });
+
+    // 4. Extract the resulting image bytes
+    let resultBase64 = null;
+    let resultMime = 'image/png';
+    const responseParts = response?.candidates?.[0]?.content?.parts || [];
+    for (const part of responseParts) {
+      if (part.inlineData?.data) {
+        resultBase64 = part.inlineData.data;
+        resultMime = part.inlineData.mimeType || 'image/png';
+      } else if (part.text) {
+        console.log(`    [VisualOverlay] Gemini note: \`${part.text.substring(0, 120)}`);
+      }
+    }
+
+    if (!resultBase64) {
+      console.warn('    [VisualOverlay] ⚠️  Gemini returned no image — falling back to original.');
+      return imageUrl;
+    }
+
+    // 5. Upload composited image to GCS
+    const buffer = Buffer.from(resultBase64, 'base64');
+    const gcsResult = await uploadToGCS(buffer, {
+      folder: 'generated_images',
+      filename: gcsFilename('aisa_branded_post'),
+      mimeType: resultMime,
+    });
+
+    if (!gcsResult?.publicUrl) {
+      console.warn('    [VisualOverlay] ⚠️  GCS upload failed — falling back to original.');
+      return imageUrl;
+    }
+
+    console.log(`    [VisualOverlay] ✅ Overlays composited in ${Date.now() - overlayStart}ms → ${gcsResult.publicUrl.substring(0, 60)}...`);
+    return gcsResult.publicUrl;
+
+  } catch (err) {
+    console.error(`    [VisualOverlay] ❌ Overlay failed (${err.message}) — using original image.`);
+    return imageUrl;
+  }
+};
 
 /**
  * AI ADS AGENT — VISUAL POST GENERATION PIPELINE
  * ─────────────────────────────────────────────────
- * Step 1 │ GPT-4    → Brand-aware Imagen prompt engineering
- * Step 2 │ Vertex AI Imagen 3/4 → High-quality visual render
- * Step 3 │ GCS      → Secure cloud storage
- * Step 4 │ MongoDB  → GeneratedAsset + Job update
- * Step 5 │ Calendar → Entry status marked "generated"
+ * Step 1   │ GPT-4    → Brand-aware Imagen prompt engineering
+ * Step 2   │ Vertex AI Imagen 3/4 → High-quality visual render
+ * Step 2.5 │ Gemini 2.5 Flash → Brand logo overlay (top-left)
+ * Step 3   │ GCS      → Secure cloud storage
+ * Step 4   │ MongoDB  → GeneratedAsset + Job update
+ * Step 5   │ Calendar → Entry status marked "generated"
  */
 export const generateVisualPostForEntry = async (workspaceId, entryId, jobId, modelId = 'imagen-3.0-generate-001', postFormat = 'single') => {
   const pipelineStart = Date.now();
@@ -700,16 +882,52 @@ Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
   let imageUrl = '';
   let generatedSlides = [];
 
+  let slideTexts = [];
   if (isCarousel && carouselSlides.length > 0) {
     console.log(`    ⚡ Staggered Rendering ${carouselSlides.length} slides (1.2s apart to manage quota)...`);
+    
+    // Generate text variations
+    const variationsPrompt = `You are a social media copywriter.
+Generate ${carouselSlides.length} progressive variations of the following heading and subheading for a carousel post sequence.
+Original Heading: ${title}
+Original Subheading: ${hook}
+
+The slides should flow logically (e.g., Hook -> Problem -> Solution -> Proof -> CTA).
+Output strictly a JSON array of ${carouselSlides.length} objects. Each object must have "heading" and "subheading" string properties. Make them punchy and short suitable for image overlay.`;
+
+    try {
+      console.log(`    🧠 Generating text variations for ${carouselSlides.length} slides...`);
+      const varsRes = await AskOpenAIRaw(variationsPrompt, null, { jsonMode: true, systemInstruction: "Output ONLY a valid JSON array. No conversational text." });
+      let parsed = safeParse(varsRes);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        // Find the first array property if wrapped in an object
+        for (const key in parsed) {
+          if (Array.isArray(parsed[key])) {
+            parsed = parsed[key];
+            break;
+          }
+        }
+      }
+      slideTexts = Array.isArray(parsed) ? parsed : [];
+    } catch(e) {
+      console.error(`    ⚠️ Failed to generate slide text variations: ${e.message}`);
+    }
+
     // Stagger calls 1.2s apart to avoid hitting Imagen's concurrent quota limit
     for (let i = 0; i < carouselSlides.length; i++) {
       const p = carouselSlides[i];
       console.log(`       -> Rendering Slide ${i+1}/${carouselSlides.length}: "${p.substring(0, 40)}..."`);
       try {
-        const result = await generateImageFromPrompt(p, null, '1:1', selectedModel);
-        if (result) generatedSlides.push(result);
-        else console.warn(`       ⚠️  Slide ${i+1} returned empty URL`);
+        const rawSlideUrl = await generateImageFromPrompt(p, null, '1:1', selectedModel);
+        if (rawSlideUrl) {
+          // ── STEP 2.5: Apply brand logo and text overlay to each slide ──
+          const slideHeading = slideTexts[i]?.heading || title;
+          const slideSubheading = slideTexts[i]?.subheading || hook;
+          const brandedSlideUrl = await applyVisualOverlays(rawSlideUrl, brand.logoUrl, slideHeading, slideSubheading);
+          generatedSlides.push(brandedSlideUrl);
+        } else {
+          console.warn(`       ⚠️  Slide ${i+1} returned empty URL`);
+        }
       } catch (err) {
         console.error(`       ❌ Slide ${i+1} failed: ${err.message}`);
       }
@@ -723,7 +941,9 @@ Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
   } else {
     // Single image generation
     console.log(`    📐 Aspect ratio : 1:1`);
-    imageUrl = await generateImageFromPrompt(finalImagePrompt, null, '1:1', selectedModel);
+    const rawImageUrl = await generateImageFromPrompt(finalImagePrompt, null, '1:1', selectedModel);
+    // ── STEP 2.5: Apply visual overlays (logo + text) ──
+    imageUrl = await applyVisualOverlays(rawImageUrl, brand.logoUrl, title, hook);
   }
 
   if (!imageUrl && generatedSlides.length === 0) {
@@ -733,6 +953,8 @@ Output ONLY the raw Imagen prompt text, nothing else. No JSON, no explanation.`;
 
   const imagenMs = Date.now() - imagenStart;
   console.log(`    ✅ Generation cycle complete in ${imagenMs}ms`);
+  console.log(`    🏷️  Logo overlay : ${brand.logoUrl ? 'Applied' : 'Skipped (no logo)'}`);
+  console.log(`    📐 Final images  : ${isCarousel ? generatedSlides.length + ' slides' : '1 single image'}`);
 
   // ── STEP 3: Save GeneratedAsset to DB ────────────────────────────
   console.log('\n[Step 3/5] 💾 Saving GeneratedAsset to MongoDB...');

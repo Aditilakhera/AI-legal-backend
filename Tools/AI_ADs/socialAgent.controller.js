@@ -168,7 +168,6 @@ export const getAllWorkspaces = async (req, res) => {
         }
       }
     ]);
-    console.log(`[getAllWorkspaces] Returning ${workspaces.length} workspaces. Calendar counts:`, workspaces.map(w => ({ id: w._id, name: w.workspaceName, count: w.calendarEntryCount })));
     res.json({ success: true, workspaces });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
