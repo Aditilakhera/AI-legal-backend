@@ -663,7 +663,7 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
     parts.push({ text: overlayPrompt });
 
     const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-1.5-flash',
       contents: [{ role: 'user', parts }],
       config: { responseModalities: [Modality.TEXT, Modality.IMAGE] }
     });
