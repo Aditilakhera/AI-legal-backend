@@ -464,7 +464,7 @@ export const exportCalendarExcel = async (req, res) => {
  * Body: { workspaceId, calendarEntryId, modelId? }
  */
 export const generateVisualPost = async (req, res) => {
-  const { workspaceId, calendarEntryId, modelId, postFormat = 'single' } = req.body;
+  const { workspaceId, calendarEntryId, modelId, postFormat = 'single', aspectRatio = '1:1' } = req.body;
 
   console.log('\n┌─────────────────────────────────────────────────────┐');
   console.log('│  🚀 POST /generate/visual-post — Request received   │');
@@ -473,6 +473,7 @@ export const generateVisualPost = async (req, res) => {
   console.log(`  🏢 Workspace     : ${workspaceId}`);
   console.log(`  📋 CalendarEntry : ${calendarEntryId}`);
   console.log(`  🖼️  Post Format   : ${postFormat}`);
+  console.log(`  📍 Aspect Ratio  : ${aspectRatio}`);
   console.log(`  🤖 Model override: ${modelId || 'none (will use default)'}`);
 
   if (!workspaceId || !calendarEntryId) {
@@ -501,7 +502,7 @@ export const generateVisualPost = async (req, res) => {
     console.log(`  ⚡ Dispatching pipeline in background...`);
 
     // Fire and forget — background visual generation
-    generationService.generateVisualPostForEntry(workspaceId, calendarEntryId, job._id, modelId, postFormat)
+    generationService.generateVisualPostForEntry(workspaceId, calendarEntryId, job._id, modelId, postFormat, aspectRatio)
       .catch(err => {
         console.error(`\n❌ [VisualPost] Background job ${job._id} FAILED: ${err.message}`);
         logger.error(`[VisualPost] Background job ${job._id} failed: ${err.message}`);

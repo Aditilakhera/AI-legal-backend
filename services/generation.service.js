@@ -159,7 +159,7 @@ const PROMPTS = {
 export const generate30DayStrategy = async (workspaceId) => {
   try {
     const brand = await BrandProfile.findOne({ workspaceId });
-    if (!brand || !brand.structuredIdentity) throw new Error("Run Brand Setup first.");
+    if (!brand) throw new Error("Run Brand Setup first.");
 
     let calendar = await ContentCalendar.findOne({ workspaceId });
     if (!calendar) calendar = await ContentCalendar.create({ workspaceId, currentPlan: [] });
@@ -169,20 +169,19 @@ export const generate30DayStrategy = async (workspaceId) => {
       Create a high-performance social media content strategy for the month of ${brand.campaignMonth || 'Current'}.
       
       --- BRAND CORE ---
-      BRAND NAME: ${brand.companyName || brand.structuredIdentity?.brand_name}
-      TARGET INDUSTRY: ${brand.targetIndustry || brand.structuredIdentity?.industry}
-      TARGET AUDIENCE: ${brand.targetAudience || brand.structuredIdentity?.target_audience}
+      BRAND NAME: ${brand.companyName || 'Not specified'}
+      TARGET INDUSTRY: ${brand.targetIndustry || 'Not specified'}
+      TARGET AUDIENCE: ${brand.targetAudience || 'Not specified'}
       REGION/ETHNICITY: ${brand.targetEthnicity || 'Global'}
       
       --- CONTENT GUIDELINES ---
       CONTENT OBJECTIVE (GOAL): ${brand.contentObjective || "Awareness"}
       POSTING FREQUENCY: ${brand.postingFrequency || '3x per week'}
-      ARCHETYPE (VOICE/TONE): ${brand.toneOfVoice || brand.structuredIdentity?.tone || 'Professional'}
-      CONVERSION CTA STYLE: ${brand.ctaStyle || brand.structuredIdentity?.cta_style || 'Direct & Authoritative'}
+      ARCHETYPE (VOICE/TONE): ${brand.toneOfVoice || 'Professional'}
+      CONVERSION CTA STYLE: ${brand.ctaStyle || 'Direct & Authoritative'}
       
       --- BRAND KNOWLEDGE ---
-      BRAND DNA: ${brand.extractedBrandSummary || 'N/A'}
-      VALUES: ${brand.structuredIdentity?.brand_values?.join(', ') || 'N/A'}
+      BRAND DNA: ${brand.extractedBrandSummary || 'Not specified'}
 
       OUTPUT JSON (STRICT):
       {
@@ -246,15 +245,14 @@ export const generate30DayStrategy = async (workspaceId) => {
         Create exactly ${postsForThisChunk} content pipeline entries for ${weekNum === 0 ? 'the first part' : 'Part ' + (weekNum + 1)} of ${brand.campaignMonth} ${currentYear}.
         
         --- STRATEGIC CONTEXT ---
-        BRAND: ${brand.companyName || brand.structuredIdentity?.brand_name}
-        TARGET AUDIENCE: ${brand.targetAudience || brand.structuredIdentity?.target_audience}
+        BRAND: ${brand.companyName || 'Not specified'}
+        TARGET AUDIENCE: ${brand.targetAudience || 'Not specified'}
         REGION: ${brand.targetEthnicity || 'Global'}
-        TONE/VOICE: ${brand.toneOfVoice || brand.structuredIdentity?.tone || 'Professional'}
-        CTA STYLE: ${brand.ctaStyle || brand.structuredIdentity?.cta_style || 'Direct & Authoritative'}
+        TONE/VOICE: ${brand.toneOfVoice || 'Professional'}
+        CTA STYLE: ${brand.ctaStyle || 'Direct & Authoritative'}
         THEME: ${strategyDoc.weekly_themes[weekNum] || strategyDoc.weekly_themes[0] || "General"}
-        DNA INSIGHTS: ${brand.extractedBrandSummary || ''}
+        DNA INSIGHTS: ${brand.extractedBrandSummary || 'Not specified'}
         STRATEGY CONTEXT: ${strategyDoc.strategy_summary}
-        PLATFORM FOCUS: ${JSON.stringify(brand.structuredIdentity.platform_focus)}
         PLAN: Generate ${postsForThisChunk} high-quality, unique posts spread across this ${daysInThisChunk}-day period.
 
         OUTPUT JSON (STRICT):
@@ -560,7 +558,7 @@ const GEMINI_SUPPORTED_IMAGE_MIMES = new Set([
 
 const isGeminiSupportedImage = (mime) => GEMINI_SUPPORTED_IMAGE_MIMES.has(mime.toLowerCase());
 
-const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingText) => {
+const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingText, aspectRatio = '1:1') => {
   if (!logoUrl && !headingText && !subheadingText) {
     console.log('    [VisualOverlay] ⏭️  Skipping — no text or logo to overlay.');
     return imageUrl;
@@ -662,10 +660,23 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
 
     parts.push({ text: overlayPrompt });
 
+    let geminiRatio = '1:1'; // safe default
+    if (aspectRatio === '16:9')  geminiRatio = '16:9';
+    else if (aspectRatio === '9:16')  geminiRatio = '9:16';
+    else if (aspectRatio === '4:3')   geminiRatio = '4:3';
+    else if (aspectRatio === '3:4')   geminiRatio = '3:4';
+    else if (aspectRatio === '4:5')   geminiRatio = '4:5';
+    else if (aspectRatio === '1:1')   geminiRatio = '1:1';
+
     const response = await client.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: [{ role: 'user', parts }],
-      config: { responseModalities: [Modality.TEXT, Modality.IMAGE] }
+      config: { 
+        responseModalities: [Modality.TEXT, Modality.IMAGE],
+        imageConfig: {
+          aspectRatio: geminiRatio
+        }
+      }
     });
 
     // 4. Extract the resulting image bytes
@@ -718,7 +729,7 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
  * Step 4   │ MongoDB  → GeneratedAsset + Job update
  * Step 5   │ Calendar → Entry status marked "generated"
  */
-export const generateVisualPostForEntry = async (workspaceId, entryId, jobId, modelId = 'imagen-3.0-generate-001', postFormat = 'single') => {
+export const generateVisualPostForEntry = async (workspaceId, entryId, jobId, modelId = 'imagen-3.0-generate-001', postFormat = 'single', aspectRatio = '1:1') => {
   const pipelineStart = Date.now();
 
   console.log('\n' + '═'.repeat(60));
@@ -786,7 +797,8 @@ Generate 5 separate, distinct Imagen 3 image generation prompts for a CAROUSEL p
 Each slide must be visually different but tell a cohesive brand story.
 
 BRAND: ${companyName}
-PLATFORM: ${platform} (Carousel format — square 1:1)
+PLATFORM: ${platform} (Carousel format)
+ASPECT RATIO: ${aspectRatio}
 CAMPAIGN PHASE: ${phase}
 POST TITLE: ${title}
 HOOK: ${hook}
@@ -804,7 +816,7 @@ Slide structure:
 Requirements for each prompt:
 - Photorealistic, studio-grade, high-quality
 - Integrate brand colors naturally
-- Square 1:1 composition
+- Match the required aspect ratio (${aspectRatio})
 - NO text or logos in any image
 - Distinct subject / scene per slide
 
@@ -815,6 +827,7 @@ Generate a detailed, photorealistic Imagen 3 image generation prompt for the fol
 
 BRAND: ${companyName}
 PLATFORM: ${platform} (single image format)
+ASPECT RATIO: ${aspectRatio}
 CAMPAIGN PHASE: ${phase}
 POST TITLE: ${title}
 HOOK: ${hook}
@@ -825,7 +838,7 @@ TARGET AUDIENCE: ${targetEthnicity}
 Requirements for the Imagen prompt:
 - Make it photorealistic, high-quality, studio-grade
 - Integrate the brand colors naturally into the composition
-- Match the platform format (e.g. square for Instagram, landscape for LinkedIn)
+- Match the platform format and required aspect ratio (${aspectRatio})
 - The visual must represent the post title and hook visually
 - Add specific composition, lighting, and mood details
 - NO text or logos in the image (clean visual only)
@@ -918,12 +931,12 @@ Output strictly a JSON array of ${carouselSlides.length} objects. Each object mu
       const p = carouselSlides[i];
       console.log(`       -> Rendering Slide ${i+1}/${carouselSlides.length}: "${p.substring(0, 40)}..."`);
       try {
-        const rawSlideUrl = await generateImageFromPrompt(p, null, '1:1', selectedModel);
+        const rawSlideUrl = await generateImageFromPrompt(p, null, aspectRatio, selectedModel);
         if (rawSlideUrl) {
           // ── STEP 2.5: Apply brand logo and text overlay to each slide ──
           const slideHeading = slideTexts[i]?.heading || title;
           const slideSubheading = slideTexts[i]?.subheading || hook;
-          const brandedSlideUrl = await applyVisualOverlays(rawSlideUrl, brand.logoUrl, slideHeading, slideSubheading);
+          const brandedSlideUrl = await applyVisualOverlays(rawSlideUrl, brand.logoUrl, slideHeading, slideSubheading, aspectRatio);
           generatedSlides.push(brandedSlideUrl);
         } else {
           console.warn(`       ⚠️  Slide ${i+1} returned empty URL`);
@@ -940,10 +953,10 @@ Output strictly a JSON array of ${carouselSlides.length} objects. Each object mu
     console.log(`    ✅ ${generatedSlides.length}/${carouselSlides.length} slides rendered successfully.`);
   } else {
     // Single image generation
-    console.log(`    📐 Aspect ratio : 1:1`);
-    const rawImageUrl = await generateImageFromPrompt(finalImagePrompt, null, '1:1', selectedModel);
+    console.log(`    📐 Aspect ratio : ${aspectRatio}`);
+    const rawImageUrl = await generateImageFromPrompt(finalImagePrompt, null, aspectRatio, selectedModel);
     // ── STEP 2.5: Apply visual overlays (logo + text) ──
-    imageUrl = await applyVisualOverlays(rawImageUrl, brand.logoUrl, title, hook);
+    imageUrl = await applyVisualOverlays(rawImageUrl, brand.logoUrl, title, hook, aspectRatio);
   }
 
   if (!imageUrl && generatedSlides.length === 0) {

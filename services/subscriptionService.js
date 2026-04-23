@@ -1,4 +1,4 @@
-﻿import User from '../models/User.js';
+import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
 import CreditLog from '../models/CreditLog.js';
 import FeatureCredit from '../models/FeatureCredit.js';
@@ -79,6 +79,14 @@ export const getToolCost = (toolName, body = {}) => {
         const modelMult = videoMults[modelId] || videoMults['veo-3.1-fast-generate-001'] || { "4k": 585, "default": 250 };
         const multiplier = resolution === '4k' ? (modelMult['4k'] || 585) : (modelMult['default'] || 250);
         return multiplier * duration;
+    }
+
+    if (normalizedTool === 'ai_ads_agent') {
+        const baseCost = featureCosts.ai_ads_agent !== undefined ? featureCosts.ai_ads_agent : (defaults.ai_ads_agent || 241);
+        if (body?.postFormat === 'carousel') {
+            return baseCost * 5; // Carousels generate 5 separate images
+        }
+        return baseCost;
     }
 
     return featureCosts[toolName] !== undefined ? featureCosts[toolName] : (defaults[toolName] || 0);

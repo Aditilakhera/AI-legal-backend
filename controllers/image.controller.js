@@ -91,12 +91,21 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
 
         } else {
             // GENERATION ARCHITECTURE
-            let geminiRatio = '1:1';
-            if (aspectRatio === '16:9') geminiRatio = '16:9';
-            else if (aspectRatio === '9:16') geminiRatio = '9:16';
-            else if (aspectRatio === '4:5') geminiRatio = '4:5';
+            // Map user-selected ratio to Gemini imageConfig-accepted values
+            const VALID_GEMINI_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16'];
+            let geminiRatio = '1:1'; // safe default
+            if (aspectRatio === '16:9')  geminiRatio = '16:9';
+            else if (aspectRatio === '9:16')  geminiRatio = '9:16';
+            else if (aspectRatio === '4:3')   geminiRatio = '4:3';
+            else if (aspectRatio === '3:4')   geminiRatio = '3:4';
+            else if (aspectRatio === '4:5')   geminiRatio = '4:5';
+            else if (aspectRatio === '1:1')   geminiRatio = '1:1';
+            else {
+                console.warn(`[Gemini GenAI SDK] Unknown aspectRatio "${aspectRatio}" — falling back to 1:1`);
+                geminiRatio = '1:1';
+            }
 
-            console.log(`[Gemini GenAI SDK] Generating with model: ${usedModel} | Ratio: ${geminiRatio} | Prompt: "${prompt}"`);
+            console.log(`[Gemini GenAI SDK] Generating with model: ${usedModel} | Ratio: ${geminiRatio} (requested: ${aspectRatio}) | Prompt: "${prompt}"`);
 
             const response = await client.models.generateContentStream({
                 model: usedModel,
