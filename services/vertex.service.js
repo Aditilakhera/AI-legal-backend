@@ -215,22 +215,24 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 export const analyzeRAGRequirements = async (query) => {
     try {
         const rewriteTemplate = configService.getConfig('QUERY_REWRITE_PROMPT', 'Rewrite the user question for search: {user_question}');
-        const rewritePrompt = rewriteTemplate.replace('{user_question}', userQuestion);
-        
-        const rewriteResult = await AskVertexRaw(rewritePrompt, { 
-            maxOutputTokens: 200, 
+        const rewritePrompt = rewriteTemplate.replace('{user_question}', query);
+
+        const rewriteResult = await AskVertexRaw(rewritePrompt, {
+            maxOutputTokens: 200,
             temperature: 0.2,
-            modelOverride: 'gemini-1.5-flash'
+            modelOverride: 'gemini-2.5-flash'
         });
-        
-        const cleanedQuery = rewriteResult.trim().replace(/^["']|["']$/g, '');
-        logger.info(`[QueryRewrite] Original: "${userQuestion}" -> Rewritten: "${cleanedQuery}"`);
-        return cleanedQuery;
+
+        const rewrittenQuery = rewriteResult.trim().replace(/^["']|["']$/g, '') || query;
+        logger.info(`[RAG-Analyzer] Original: "${query.substring(0, 60)}" -> Rewritten: "${rewrittenQuery.substring(0, 60)}"`);
+
+        return { needsRAG: true, rewrittenQuery };
     } catch (error) {
         logger.error(`[RAG-Analyzer] Error: ${error.message}`);
         return { needsRAG: false, rewrittenQuery: query };
     }
 };
+
 
 /**
  * Detects if the user's query specifically needs company knowledge base information

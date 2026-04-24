@@ -208,30 +208,65 @@ export const executeVideoPipeline = async (rawPrompt, generateFunction, context)
  * Execute Image Pipeline with retries, caching, and enhancement
  */
 export const executeImagePipeline = async (rawPrompt, generateFunction, context) => {
+    const pipelineStart = Date.now();
+
+    console.log('\n' + '\u2550'.repeat(55));
+    console.log(`\ud83d\ude80 IMAGE PIPELINE STARTED`);
+    console.log('\u2550'.repeat(55));
+    console.log(`  \u2022 Raw Prompt : "${rawPrompt.substring(0, 70)}${rawPrompt.length > 70 ? '...' : ''}"`);
+    console.log(`  \u2022 Model      : ${context.modelId}`);
+    console.log(`  \u2022 Enhance    : ${context.enhance !== false ? 'YES (GPT-5.4)' : 'NO (skipped)'}`);
+    console.log('\u2500'.repeat(55));
+
     let currentPrompt = validatePrompt(rawPrompt);
-    
-    // 1. Enhancement
     let finalPrompt = currentPrompt;
-    if (context.enhance !== false) {
+
+    // Detect if the user already provided a rich, detailed prompt
+    // If so, skip GPT-5.4 enhancement to preserve their exact intent
+    const RICH_PROMPT_KEYWORDS = [
+        'cinematic', 'ultra-realistic', 'photorealistic', 'hyperrealistic',
+        '8k', '4k', 'hdr', 'shot on', 'depth of field', 'moody', 'dramatic',
+        'high-contrast', 'bokeh', 'volumetric', 'studio lighting', 'golden hour',
+        'full-body', 'close-up', 'wide angle', 'macro', 'aerial view',
+        'detailed', 'intricate', 'highly detailed', 'masterpiece'
+    ];
+    const promptLower = currentPrompt.toLowerCase();
+    const isAlreadyRich = currentPrompt.length > 150 ||
+        RICH_PROMPT_KEYWORDS.some(kw => promptLower.includes(kw));
+
+    if (context.enhance !== false && !isAlreadyRich) {
+        console.log(`🧠 [Pipeline Step 1] Enhancing short prompt via GPT-5.4...`);
         finalPrompt = await enhancePrompt(currentPrompt, 'image');
-        logger.info(`[GenerationPipeline] Enhanced Image Prompt: ${finalPrompt}`);
+        console.log(`✅ [Pipeline Step 1] Enhancement complete.`);
+        console.log(`   • Before : "${currentPrompt.substring(0, 60)}"`);
+        console.log(`   • After  : "${finalPrompt.substring(0, 60)}"`);
+    } else if (isAlreadyRich) {
+        console.log(`⏭️  [Pipeline Step 1] Rich prompt detected (${currentPrompt.length} chars) — skipping enhancement, using as-is.`);
+    } else {
+        console.log(`⏭️  [Pipeline Step 1] Enhancement disabled — using raw prompt.`);
     }
 
-    // 2. Retry Logic
+
+    // 2. Model Execution with Retry
     const maxRetries = 1;
     let attempt = 0;
     let lastError = null;
-    
+
     const fallbackMap = {
-        'imagen-3.0-generate-001': 'imagen-3.0-generate-001',
+        'gemini-3.1-flash-image-preview': 'gemini-2.5-flash-image',
+        'gemini-3-pro-image-preview':     'gemini-3.1-flash-image-preview',
     };
 
     while (attempt <= maxRetries) {
         try {
-            logger.info(`[GenerationPipeline] Starting Image Task (Attempt ${attempt + 1}/${maxRetries + 1}) with model ${context.modelId}`);
+            console.log(`\ud83d\uddbc\ufe0f  [Pipeline Step 2] Calling image model (Attempt ${attempt + 1}/${maxRetries + 1}) \u2192 ${context.modelId}`);
             const result = await generateFunction(finalPrompt, context.modelId);
-            
+
             if (result) {
+                const elapsed = ((Date.now() - pipelineStart) / 1000).toFixed(1);
+                console.log('\u2550'.repeat(55));
+                console.log(`\ud83c\udf89 IMAGE PIPELINE COMPLETE in ${elapsed}s`);
+                console.log('\u2550'.repeat(55) + '\n');
                 return {
                     success: true,
                     url: result,
@@ -243,17 +278,16 @@ export const executeImagePipeline = async (rawPrompt, generateFunction, context)
             }
         } catch (error) {
             lastError = error;
-            logger.warn(`[GenerationPipeline] Image Attempt ${attempt + 1} failed: ${error.message}`);
+            console.warn(`\u26a0\ufe0f  [Pipeline] Attempt ${attempt + 1} failed: ${error.message}`);
             attempt++;
             if (attempt <= maxRetries) {
-                const fallback = fallbackMap[context.modelId];
-                if (fallback) {
-                    logger.info(`[GenerationPipeline] Switching to image fallback model: ${fallback}`);
-                    context.modelId = fallback;
-                }
+                const fallback = fallbackMap[context.modelId] || context.modelId;
+                console.log(`\ud83d\udd04 [Pipeline] Switching to fallback model: ${fallback}`);
+                context.modelId = fallback;
             }
         }
     }
 
+    console.error(`\u274c [Pipeline] All ${maxRetries + 1} attempts failed.`);
     throw new Error(`Pipeline failed after ${maxRetries + 1} attempts. Last error: ${lastError.message}`);
 };

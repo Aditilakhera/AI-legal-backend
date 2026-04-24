@@ -27,6 +27,7 @@ const getGenAIClient = () => new GoogleGenAI({
 });
 
 export const generateImageFromPrompt = async (prompt, originalImage = null, aspectRatio = '1:1', selectedModelId = 'gemini-2.5-flash-image', manualEditMode = null) => {
+    const startTime = Date.now();
     try {
         if (!process.env.GCP_PROJECT_ID) {
             throw new Error('Missing GCP_PROJECT_ID in environment');
@@ -34,19 +35,28 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
 
         // Validate and resolve model — fall back to default if unknown
         const model = GEMINI_IMAGE_MODELS.includes(selectedModelId) ? selectedModelId : DEFAULT_IMAGE_MODEL;
-        console.log(`[IMAGE] Model: ${model} | Edit: ${!!originalImage} | Ratio: ${aspectRatio} | Prompt: "${prompt.substring(0, 60)}..."`);
+
+        console.log('\n' + '─'.repeat(55));
+        console.log(`🎨  IMAGE ${originalImage ? 'EDIT' : 'GEN'} ─ ${model}`);
+        console.log('─'.repeat(55));
+        console.log(`  • Prompt  : "${prompt.substring(0, 80)}${prompt.length > 80 ? '...' : ''}"`);
+        console.log(`  • Mode    : ${originalImage ? '📝 EDITING existing image' : '✨ GENERATING new image'}`);
+        console.log(`  • Ratio   : ${aspectRatio}`);
+        console.log(`  • Model   : ${model}`);
+        console.log(`  • SDK     : @google/genai | location: global`);
+        console.log('─'.repeat(55));
 
         const client = getGenAIClient();
         let base64Data = null;
         let mimeType = 'image/png';
 
         if (originalImage) {
-            // ── IMAGE EDITING ──────────────────────────────────────────────
-            // Uses generateContent (non-streaming) as per official SDK pattern
+            // ── IMAGE EDITING ───────────────────────────────────────────
             const imageBytes = originalImage.includes('base64,')
                 ? originalImage.split('base64,')[1]
                 : originalImage;
 
+            console.log(`⏳ [Step 1/3] Sending image + prompt to ${model} via generateContent...`);
             const response = await client.models.generateContent({
                 model,
                 contents: [{
@@ -60,13 +70,16 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                     responseModalities: [Modality.TEXT, Modality.IMAGE],
                 },
             });
+            console.log(`✅ [Step 1/3] Response received from ${model}`);
 
+            console.log(`🔍 [Step 2/3] Extracting image data from response parts...`);
             for (const part of response.candidates[0].content.parts) {
                 if (part.text) {
-                    console.log(`[IMAGE EDIT] Model says: ${part.text}`);
+                    console.log(`   • Model note: ${part.text.substring(0, 100)}`);
                 } else if (part.inlineData) {
                     base64Data = part.inlineData.data;
                     mimeType = part.inlineData.mimeType || 'image/png';
+                    console.log(`   ✅ Image data extracted | MIME: ${mimeType} | Size: ~${Math.round(base64Data.length * 0.75 / 1024)}KB`);
                 }
             }
 
@@ -75,7 +88,7 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
             }
         } else {
             // ── IMAGE GENERATION ───────────────────────────────────────────
-            // Uses generateContentStream as per official SDK pattern
+            console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream...`);
             const response = await client.models.generateContentStream({
                 model,
                 contents: prompt,
@@ -84,30 +97,35 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                 },
             });
 
+            console.log(`📡 [Step 1/3] Stream opened, receiving chunks...`);
+            let chunkCount = 0;
             for await (const chunk of response) {
+                chunkCount++;
                 if (chunk.text) {
-                    console.log(`[IMAGE GEN] Model says: ${chunk.text}`);
+                    console.log(`   • Model says: ${chunk.text.substring(0, 100)}`);
                 } else if (chunk.data) {
-                    // Raw binary data path
                     base64Data = Buffer.from(chunk.data).toString('base64');
+                    console.log(`   • Chunk #${chunkCount}: raw binary data received`);
                 }
-                // Also check candidates parts for inlineData
                 const parts = chunk.candidates?.[0]?.content?.parts || [];
                 for (const part of parts) {
                     if (part.inlineData?.data) {
                         base64Data = part.inlineData.data;
                         mimeType = part.inlineData.mimeType || 'image/png';
+                        console.log(`   ✅ Chunk #${chunkCount}: inlineData image | MIME: ${mimeType}`);
                     }
                 }
             }
+            console.log(`✅ [Step 1/3] Stream complete. Total chunks: ${chunkCount}`);
 
             if (!base64Data) {
                 throw new Error('Model returned no image for generation request.');
             }
+            console.log(`🔍 [Step 2/3] Image data extracted | Size: ~${Math.round(base64Data.length * 0.75 / 1024)}KB`);
         }
 
         // ── UPLOAD TO GCS ──────────────────────────────────────────────
-        console.log(`[GCS] Uploading ${originalImage ? 'edited' : 'generated'} image from model: ${model}...`);
+        console.log(`☁️  [Step 3/3] Uploading to Google Cloud Storage...`);
         const buffer = Buffer.from(base64Data, 'base64');
         const gcsResult = await uploadToGCS(buffer, {
             folder: 'generated_images',
@@ -116,14 +134,20 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
         });
 
         if (gcsResult?.publicUrl) {
-            console.log(`[IMAGE SUCCESS] ${gcsResult.publicUrl}`);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(`✅ [Step 3/3] GCS upload complete!`);
+            console.log('─'.repeat(55));
+            console.log(`🎉 IMAGE ${originalImage ? 'EDIT' : 'GEN'} SUCCESS in ${elapsed}s`);
+            console.log(`🔗 URL: ${gcsResult.publicUrl.substring(0, 70)}...`);
+            console.log('─'.repeat(55) + '\n');
             return gcsResult.publicUrl;
         }
 
         throw new Error('GCS upload returned no public URL.');
     } catch (error) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const msg = error.message || 'Unknown error';
-        console.error(`[IMAGE FAILED] ${msg}`);
+        console.error(`❌ IMAGE FAILED after ${elapsed}s: ${msg}`);
         throw new Error(`Image Generation Failed: ${msg}`);
     }
 };
@@ -136,7 +160,18 @@ export const generateImage = async (req, res, next) => {
     try {
         let { prompt, aspectRatio = '1:1', modelId, quality = 'fast' } = req.body || {};
 
+        console.log('\n' + '▓'.repeat(55));
+        console.log(`📥 POST /api/image/generate — NEW REQUEST`);
+        console.log('▓'.repeat(55));
+        console.log(`  • User     : ${req.user?.id || req.user?._id || 'anonymous'}`);
+        console.log(`  • Prompt   : "${(prompt || '').substring(0, 70)}"`);
+        console.log(`  • ModelId  : ${modelId || 'not specified (will auto-select)'}`);
+        console.log(`  • Quality  : ${quality}`);
+        console.log(`  • Ratio    : ${aspectRatio}`);
+        console.log('▓'.repeat(55));
+
         if (!prompt) {
+            console.warn('  ⚠️  No prompt provided — rejecting request');
             return res.status(400).json({ success: false, message: 'Prompt is required' });
         }
 
@@ -144,24 +179,26 @@ export const generateImage = async (req, res, next) => {
 
         // 1. Resolve optimal model using selector
         const resolvedModelId = selectImageModel(modelId, quality, isPremium);
+        console.log(`  🤖 Resolved Model: ${resolvedModelId}`);
 
         // 2. Execute via Pipeline (Handles enhancement, retries, and fallback)
+        console.log(`  ⚡ Handing off to executeImagePipeline...`);
         const pipelineResult = await executeImagePipeline(
             prompt,
             async (finalPrompt, activeModel) => {
-                // Wrapper for the actual generation logic
                 return await generateImageFromPrompt(finalPrompt, null, aspectRatio, activeModel);
             },
             {
                 modelId: resolvedModelId,
-                enhance: true // Toggle based on UI if needed
+                enhance: true
             }
         );
 
         const imageUrl = pipelineResult.url;
         if (!imageUrl) throw new Error('Failed to retrieve image URL.');
 
-        // 3. Generate follow-up suggestions based on BOTH prompt and the generated image
+        // 3. Generate follow-up suggestions
+        console.log(`  💡 Generating follow-up prompts...`);
         const followUpPrompts = await generateFollowUpPrompts(prompt, imageUrl).catch(() => []);
 
         // 💰 Deduct credits on successful output
@@ -169,6 +206,7 @@ export const generateImage = async (req, res, next) => {
             await subscriptionService.deductCreditsFromMeta(req.creditMeta);
         }
 
+        console.log(`  ✅ Response sent to client.\n`);
         res.status(200).json({
             success: true,
             data: imageUrl,
@@ -177,12 +215,11 @@ export const generateImage = async (req, res, next) => {
             followUpPrompts
         });
     } catch (error) {
-        logger?.error
-            ? logger.error(`[Image Generation] Error: ${error.message}`)
-            : console.error('[Image Generation] Error:', error);
+        console.error(`\n❌ [/api/image/generate] FAILED: ${error.message}\n`);
         res.status(500).json({ success: false, message: `Image generation failed: ${error.message}` });
     }
 };
+
 
 // ...
 // -------------------------------------------------------------------
