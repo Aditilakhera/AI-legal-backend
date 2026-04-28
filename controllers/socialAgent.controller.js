@@ -203,7 +203,7 @@ export const uploadBrandAssets = async (req, res) => {
       workspaceId, companyName, website, brandColors, themePreference, 
       toneOfVoice, ctaStyle, dosAndDonts, logoUrl, targetEthnicity, 
       extractedBrandSummary, targetIndustry, targetAudience, 
-      contentObjective, campaignMonth, postingFrequency, socialMediaLinks
+      contentObjective, campaignMonth, postingFrequency, calendarDuration, socialMediaLinks
     } = req.body;
 
     let brandProfile = await BrandProfile.findOne({ workspaceId });
@@ -226,6 +226,7 @@ export const uploadBrandAssets = async (req, res) => {
     if (contentObjective) brandProfile.contentObjective = contentObjective;
     if (campaignMonth) brandProfile.campaignMonth = campaignMonth;
     if (postingFrequency) brandProfile.postingFrequency = postingFrequency;
+    if (calendarDuration) brandProfile.calendarDuration = calendarDuration;
     
     // SOCIAL MEDIA LINKS
     if (socialMediaLinks) {
@@ -243,16 +244,43 @@ export const uploadBrandAssets = async (req, res) => {
     console.log(`[Stage 1] Initializing DNA Synthesis for Workspace=${workspaceId}. Docs: ${overviewFiles.length}`);
     logger.info(`[Stage 1] DNA Pulse: ${companyName} | Industry: ${targetIndustry} | Objective: ${contentObjective}`);
 
-    const results = await brandProcessor.processBrandIdentity({
-      brandName: companyName,
-      websiteUrl: website,
-      logoBuffer: logoFile ? logoFile.buffer : null,
-      pdfBuffer: overviewFiles.map(f => f.buffer), // Array of buffers
-      pdfMimeType: overviewFiles[0]?.mimetype || 'application/pdf',
-      manualDescription: extractedBrandSummary || brandProfile.extractedBrandSummary || '',
-      tone: toneOfVoice,
-      ctaStyle: ctaStyle
-    });
+    console.log(`[Stage 1] Calling processBrandIdentity with websiteUrl=${website || 'none'}, logo=${!!logoFile}, docs=${overviewFiles.length}`);
+    let results;
+    try {
+      results = await brandProcessor.processBrandIdentity({
+        brandName: companyName,
+        websiteUrl: website,
+        logoBuffer: logoFile ? logoFile.buffer : null,
+        pdfBuffer: overviewFiles.map(f => f.buffer),
+        pdfMimeType: overviewFiles[0]?.mimetype || 'application/pdf',
+        manualDescription: extractedBrandSummary || brandProfile.extractedBrandSummary || '',
+        tone: toneOfVoice,
+        ctaStyle: ctaStyle
+      });
+    } catch (processingError) {
+      console.error(`[Stage 1] processBrandIdentity FAILED: ${processingError.message}`);
+      console.error(processingError.stack);
+      // Fall back to a minimal result to still save the profile fields
+      results = {
+        structuredIdentity: {
+          brand_name: companyName || brandProfile.companyName || '',
+          industry: targetIndustry || '',
+          target_audience: targetAudience || '',
+          tone: toneOfVoice || 'Professional',
+          cta_style: ctaStyle || 'Direct',
+          products_services: [],
+          brand_values: [],
+          content_angles: [],
+          color_palette: [],
+          platform_focus: ['instagram', 'linkedin', 'twitter'],
+          posting_frequency: 'daily',
+          goal: 'engagement + awareness + conversion'
+        },
+        rawKnowledgeBase: extractedBrandSummary || brandProfile.extractedBrandSummary || '',
+        webData: null,
+        advancedMetadata: null
+      };
+    }
 
     // 1. Sync Base Properties & Structured Identity
     brandProfile.structuredIdentity = results.structuredIdentity;

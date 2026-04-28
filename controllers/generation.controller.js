@@ -336,8 +336,10 @@ export const generateCalendar = async (req, res) => {
       }
     }
 
-    console.log(`[Tab 1] Triggering Master Prompt Strategy for Workspace=${workspaceId}`);
-    const genData = await generationService.generate30DayStrategy(workspaceId);
+    console.log(`[Tab 1] Triggering Master Prompt Strategy for Workspace=${workspaceId} | Plan: ${isFree ? 'FREE (7-day)' : 'PAID (full month)'}`);
+    const genData = await generationService.generate30DayStrategy(workspaceId, { 
+      maxDays: isFree ? 7 : null  // Free plan = 7 days, Paid = full month
+    });
     
     // 💰 Deduct credits for the pipeline request
     if (req.creditMeta) {
@@ -346,7 +348,8 @@ export const generateCalendar = async (req, res) => {
       });
     }
 
-    res.json({ success: true, ...genData, message: "30-Day Content Calendar generated successfully" });
+    const calendarLabel = isFree ? '7-Day Preview Calendar' : '30-Day Content Calendar';
+    res.json({ success: true, ...genData, planType: isFree ? 'free' : 'paid', message: `${calendarLabel} generated successfully` });
   } catch (error) {
     logger.error(`[GenerationController] generateCalendar failed: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });

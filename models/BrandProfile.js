@@ -43,6 +43,7 @@ const BrandProfileSchema = new mongoose.Schema({
   contentObjective: { type: String },
   campaignMonth: { type: String },
   postingFrequency: { type: String },
+  calendarDuration: { type: String, default: '30' },
   
   // THE CORE BASE: FINAL STRUCTURED IDENTITY
   structuredIdentity: {
