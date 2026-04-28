@@ -81,7 +81,7 @@ const PROMPTS = {
 /**
  * STAGE 2: 30-Day STRATEGY & CONTENT CALENDAR GENERATION
  */
-export const generate30DayStrategy = async (workspaceId) => {
+export const generate30DayStrategy = async (workspaceId, { maxDays = null } = {}) => {
   try {
     const brand = await BrandProfile.findOne({ workspaceId });
     if (!brand) throw new Error("Run Brand Setup first.");
@@ -135,11 +135,22 @@ export const generate30DayStrategy = async (workspaceId) => {
 
     // 2. CALENDAR (Respect Month & Frequency)
     const freq = (brand.postingFrequency || '3x per week').toLowerCase();
+    
     let postsPerWeek = 3; // Default
-    if (freq.includes('2x') || freq.includes('high')) postsPerWeek = 14;
-    else if (freq === 'daily') postsPerWeek = 7;
-    else if (freq.includes('3x')) postsPerWeek = 3;
-    else if (freq.includes('1x')) postsPerWeek = 1;
+    let userSelectedDuration = 30; // Default full month
+    
+    if (freq.includes('7 days')) {
+      postsPerWeek = 7; // Daily
+      userSelectedDuration = 7;
+    } else if (freq.includes('2x') || freq.includes('high')) {
+      postsPerWeek = 14;
+    } else if (freq === 'daily') {
+      postsPerWeek = 7;
+    } else if (freq.includes('3x')) {
+      postsPerWeek = 3;
+    } else if (freq.includes('1x')) {
+      postsPerWeek = 1;
+    }
     
     // Map Month String to Starting Date
     const monthMap = {
@@ -153,15 +164,16 @@ export const generate30DayStrategy = async (workspaceId) => {
     const currentYear = new Date().getFullYear();
     const startDate = new Date(currentYear, monthIndex, 1);
     
-    // Calculate actual days in this month
+    // Calculate actual days — cap by maxDays for free plan, otherwise use user's selected duration
     const totalDaysInMonth = new Date(currentYear, monthIndex + 1, 0).getDate();
-    const totalWeeks = Math.ceil(totalDaysInMonth / 7);
+    const effectiveDays = maxDays ? Math.min(maxDays, totalDaysInMonth) : Math.min(userSelectedDuration, totalDaysInMonth);
+    const totalWeeks = Math.ceil(effectiveDays / 7);
     
-    console.log(`[Stage 2] Generating ${postsPerWeek} posts/week for ${brand.campaignMonth} (${totalDaysInMonth} days) starting ${startDate.toDateString()}`);
+    console.log(`[Stage 2] Generating ${postsPerWeek} posts/week for ${brand.campaignMonth} (${effectiveDays}/${totalDaysInMonth} days, ${totalWeeks} week chunks) starting ${startDate.toDateString()}${maxDays ? ` [FREE PLAN: capped at ${maxDays} days]` : ''}`);
 
     const weekPromises = Array.from({ length: totalWeeks }).map(async (_, weekNum) => {
       const startDayIdx = weekNum * 7;
-      const remainingDays = totalDaysInMonth - startDayIdx;
+      const remainingDays = effectiveDays - startDayIdx;
       const daysInThisChunk = Math.min(7, remainingDays);
       
       // Calculate how many posts to generate for this specific chunk (prorated for partial weeks)

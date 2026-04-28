@@ -3,6 +3,7 @@ import { verifyToken } from './authorization.js';
 import { checkPremiumAccess } from '../services/subscriptionService.js';
 import Subscription from '../models/Subscription.js';
 import CreditLog from '../models/CreditLog.js';
+import BrandProfile from '../models/BrandProfile.js';
 
 // Returns true if user has any paid/active subscription or founder status
 export const isFreeTierUser = async (userId) => {
@@ -181,6 +182,38 @@ export const creditMiddleware = async (req, res, next) => {
 
     cost = calculatedCost;
 
+    // Override strategy cost based on selected Posting Frequency
+    if (action === 'activate_strategy') {
+      const workspaceId = req.body?.workspaceId;
+      let freq = '3x per week';
+      
+      if (workspaceId) {
+        try {
+          const bp = await BrandProfile.findOne({ workspaceId });
+          if (bp && bp.postingFrequency) {
+            freq = bp.postingFrequency.toLowerCase();
+          }
+        } catch (err) {
+          console.error('[CreditSystem] Error fetching brand profile for frequency:', err);
+        }
+      }
+
+      const isFreeForCost = await isFreeTierUser(userId);
+      if (isFreeForCost && !isAdmin) {
+        freq = '7 days'; // Free plan ALWAYS forced to 7 days
+      }
+
+      // Cost mapped directly to the dropdown option
+      if (freq.includes('7 days')) cost = 14;         // 7 days daily
+      else if (freq.includes('1x')) cost = 15;        // 4 posts a month
+      else if (freq.includes('3x')) cost = 30;        // 12 posts a month
+      else if (freq === 'daily') cost = 60;           // 30 posts a month
+      else if (freq.includes('2x')) cost = 120;       // 60 posts a month
+      else cost = 60;                                 // Default fallback
+
+      console.log(`[CreditSystem] Strategy generation cost set to ${cost} credits for '${freq}' frequency (Free tier: ${isFreeForCost})`);
+    }
+
     // Define explicitly which actions are premium-only (Free tier cannot access them regardless of credits)
     const premiumActions = ['video', 'image', 'generate_image', 'generate_image_hd', 'generate_image_ultra', 'edit_image', 'agent_chat', 'realtime_chat', 'voice', 'web_search', 'deep_search', 'knowledge_base', 'ai_ads_agent'];
 
@@ -203,7 +236,7 @@ export const creditMiddleware = async (req, res, next) => {
             if (fetchCount >= 2) {
                 return res.status(403).json({
                     success: false,
-                    code: 'PREMIUM_ONLY',
+                    code: 'UPGRADE_REQUIRED',
                     error: 'Free plan users are limited to 2 AI website scrapes. Upgrade to Pro for unlimited brand syncing.',
                     message: 'Free plan users are limited to 2 AI website scrapes. Upgrade to Pro for unlimited brand syncing.'
                 });
