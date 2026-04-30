@@ -274,7 +274,7 @@ export const detectRAGNeed = async (query) => {
         const detectorPrompt = detectorTemplate.replace('{query}', query);
 
         const result = await AskVertexRaw(detectorPrompt, { 
-            modelOverride: 'gemini-1.5-flash',
+            modelOverride: 'gemini-2.5-flash',
             maxOutputTokens: 10,
             temperature: 0.1 
         });
@@ -342,10 +342,10 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
         } catch (execErr) {
-            if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-1.5-flash') {
-                logger.warn(`[AskVertexRaw] Execution failed for ${selectedModelName}. Retrying with gemini-1.5-flash.`);
+            if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-2.5-flash') {
+                logger.warn(`[AskVertexRaw] Execution failed for ${selectedModelName}. Retrying with gemini-2.5-flash.`);
                 const fallbackModel = genAIInstance.getGenerativeModel({
-                    model: 'gemini-1.5-flash',
+                    model: 'gemini-2.5-flash',
                     generationConfig: { 
                         maxOutputTokens: options.maxOutputTokens || 4096, 
                         temperature: options.temperature || 0.7,
@@ -507,10 +507,10 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         try {
             result = await model.generateContent({ contents: [{ role: 'user', parts }] });
         } catch (execErr) {
-            if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-1.5-flash') {
-                logger.warn(`[VERTEX] Execution failed for ${selectedModelName}. Retrying with gemini-1.5-flash.`);
+            if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-2.5-flash') {
+                logger.warn(`[VERTEX] Execution failed for ${selectedModelName}. Retrying with gemini-2.5-flash.`);
                 const fallbackModel = genAIInstance.getGenerativeModel({
-                    model: 'gemini-1.5-flash',
+                    model: 'gemini-2.5-flash',
                     systemInstruction: systemInstruction,
                     generationConfig: { maxOutputTokens: 4096 }
                 });

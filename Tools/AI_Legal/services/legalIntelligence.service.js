@@ -1,6 +1,6 @@
-import * as vertexService from './vertex.service.js';
-import logger from '../utils/logger.js';
-import { safeParseLLMJson } from '../utils/jsonUtils.js';
+import * as vertexService from '../../../services/vertex.service.js';
+import logger from '../../../utils/logger.js';
+import { safeParseLLMJson } from '../../../utils/jsonUtils.js';
 
 /**
  * analyzeCaseDetails

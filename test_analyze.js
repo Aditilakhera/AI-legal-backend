@@ -1,4 +1,4 @@
-import { analyzeCaseDetails } from './services/legalIntelligence.service.js';
+import { analyzeCaseDetails } from './Tools/AI_Legal/services/legalIntelligence.service.js';
 
 async function run() {
     console.log("Starting analysis...");

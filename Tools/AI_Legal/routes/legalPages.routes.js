@@ -1,6 +1,6 @@
 import express from 'express';
-import { verifyToken } from '../middleware/authorization.js';
-import LegalPage from '../models/LegalPage.js';
+import { verifyToken } from '../../../middleware/authorization.js';
+import LegalPage from '../../../models/LegalPage.js';
 
 const router = express.Router();
 

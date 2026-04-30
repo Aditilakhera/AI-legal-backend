@@ -1,4 +1,4 @@
-import * as legalService from './services/legalIntelligence.service.js';
+import * as legalService from './Tools/AI_Legal/services/legalIntelligence.service.js';
 import dotenv from 'dotenv';
 dotenv.config();
 

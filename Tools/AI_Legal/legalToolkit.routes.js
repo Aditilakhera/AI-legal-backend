@@ -23,7 +23,8 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
             toolName,
             sessionId,
             attachments = [],
-            conversationHistory = []
+            conversationHistory = [],
+            language
         } = req.body;
 
         if (!toolName) {
@@ -70,7 +71,7 @@ ${message}
             enforcedMessage,
             systemPrompt,
             attachments,
-            null, // Auto-detect language (English/Hindi/Hinglish)
+            language || 'English', 
             null,
             'LEGAL_TOOLKIT',
             sessionId,

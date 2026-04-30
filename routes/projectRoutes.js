@@ -1,7 +1,7 @@
 import express from 'express';
 import Project from '../models/Project.js';
 import { verifyToken } from '../middleware/authorization.js';
-import * as legalIntelligenceService from '../services/legalIntelligence.service.js';
+import * as legalIntelligenceService from '../Tools/AI_Legal/services/legalIntelligence.service.js';
 
 const router = express.Router();
 
@@ -42,7 +42,9 @@ router.post('/', verifyToken, async (req, res) => {
             accused: accused || '',
             keyIssue: keyIssue || '',
             importantDates: importantDates || [],
-            hearings: hearings || []
+            hearings: hearings || [],
+            evidence: req.body.evidence || [],
+            savedPrecedents: req.body.savedPrecedents || []
         });
 
         await project.save();
@@ -79,7 +81,7 @@ router.get('/:id', verifyToken, async (req, res) => {
         res.json(project);
     } catch (error) {
         console.error('Error fetching project:', error);
-        res.status(500).json({ error: 'Failed to fetch project' });
+        res.status(500).json({ error: 'Failed to fetch project', details: error.message });
     }
 });
 
@@ -104,7 +106,7 @@ router.put('/:id', verifyToken, async (req, res) => {
         res.json(project);
     } catch (error) {
         console.error('Error updating project:', error);
-        res.status(500).json({ error: 'Failed to update project' });
+        res.status(500).json({ error: 'Failed to update project', details: error.message });
     }
 });
 
@@ -153,28 +155,48 @@ const performCaseAnalysis = async (req, res) => {
                 strategyRecommendations: normalized.strategy || [],
                 missingEvidence: []
             },
-            facts: normalized.timeline.map(f => ({
-                date: f.date ? new Date(f.date) : null,
-                event: f.event || f.title,
-                description: f.description || f.event || f.title
-            })),
+            facts: [
+                ...(project.facts || []),
+                ...normalized.timeline
+                    .filter(f => !(project.facts || []).some(fx => fx.event === (f.event || f.title)))
+                    .map(f => ({
+                        date: f.date ? new Date(f.date) : null,
+                        event: f.event || f.title,
+                        description: f.description || f.event || f.title
+                    }))
+            ],
             legalIssues: normalized.research.map(r => r.law || r.lawName),
-            tasks: normalized.steps.map(p => ({
-                title: p.step || p.title,
-                status: 'Pending',
-                priority: p.priority || 'Medium'
-            })),
-            evidence: normalized.evidence.map(e => ({
-                name: e.title || e.name || e.description,
-                type: e.type || 'Document',
-                status: e.strength || 'Moderate',
-                uploadDate: new Date()
-            })),
-            research: normalized.research.map(r => ({
-                lawName: r.law || r.lawName,
-                section: r.section || '',
-                description: r.description
-            }))
+            tasks: [
+                ...(project.tasks || []),
+                ...normalized.steps
+                    .filter(p => !(project.tasks || []).some(tx => tx.title === (p.step || p.title)))
+                    .map(p => ({
+                        title: p.step || p.title,
+                        status: 'Pending',
+                        priority: p.priority || 'Medium'
+                    }))
+            ],
+            evidence: [
+                ...(project.evidence || []),
+                ...normalized.evidence
+                    .filter(e => !(project.evidence || []).some(ex => ex.name === (e.title || e.name || e.description)))
+                    .map(e => ({
+                        name: e.title || e.name || e.description,
+                        type: e.type || 'Document',
+                        status: e.strength || 'Moderate',
+                        uploadDate: new Date()
+                    }))
+            ],
+            research: [
+                ...(project.research || []),
+                ...normalized.research
+                    .filter(r => !(project.research || []).some(rx => rx.lawName === (r.law || r.lawName) && rx.section === (r.section || '')))
+                    .map(r => ({
+                        lawName: r.law || r.lawName,
+                        section: r.section || '',
+                        description: r.description
+                    }))
+            ]
         };
 
         const updatedProject = await Project.findOneAndUpdate(

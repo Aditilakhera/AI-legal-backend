@@ -78,6 +78,8 @@ const projectSchema = new mongoose.Schema({
         extractedData: mongoose.Schema.Types.Mixed,
         uploadDate: { type: Date, default: Date.now }
     }],
+    evidence: [],
+    savedPrecedents: [],
     // --- AI Intelligence & Risk ---
     intelligence: {
         strengthScore: { type: Number, default: 0 }, // 0-100
@@ -129,7 +131,7 @@ const projectSchema = new mongoose.Schema({
         date: Date
     }],
     hearings: [{
-        date: { type: Date, required: true },
+        date: { type: Date, required: false },
         time: String,
         courtName: String,
         location: String,
@@ -141,7 +143,8 @@ const projectSchema = new mongoose.Schema({
         }
     }]
 }, { 
-    timestamps: true 
+    timestamps: true,
+    strict: false 
 });
 
 const Project = mongoose.model('Project', projectSchema);

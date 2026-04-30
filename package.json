@@ -55,6 +55,7 @@
     "paytmchecksum": "^1.5.1",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
+    "puppeteer": "^24.42.0",
     "razorpay": "^2.9.6",
     "resend": "^6.6.0",
     "sharp": "^0.34.5",

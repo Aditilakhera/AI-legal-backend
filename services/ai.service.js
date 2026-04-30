@@ -89,19 +89,21 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web', 'what can you do', 'your features', 'your capabilities', 'who are you', 'how can you help', 'tell me about your services'];
         let hasCompanyKeyword = companyKeywords.some(k => lowerMsg.includes(k));
 
-        // --- LANGUAGE DETECTION ---
+        // --- LANGUAGE DETECTION & INTELLIGENCE ---
         const detected = detectLanguage(message);
-        // Special: If detected as English, we don't force it in the prompt as strictly
-        // to allow the AI's internal detection to pick up subtle nuances (like French/Spanish)
-        const userLanguage = detected; // Prioritize actual query language for response context
-        const isDefaultEnglish = detected === 'English';
+        const isAutoMode = !language || language === 'Auto';
+        const userLanguage = isAutoMode ? (detected || 'English') : language;
+        
+        const langSwitchRule = `### GLOBAL LANGUAGE PRIORITY SYSTEM: 
+        1. Priority 1 (Explicit): If user asks for a specific language (e.g., "Hindi me", "in English"), use it.
+        2. Priority 2 (UI Setting): Otherwise, use the GLOBAL UI SETTING: ${userLanguage}.
+        3. Priority 3 (Auto): Use detected script only if no UI setting or explicit instruction exists.
+        
+        ### STRICT ENFORCEMENT:
+        - Respond ENTIRELY in the target language. No mixing.
+        - If Target is Hindi, use Devanagari script and translate ALL headings/labels.`;
 
-        const langSwitchRule = `### LANGUAGE BEHAVIOR: 
-        1. If the user changes their script or language (e.g. from English to Arabic), you MUST immediately switch your entire response to that new language. 
-        2. DO NOT use the previous language of the conversation if the current message is in a clear different script/tongue.
-        3. Match the LATEST message's language 100%.`;
-
-        logger.info(`[AI-Service] Lang Selection: ${userLanguage} (Detected: ${detected}, Option: ${language})`);
+        logger.info(`[AI-Service] Lang Selection: ${userLanguage} (Auto: ${isAutoMode}, Detected: ${detected}, Option: ${language})`);
 
         // --- CONVERSATION MEMORY RAG ---
         // Combine history from frontend and retrieved memory from DB if available
@@ -389,9 +391,15 @@ Maintain any text response outside the JSON block.`;
                 // Step 4: Answer Generation (Context + Original Question)
                 const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
 
-                const langContext = isDefaultEnglish
-                    ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
-                    : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+                // --- DYNAMIC LANGUAGE INSTRUCTION ---
+                let langContext = "";
+                if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
+                    langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
+                } else if (userLanguage === 'Hinglish') {
+                    langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
+                } else {
+                    langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
+                }
 
                 // --- NEW: Unified Context Labeling for RAG-Only ---
                 const labeledRagContext = (mode === 'LEGAL_TOOLKIT')
@@ -400,7 +408,7 @@ Maintain any text response outside the JSON block.`;
 
                 const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, {
                     userName,
-                    systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`,
+                    systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`,
                     mode: 'RAG'
                 });
                 finalResponseData = { text: ragResponse, isRealTime: false, sources: ragContext?.sources || [], mode: 'RAG' };
@@ -413,9 +421,15 @@ Maintain any text response outside the JSON block.`;
 
                 if (currentModel && (currentModel.includes('gpt') || currentModel.includes('openai'))) {
                     logger.info(`[AI-Service] Routing to OpenAI (${currentModel})`);
-                    const langContext = isDefaultEnglish
-                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in English. If they use a non-English language or script, respond ENTIRELY in that same language/script."
-                        : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+                    // --- DYNAMIC LANGUAGE INSTRUCTION ---
+                    let langContext = "";
+                    if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
+                        langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
+                    } else if (userLanguage === 'Hinglish') {
+                        langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
+                    } else {
+                        langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
+                    }
 
                     const finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
@@ -437,9 +451,15 @@ Maintain any text response outside the JSON block.`;
 
                     logger.info(`[AI-Service] Executing Chat (Greeting: ${isGreeting}) for: "${message}"`);
 
-                    const langContext = isDefaultEnglish
-                        ? "MANDATORY: You MUST detect and match the EXACT script and tongue used by the user. If they use ENGLISH, you MUST respond in ENGLISH. If they use a non-English language or script, respond ENTIRELY in that same language/script."
-                        : `MANDATORY: You MUST match the EXACT script and tongue used by the user. If they use ${userLanguage} script, respond ENTIRELY in ${userLanguage} script. (Detected: ${userLanguage})`;
+                    // --- DYNAMIC LANGUAGE INSTRUCTION ---
+                    let langContext = "";
+                    if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
+                        langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
+                    } else if (userLanguage === 'Hinglish') {
+                        langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
+                    } else {
+                        langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
+                    }
 
                     const finalSystemInstruction = `${basePersona}\n\n${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
 
@@ -603,7 +623,7 @@ INPUT CONTEXT:
         const response = await vertexService.AskVertexRaw(prompt, {
             maxOutputTokens: 200,
             temperature: 0.8,
-            modelOverride: 'gemini-1.5-flash'
+            modelOverride: 'gemini-2.5-flash'
         });
 
         const parsed = safeParseLLMJson(response, { suggestions: [] });

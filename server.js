@@ -39,7 +39,7 @@ import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
-import legalRoutes from './routes/legalRoutes.js';
+import legalRoutes from './Tools/AI_Legal/routes/legalPages.routes.js';
 import intentRoutes from './routes/intentRoutes.js';
 import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
 import socialAgentRoutes from './routes/socialMediaGenerator.routes.js';
@@ -50,6 +50,7 @@ import cashflowRoutes from './routes/cashflowRoutes.js';
 import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
+import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 
@@ -138,6 +139,7 @@ app.use('/api/legal', legalRoutes);
 app.use('/api/legal-toolkit', legalToolkitRoutes);
 
 // Intelligence Features
+app.use('/api/precedents', precedentsRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/voice', voiceRoutes);
