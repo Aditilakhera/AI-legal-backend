@@ -637,7 +637,8 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
     overlayPrompt += `
 * Preserve the original ad image composition, colors, lighting, and quality.
 * Do NOT alter any other part of the image.
-* Output the final composited image ONLY. No conversational text.`;
+* Output the final composited image ONLY.
+* CRITICAL: DO NOT output any text, reasoning, planning, or explanation. Provide exactly 0 words of text.`;
 
     parts.push({ text: overlayPrompt });
 
@@ -652,22 +653,35 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
     let response;
     let retryCount = 0;
     const maxRetries = 3;
+    let currentModel = 'gemini-3.1-flash-image-preview';
+
     while (true) {
       try {
-        response = await client.models.generateContent({
-          model: 'gemini-3.1-flash-image-preview',
-          contents: [{ role: 'user', parts }],
-          config: {
-            responseModalities: [Modality.TEXT, Modality.IMAGE],
-            imageConfig: { aspectRatio: geminiRatio }
-          }
-        });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('TIMEOUT: Gemini compositing took too long')), 120000)
+        );
+
+        response = await Promise.race([
+          client.models.generateContent({
+            model: currentModel,
+            contents: [{ role: 'user', parts }],
+            config: {
+              responseModalities: [Modality.TEXT, Modality.IMAGE],
+              imageConfig: { aspectRatio: geminiRatio }
+            }
+          }),
+          timeoutPromise
+        ]);
         break;
       } catch (err) {
         const isQuotaError = err.status === 429 || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('quota');
-        if (retryCount < maxRetries && isQuotaError) {
+        const isTimeout = err.message?.includes('TIMEOUT') || err.message?.includes('timeout') || err.message?.includes('Deadline Exceeded');
+
+        if (retryCount < maxRetries && (isQuotaError || isTimeout)) {
           retryCount++;
-          console.warn(`    [VisualOverlay] ⚠️  Quota hit (429). Retrying ${retryCount}/${maxRetries} after ${retryCount * 4}s...`);
+          // Fallback to pro after first failure if it's struggling
+          currentModel = 'gemini-3-pro-image-preview';
+          console.warn(`    [VisualOverlay] ⚠️  Generation failed (${isTimeout ? 'Timeout' : 'Quota 429'}). Retrying ${retryCount}/${maxRetries} with fallback model ${currentModel} after ${retryCount * 4}s...`);
           await new Promise(r => setTimeout(r, retryCount * 4000));
         } else {
           throw err;
