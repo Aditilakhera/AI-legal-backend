@@ -657,7 +657,7 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
 
     while (true) {
       try {
-        const timeoutPromise = new Promise((_, reject) => 
+        const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('TIMEOUT: Gemini compositing took too long')), 120000)
         );
 
@@ -689,7 +689,7 @@ ${logoBase64 ? '6' : '3'}. Choose a contrasting color (e.g., white text on dark 
       }
     }
 
-
+    // 1234
     // 4. Extract the resulting image bytes
     let resultBase64 = null;
     let resultMime = 'image/png';
