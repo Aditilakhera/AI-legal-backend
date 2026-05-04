@@ -62,10 +62,16 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       return res.status(403).json({ error: "LIMIT_REACHED", reason: limitCheck.reason });
     }
 
-    let toolsRequested = ['chat'];
-    if (mode === 'DEEP_SEARCH' || mode === 'web_search') toolsRequested.push(mode);
-    if (mode === 'CODE_WRITER') toolsRequested.push('code_writer');
-    if (mode === 'LEGAL_TOOLKIT') toolsRequested.push('legal_toolkit');
+    let toolsRequested = [];
+    if (mode === 'DEEP_SEARCH' || mode === 'web_search') {
+      toolsRequested.push(mode);
+    } else if (mode === 'CODE_WRITER' || mode === 'CODING_HELP') {
+      toolsRequested.push('code_writer');
+    } else if (mode === 'LEGAL_TOOLKIT') {
+      toolsRequested.push('legal_toolkit');
+    } else {
+      toolsRequested.push('chat');
+    }
     if (document && (Array.isArray(document) ? document.length > 0 : document.base64Data)) toolsRequested.push('convert_document');
 
     if (req.user) {
@@ -340,10 +346,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
 
     const finalUserId = req.user?.id || req.user?._id;
     if (finalUserId) {
-        // Skip deduction for admin
-        if (!(req.user.email && req.user.email.toLowerCase() === 'admin@uwo24.com')) {
-            await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body);
-        }
+        await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body);
     }
 
     return res.status(200).json(finalResponse);
