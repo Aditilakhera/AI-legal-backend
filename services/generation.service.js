@@ -119,7 +119,7 @@ export const generate30DayStrategy = async (workspaceId, { maxDays = null } = {}
     `;
 
     const stratRes = await AskVertexRaw(strategistPrompt, {
-      isJson: true
+      modelOverride: 'gemini-2.5-flash'
     });
     const strategyDoc = safeParse(stratRes);
 
@@ -448,7 +448,7 @@ export const generateImagePrompt = async (workspaceId, userIdea) => {
 
 // --- HELPERS ---
 const callLLM = async (type, prompt, wsId) => {
-  const res = await AskVertexRaw(prompt, { isJson: true });
+  const res = await AskVertexRaw(prompt, { modelOverride: 'gemini-2.5-flash' });
   return safeParse(res);
 };
 
