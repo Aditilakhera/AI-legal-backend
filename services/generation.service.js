@@ -118,9 +118,8 @@ export const generate30DayStrategy = async (workspaceId, { maxDays = null } = {}
       }
     `;
 
-    const stratRes = await AskOpenAIRaw(strategistPrompt, null, {
-      jsonMode: true,
-      systemInstruction: "You are a Brand Strategist. Output ONLY the requested JSON object. No conversational text."
+    const stratRes = await AskVertexRaw(strategistPrompt, {
+      isJson: true
     });
     const strategyDoc = safeParse(stratRes);
 
@@ -449,7 +448,7 @@ export const generateImagePrompt = async (workspaceId, userIdea) => {
 
 // --- HELPERS ---
 const callLLM = async (type, prompt, wsId) => {
-  const res = await AskOpenAIRaw(prompt);
+  const res = await AskVertexRaw(prompt, { isJson: true });
   return safeParse(res);
 };
 
