@@ -43,6 +43,10 @@ const GenerationJobSchema = new mongoose.Schema({
     enum: ['pending', 'processing', 'completed', 'failed', 'cancelled'], 
     default: 'pending' 
   },
+  currentPhase: {
+    type: String,
+    enum: ['rendering', 'compositing', 'finalizing']
+  },
   startedAt: { 
     type: Date 
   },
