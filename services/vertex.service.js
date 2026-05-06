@@ -342,18 +342,23 @@ export const AskVertexRaw = async (prompt, options = {}) => {
             });
         } catch (execErr) {
             if (execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) {
-                logger.warn(`[AskVertexRaw] Execution failed for ${selectedModelName}. Retrying with gemini-1.5-flash.`);
-                const fallbackModel = genAIInstance.getGenerativeModel({
-                    model: 'gemini-2.5-flash',
-                    generationConfig: {
-                        maxOutputTokens: options.maxOutputTokens || 4096,
-                        temperature: options.temperature || 0.7,
-                        ...(options.isJson && { responseMimeType: "application/json" })
-                    }
-                });
-                result = await fallbackModel.generateContent({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }]
-                });
+                logger.warn(`[AskVertexRaw] Execution failed for ${selectedModelName}.`);
+                if (genAIInstance) {
+                    logger.warn(`[AskVertexRaw] Retrying with global gemini-2.5-flash fallback.`);
+                    const fallbackModel = genAIInstance.getGenerativeModel({
+                        model: 'gemini-2.5-flash',
+                        generationConfig: {
+                            maxOutputTokens: options.maxOutputTokens || 4096,
+                            temperature: options.temperature || 0.7
+                        }
+                    });
+                    result = await fallbackModel.generateContent({
+                        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                    });
+                } else {
+                    logger.error(`[AskVertexRaw] No genAIInstance available for fallback. Ensure model is available in your GCP region.`);
+                    throw execErr;
+                }
             } else {
                 throw execErr;
             }
