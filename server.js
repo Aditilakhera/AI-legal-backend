@@ -51,6 +51,7 @@ import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
 import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
+import ssoRoutes from './routes/ssoRoutes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 
@@ -130,6 +131,7 @@ app.use((req, res, next) => {
 // Auth & User
 app.use('/api/auth/verify-email', emailVerification);
 app.use('/api/auth', authRoutes);
+app.use('/api/auth/sso', ssoRoutes); // SSO generate + handoff endpoints
 app.use('/api/user', userRoute);
 app.use('/api/user', dataRoutes);  // GDPR data deletion & export
 app.use('/api/legal', legalRoutes);
