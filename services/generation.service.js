@@ -19,6 +19,7 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import axios from 'axios';
 import { uploadToGCS, gcsFilename, downloadFromGCS } from './gcs.service.js';
 import sharp from 'sharp';
+import { subscriptionService } from './subscriptionService.js';
 
 // --- JSON RECOVERY SYSTEM ---
 // Use the centralized safeParseLLMJson utility
@@ -568,13 +569,22 @@ const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingTex
         // Use GCS SDK download to bypass 403 on signed/private URLs
         let rawBuffer, rawContentType;
         try {
-          const gcsResult = await downloadFromGCS(logoUrl);
-          rawBuffer = gcsResult.buffer;
-          rawContentType = gcsResult.contentType.split(';')[0].trim().toLowerCase();
-          console.log(`    [VisualOverlay] 📥 Logo downloaded via GCS SDK: ${rawBuffer.byteLength} bytes | ${rawContentType}`);
+          const isGcsUrl = logoUrl.startsWith('gs://') || logoUrl.includes('storage.googleapis.com') || !logoUrl.startsWith('http');
+          if (isGcsUrl) {
+            const gcsResult = await downloadFromGCS(logoUrl);
+            rawBuffer = gcsResult.buffer;
+            rawContentType = gcsResult.contentType.split(';')[0].trim().toLowerCase();
+            console.log(`    [VisualOverlay] 📥 Logo downloaded via GCS SDK: ${rawBuffer.byteLength} bytes | ${rawContentType}`);
+          } else {
+            throw new Error('Not a GCS URL'); // Trigger HTTP fallback smoothly
+          }
         } catch (gcsErr) {
           // Fallback: try plain HTTP (for external URLs like Gravatar, Clearbit etc.)
-          console.warn(`    [VisualOverlay] ⚠️  GCS SDK download failed (${gcsErr.message}), trying HTTP fallback...`);
+          if (logoUrl.startsWith('gs://') || logoUrl.includes('storage.googleapis.com')) {
+            console.warn(`    [VisualOverlay] ⚠️  GCS SDK download failed (${gcsErr.message}), trying HTTP fallback...`);
+          } else {
+            console.log(`    [VisualOverlay] 📥 Fetching external logo via HTTP...`);
+          }
           const logoResponse = await axios.get(logoUrl, { responseType: 'arraybuffer', timeout: 20000 });
           rawBuffer = Buffer.from(logoResponse.data);
           rawContentType = (logoResponse.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
@@ -588,9 +598,9 @@ const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingTex
             const domain = urlObj.hostname;
             const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=256`;
 
-            logoResponse = await axios.get(googleFaviconUrl, { responseType: 'arraybuffer', timeout: 10000 });
-            rawBuffer = Buffer.from(logoResponse.data);
-            rawContentType = (logoResponse.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+            const faviconResponse = await axios.get(googleFaviconUrl, { responseType: 'arraybuffer', timeout: 10000 });
+            rawBuffer = Buffer.from(faviconResponse.data);
+            rawContentType = (faviconResponse.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
             console.log(`    [VisualOverlay] ✅ Successfully converted ICO to ${rawContentType}`);
           } catch (e) {
             console.warn(`    [VisualOverlay] ⚠️ Failed to fetch PNG equivalent for ICO: ${e.message}`);
