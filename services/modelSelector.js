@@ -20,15 +20,16 @@ import logger from '../utils/logger.js';
 export const selectImageModel = (requestedModelId, quality = 'fast', isPremium = false) => {
     // Quality tier map → Gemini image models (all use @google/genai SDK, global endpoint)
     const modelMap = {
-        fast:    'gemini-1.5-flash',
-        quality: 'gemini-1.5-pro',
-        ultra:   'gemini-1.5-pro',
+        fast:    'gemini-3.1-flash-image-preview',
+        quality: 'gemini-3.1-flash-image-preview',
+        ultra:   'gemini-3.1-flash-image-preview',
     };
 
     // All valid Gemini image models the frontend can select via model cards
     const knownModels = [
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
+        'gemini-3.1-flash-image-preview',
+        'gemini-3-pro-image-preview',
+        'gemini-2.5-flash-image',
     ];
 
     // If frontend sent a valid model ID, use it directly

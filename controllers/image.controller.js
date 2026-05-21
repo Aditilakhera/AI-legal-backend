@@ -92,10 +92,24 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                     }
                 } else {
                     // ── IMAGE GENERATION ───────────────────────────────────────────
+                    // Sanitize prompt: if it is too long (model treats it as text analysis),
+                    // truncate and wrap it in an explicit visual instruction so Gemini
+                    // always interprets the request as image generation.
+                    const MAX_IMAGE_PROMPT_CHARS = 400;
+                    let imagePrompt = prompt;
+                    if (imagePrompt.length > MAX_IMAGE_PROMPT_CHARS) {
+                        imagePrompt = imagePrompt.substring(0, MAX_IMAGE_PROMPT_CHARS).trimEnd() + '...';
+                        console.log(`✂️  [ImageGen] Prompt truncated from ${prompt.length} → ${imagePrompt.length} chars to prevent text-only response.`);
+                    }
+                    // Prefix with an unambiguous image-generation instruction
+                    const IMAGE_DIRECTIVE = 'Create a visual infographic image illustrating: ';
+                    if (!imagePrompt.toLowerCase().startsWith('create') && !imagePrompt.toLowerCase().startsWith('generate') && !imagePrompt.toLowerCase().startsWith('draw') && !imagePrompt.toLowerCase().startsWith('design')) {
+                        imagePrompt = IMAGE_DIRECTIVE + imagePrompt;
+                    }
                     console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream...`);
                     const response = await client.models.generateContentStream({
                         model,
-                        contents: prompt,
+                        contents: imagePrompt,
                         config: {
                             responseModalities: [Modality.TEXT, Modality.IMAGE],
                         },

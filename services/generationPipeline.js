@@ -254,8 +254,9 @@ export const executeImagePipeline = async (rawPrompt, generateFunction, context)
     let lastError = null;
 
     const fallbackMap = {
-        'gemini-3.1-flash-image-preview': 'gemini-1.5-flash-image',
+        'gemini-3.1-flash-image-preview': 'gemini-2.5-flash-image',
         'gemini-3-pro-image-preview':     'gemini-3.1-flash-image-preview',
+        'gemini-2.5-flash-image':         'gemini-3.1-flash-image-preview',
     };
 
     while (attempt <= maxRetries) {
