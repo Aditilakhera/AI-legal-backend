@@ -121,16 +121,7 @@ const getToolLabel = (toolName) => {
 };
 
 const premiumTools = [
-    'generate_video',
-    'generate_image',
-    'generate_image_hd',
-    'generate_image_ultra',
-    'edit_image',
-    'web_search',
-    'deep_search',
-    'realtime_chat',
-    'agent_chat',
-    'ai_ads_agent'
+    'generate_video'
 ];
 
 export const checkPremiumAccess = async (userId) => {
