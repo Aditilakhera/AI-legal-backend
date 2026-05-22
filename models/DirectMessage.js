@@ -20,7 +20,16 @@ const DirectMessageSchema = new mongoose.Schema({
     isRead: {
         type: Boolean,
         default: false
-    }
+    },
+    isAi: {
+        type: Boolean,
+        default: false
+    },
+    aiChatPartners: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        index: true
+    }]
 }, {
     timestamps: true
 });

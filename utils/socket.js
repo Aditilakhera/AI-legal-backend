@@ -29,6 +29,17 @@ export const initSocket = (server) => {
             }); */
         });
 
+        socket.on('friend_typing_start', ({ senderId, receiverId }) => {
+            if (receiverId) {
+                io.to(receiverId.toString()).emit('friend_typing_start', { senderId });
+            }
+        });
+
+        socket.on('friend_typing_end', ({ senderId, receiverId }) => {
+            if (receiverId) {
+                io.to(receiverId.toString()).emit('friend_typing_end', { senderId });
+            }
+        });
 
         socket.on('disconnect', () => {
             console.log(`[Socket] Client disconnected: ${socket.id}`);

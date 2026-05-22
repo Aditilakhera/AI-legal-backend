@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import FriendRequest from '../models/FriendRequest.js';
 import DirectMessage from '../models/DirectMessage.js';
 import { getIO, notifyUser } from '../utils/socket.js';
+import { generateChatResponse } from '../services/geminiService.js';
 
 const router = express.Router();
 
@@ -244,7 +245,8 @@ router.get('/history/:friendId', verifyToken, async (req, res) => {
         const messages = await DirectMessage.find({
             $or: [
                 { sender: req.user.id, receiver: friendId },
-                { sender: friendId, receiver: req.user.id }
+                { sender: friendId, receiver: req.user.id },
+                { isAi: true, aiChatPartners: { $all: [req.user.id, friendId] } }
             ]
         }).sort({ createdAt: 1 });
 
@@ -302,9 +304,105 @@ router.post('/message', verifyToken, async (req, res) => {
         }
 
         res.json({ success: true, data: newMsg });
+
+        // Handle @aisa mention asynchronously in background
+        const hasAisaMention = message.toLowerCase().includes('@aisa');
+        if (hasAisaMention) {
+            (async () => {
+                try {
+                    // Fetch recent messages for context (last 15 messages)
+                    const recentMessages = await DirectMessage.find({
+                        $or: [
+                            { sender: req.user.id, receiver: receiverId },
+                            { sender: receiverId, receiver: req.user.id },
+                            { isAi: true, aiChatPartners: { $all: [req.user.id, receiverId] } }
+                        ]
+                    }).sort({ createdAt: -1 }).limit(15);
+                    
+                    // Reverse to get oldest first
+                    recentMessages.reverse();
+
+                    // Map friend details to display names
+                    const friendUser = await User.findById(receiverId).select('name');
+                    const friendName = friendUser ? friendUser.name : 'Friend';
+                    const userName = req.user.name || 'User';
+
+                    // Format chat context
+                    const formattedHistory = recentMessages.map(msg => {
+                        const isMe = msg.sender.toString() === req.user.id;
+                        const isAi = msg.isAi;
+                        let senderLabel = isMe ? userName : friendName;
+                        if (isAi) senderLabel = 'AISA (AI)';
+                        return `${senderLabel}: ${msg.message}`;
+                    }).join('\n');
+
+                    const prompt = message.replace(/@aisa/gi, '').trim();
+                    
+                    const systemInstructions = `You are AISA (Artificial Intelligence Support Assistant), a helpful support assistant in a peer-to-peer chat conversation between two users: "${userName}" and "${friendName}". 
+
+### PEER-TO-PEER CONVERSATION CONTEXT:
+Here is the recent conversation history between the two users. Use this to understand the context of the user's request (e.g. if they ask "what is he saying?" or reference previous messages):
+${formattedHistory}
+
+### INSTRUCTIONS:
+- Respond directly, beautifully, and concisely.
+- Keep it clean, warm, and avoid excessive formatting.
+- Speak in the same language or style as the users (e.g. Hindi, Hinglish, or English).`;
+                    
+                    const aiResponse = await generateChatResponse([], prompt, systemInstructions);
+                    
+                    const aisaMsg = new DirectMessage({
+                        sender: '000000000000000000000001', // Virtual system AI ID
+                        receiver: receiverId,
+                        message: aiResponse.reply || 'I am sorry, I am currently processing other requests.',
+                        isAi: true,
+                        aiChatPartners: [req.user.id, receiverId]
+                    });
+
+                    await aisaMsg.save();
+
+                    // Broadcast AI response in real-time to both user rooms
+                    const io = getIO();
+                    if (io) {
+                        io.to(receiverId.toString()).emit('direct_message', aisaMsg);
+                        io.to(req.user.id).emit('direct_message', aisaMsg);
+                    }
+                } catch (aiErr) {
+                    console.error('[AISA_MENTION] Error generating AI support response:', aiErr);
+                }
+            })();
+        }
     } catch (error) {
         console.error('[FRIEND_CHAT] Send message error:', error);
         res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// 7. Mark Direct Messages from friend as read
+router.post('/read/:friendId', verifyToken, async (req, res) => {
+    try {
+        const { friendId } = req.params;
+        if (!friendId) {
+            return res.status(400).json({ error: 'Friend ID is required' });
+        }
+
+        await DirectMessage.updateMany(
+            { sender: friendId, receiver: req.user.id, isRead: false },
+            { $set: { isRead: true } }
+        );
+
+        // Broadcast to the friend that their messages have been read/seen!
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(friendId.toString()).emit('friend_messages_read', { readerId: req.user.id });
+            }
+        } catch (sErr) {}
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[FRIEND_CHAT] Mark read error:', error);
+        res.status(500).json({ error: 'Failed to mark messages as read' });
     }
 });
 
