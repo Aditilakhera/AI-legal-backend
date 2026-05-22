@@ -1148,6 +1148,7 @@ Output ONLY a raw JSON array (no markdown, no explanation) like this:
       platform,
       phase,
       postFormat,
+      aspectRatio,
       generatedAt: new Date(),
       modelUsed: selectedModel,
     }
