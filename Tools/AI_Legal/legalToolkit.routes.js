@@ -18,7 +18,7 @@ const router = express.Router();
  */
 router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
     try {
-        const {
+        let {
             message,
             toolName,
             sessionId,
@@ -32,6 +32,12 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
                 success: false,
                 error: 'toolName is required'
             });
+        }
+
+        // Normalize frontend general chat tool name to backend registered tool name
+        const requestedTool = toolName;
+        if (toolName === 'legal_general_chat') {
+            toolName = 'legal_free_chat';
         }
 
         const tool = getToolByName(toolName);
@@ -102,7 +108,7 @@ ${message}
         return res.json({
             success: true,
             reply: finalReply,
-            toolUsed: toolName,
+            toolUsed: requestedTool,
             creditsUsed: tool.creditCost || 0,
             suggestions: responseData.suggestions || []
         });
