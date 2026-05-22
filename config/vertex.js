@@ -1,15 +1,37 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { VertexAI, HarmCategory, HarmBlockThreshold } from '@google-cloud/vertexai';
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config();
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
+import fs, { existsSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Dual-mode initialization: Try Gemini API Key first, fallback to Vertex AI
 const apiKey = process.env.GEMINI_API_KEY;
-const projectId = process.env.GCP_PROJECT_ID;
+
+// Resolve projectId by checking .env first to see if it is explicitly commented out or missing
+let projectId = process.env.GCP_PROJECT_ID;
+const envPath = path.resolve(process.cwd(), '.env');
+
+if (fs.existsSync(envPath)) {
+  try {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    const envConfig = dotenv.parse(envContent);
+    projectId = envConfig.GCP_PROJECT_ID;
+    
+    // Synchronize process.env to ensure other parts of the application also see it as undefined/removed
+    if (!projectId) {
+      delete process.env.GCP_PROJECT_ID;
+    } else {
+      process.env.GCP_PROJECT_ID = projectId;
+    }
+  } catch (err) {
+    console.warn(`[config/vertex] Failed to parse .env file: ${err.message}`);
+  }
+}
+
 // Use GCP_LOCATION env var so all services (RAG, Gemini calls) use the same region
 const location = "asia-south1";
 const keyFilePath = path.join(__dirname, '../google_cloud_credentials.json');
