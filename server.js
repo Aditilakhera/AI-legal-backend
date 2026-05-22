@@ -50,6 +50,7 @@ import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
 import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
+import friendChatRoutes from './routes/friendChatRoutes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 
@@ -176,6 +177,7 @@ app.use('/api/social-agent', socialAgentRoutes);
 app.use('/api/social-agent-review', socialReviewRoutes);
 app.use('/api/media', mediaProxyRoutes);
 app.use('/api/brand', brandRoutes);
+app.use('/api/friends', friendChatRoutes);
 
 
 // Admin Panel (Admin only)
