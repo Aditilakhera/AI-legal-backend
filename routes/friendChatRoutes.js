@@ -5,6 +5,9 @@ import FriendRequest from '../models/FriendRequest.js';
 import DirectMessage from '../models/DirectMessage.js';
 import { getIO, notifyUser } from '../utils/socket.js';
 import { generateChatResponse } from '../services/geminiService.js';
+import uploadMiddleware from "../middlewares/upload.middleware.js";
+import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
+import { uploadToCloudinary } from "../services/cloudinary.service.js";
 
 const router = express.Router();
 
@@ -23,12 +26,12 @@ router.get('/search', verifyToken, async (req, res) => {
                     { email: { $regex: query, $options: 'i' } },
                     { name: { $regex: query, $options: 'i' } }
                 ]
-            }).select('_id name email avatar').limit(15);
+            }).select('_id name email avatar').limit(200);
         } else {
             // Return default discovery list of other users
             users = await User.find({
                 _id: { $ne: req.user.id }
-            }).select('_id name email avatar').limit(15);
+            }).select('_id name email avatar').limit(200);
         }
 
         console.log(`[FRIEND_CHAT_SEARCH] DB Match Count: ${users.length} | Matches:`, users.map(u => u.email));
@@ -136,11 +139,11 @@ router.post('/friend-request/respond', verifyToken, async (req, res) => {
             return res.status(404).json({ error: 'Friend request not found' });
         }
 
-        if (request.receiver.toString() !== req.user.id) {
-            return res.status(403).json({ error: 'Unauthorized to respond to this request' });
-        }
-
         if (action === 'accept') {
+            if (request.receiver.toString() !== req.user.id) {
+                return res.status(403).json({ error: 'Unauthorized to respond to this request. Only the receiver can accept.' });
+            }
+
             request.status = 'accepted';
             await request.save();
 
@@ -165,7 +168,22 @@ router.post('/friend-request/respond', verifyToken, async (req, res) => {
 
             return res.json({ success: true, message: 'Friend request accepted', data: request });
         } else if (action === 'reject') {
+            // Either receiver (rejecting request) or sender (canceling request) can reject/cancel
+            if (request.receiver.toString() !== req.user.id && request.sender.toString() !== req.user.id) {
+                return res.status(403).json({ error: 'Unauthorized to cancel or reject this request.' });
+            }
+
             await FriendRequest.findByIdAndDelete(requestId);
+
+            // Trigger socket event for real-time list update for both parties
+            try {
+                const io = getIO();
+                if (io) {
+                    io.to(request.sender.toString()).emit('friendship_updated');
+                    io.to(request.receiver.toString()).emit('friendship_updated');
+                }
+            } catch (sErr) {}
+
             return res.json({ success: true, message: 'Friend request rejected / deleted' });
         } else {
             return res.status(400).json({ error: 'Invalid action. Must be accept or reject' });
@@ -188,13 +206,15 @@ router.get('/list', verifyToken, async (req, res) => {
             status: 'accepted'
         }).populate('sender', 'name email avatar').populate('receiver', 'name email avatar');
 
-        const friends = friendships.map(f => {
-            const isSender = f.sender._id.toString() === req.user.id;
-            return {
-                friendshipId: f._id,
-                user: isSender ? f.receiver : f.sender
-            };
-        });
+        const friends = friendships
+            .filter(f => f.sender && f.receiver)
+            .map(f => {
+                const isSender = f.sender._id.toString() === req.user.id;
+                return {
+                    friendshipId: f._id,
+                    user: isSender ? f.receiver : f.sender
+                };
+            });
 
         // Find pending received requests
         const pendingReceived = await FriendRequest.find({
@@ -211,8 +231,8 @@ router.get('/list', verifyToken, async (req, res) => {
         res.json({
             success: true,
             friends,
-            pendingReceived,
-            pendingSent
+            pendingReceived: pendingReceived.filter(r => r.sender),
+            pendingSent: pendingSent.filter(r => r.receiver)
         });
     } catch (error) {
         console.error('[FRIEND_CHAT] Fetch list error:', error);
@@ -378,6 +398,83 @@ ${formattedHistory}
     }
 });
 
+// 6.5. Send Direct Message with Media (Image)
+router.post('/message/media', verifyToken, uploadMiddleware, async (req, res) => {
+    try {
+        const { receiverId } = req.body;
+        if (!receiverId) {
+            return res.status(400).json({ error: 'Receiver ID is required' });
+        }
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file uploaded' });
+        }
+
+        // Verify they are indeed friends
+        const isFriend = await FriendRequest.findOne({
+            $or: [
+                { sender: req.user.id, receiver: receiverId },
+                { sender: receiverId, receiver: req.user.id }
+            ],
+            status: 'accepted'
+        });
+
+        if (!isFriend) {
+            return res.status(403).json({ error: 'You can only message users who are your friends' });
+        }
+
+        let mediaUrl = null;
+
+        // Try GCS
+        try {
+            const ext = req.file.originalname.split('.').pop() || 'png';
+            const gcsResult = await uploadToGCS(req.file.buffer, {
+                folder: 'chat_attachments',
+                filename: gcsFilename(`chat_${Date.now()}`, ext),
+                mimeType: req.file.mimetype,
+            });
+            mediaUrl = gcsResult.publicUrl;
+        } catch (gcsError) {
+            console.warn("[GCS] Chat media GCS upload failed, falling back to Cloudinary:", gcsError.message);
+            // Fallback to Cloudinary
+            try {
+                const cloudinaryResult = await uploadToCloudinary(req.file.buffer, {
+                    folder: 'chat_attachments',
+                    public_id: `chat_${Date.now()}`,
+                    resource_type: 'image',
+                });
+                mediaUrl = cloudinaryResult.secure_url || cloudinaryResult.url;
+            } catch (cloudinaryError) {
+                console.error("[CLOUDINARY] Chat media upload fallback failed:", cloudinaryError.message);
+                return res.status(500).json({ error: 'Failed to upload image file' });
+            }
+        }
+
+        const newMsg = new DirectMessage({
+            sender: req.user.id,
+            receiver: receiverId,
+            message: mediaUrl
+        });
+
+        await newMsg.save();
+
+        // Broadcast to receiver's socket room in real-time
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(receiverId.toString()).emit('direct_message', newMsg);
+                io.to(req.user.id).emit('direct_message_sent', newMsg);
+            }
+        } catch (socketErr) {
+            console.error('[Socket] Direct message broadcast failed:', socketErr.message);
+        }
+
+        res.json({ success: true, data: newMsg });
+    } catch (error) {
+        console.error('[FRIEND_CHAT] Send media message error:', error);
+        res.status(500).json({ error: 'Failed to send image message' });
+    }
+});
+
 // 7. Mark Direct Messages from friend as read
 router.post('/read/:friendId', verifyToken, async (req, res) => {
     try {
@@ -403,6 +500,79 @@ router.post('/read/:friendId', verifyToken, async (req, res) => {
     } catch (error) {
         console.error('[FRIEND_CHAT] Mark read error:', error);
         res.status(500).json({ error: 'Failed to mark messages as read' });
+    }
+});
+
+// 8. Delete / Clear Chat History with a Friend
+router.delete('/history/:friendId', verifyToken, async (req, res) => {
+    try {
+        const { friendId } = req.params;
+        if (!friendId) {
+            return res.status(400).json({ error: 'Friend ID is required' });
+        }
+
+        // Delete all direct messages between req.user.id and friendId
+        const deleteResult = await DirectMessage.deleteMany({
+            $or: [
+                { sender: req.user.id, receiver: friendId },
+                { sender: friendId, receiver: req.user.id }
+            ]
+        });
+
+        // Trigger socket event for real-time list and conversation update for both parties
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(friendId.toString()).emit('friendship_updated');
+                io.to(req.user.id).emit('friendship_updated');
+            }
+        } catch (sErr) {}
+
+        res.json({ 
+            success: true, 
+            message: 'Chat history cleared successfully', 
+            deletedCount: deleteResult.deletedCount 
+        });
+    } catch (error) {
+        console.error('[FRIEND_CHAT] Clear history error:', error);
+        res.status(500).json({ error: 'Failed to clear chat history' });
+    }
+});
+
+// 9. Delete a Single Direct Message
+router.delete('/message/:messageId', verifyToken, async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        if (!messageId) {
+            return res.status(400).json({ error: 'Message ID is required' });
+        }
+
+        const message = await DirectMessage.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+
+        // Only the sender can delete their own message
+        if (message.sender.toString() !== req.user.id) {
+            return res.status(403).json({ error: 'You can only delete your own messages' });
+        }
+
+        const receiverId = message.receiver?.toString();
+        await DirectMessage.findByIdAndDelete(messageId);
+
+        // Notify the receiver in real-time so their UI also removes the message
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(receiverId).emit('direct_message_deleted', { messageId });
+                io.to(req.user.id).emit('direct_message_deleted', { messageId });
+            }
+        } catch (sErr) {}
+
+        res.json({ success: true, message: 'Message deleted successfully' });
+    } catch (error) {
+        console.error('[FRIEND_CHAT] Delete message error:', error);
+        res.status(500).json({ error: 'Failed to delete message' });
     }
 });
 

@@ -7,6 +7,7 @@ import mammoth from 'mammoth';
 import Tesseract from 'tesseract.js';
 import officeParser from 'officeparser';
 import { subscriptionService } from '../services/subscriptionService.js';
+import OpenAI from 'openai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -231,5 +232,48 @@ export const synthesizeFile = async (req, res) => {
     } catch (error) {
         console.error('❌ [VoiceController] Critical Failure:', error.message);
         res.status(500).json({ error: 'Voice conversion failed', details: error.message });
+    }
+};
+
+export const transcribeSpeech = async (req, res) => {
+    try {
+        const { audio, mimeType = 'audio/m4a' } = req.body;
+        if (!audio) {
+            return res.status(400).json({ error: 'Audio data is required' });
+        }
+
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+            return res.status(403).json({ error: 'OpenAI API key not configured on server' });
+        }
+
+        const buffer = Buffer.from(audio, 'base64');
+        const ext = mimeType.split('/')[1] || 'm4a';
+        const tempFilename = `temp_transcribe_${Date.now()}.${ext}`;
+        const tempFilePath = path.join(__dirname, tempFilename);
+
+        await fs.promises.writeFile(tempFilePath, buffer);
+        console.log(`🎙️ [VoiceController] Written temp file for transcription: ${tempFilePath}`);
+
+        try {
+            const openai = new OpenAI({ apiKey });
+            const response = await openai.audio.transcriptions.create({
+                file: fs.createReadStream(tempFilePath),
+                model: 'whisper-1',
+            });
+
+            console.log(`🎙️ [VoiceController] Transcription result: "${response.text}"`);
+            
+            try { await fs.promises.unlink(tempFilePath); } catch (e) {}
+
+            return res.json({ text: response.text });
+        } catch (openaiErr) {
+            console.error('❌ [VoiceController] OpenAI Whisper Error:', openaiErr.message);
+            try { await fs.promises.unlink(tempFilePath); } catch (e) {}
+            return res.status(500).json({ error: 'OpenAI transcription failed', details: openaiErr.message });
+        }
+    } catch (error) {
+        console.error('❌ [VoiceController] Transcribe Error:', error.message);
+        return res.status(500).json({ error: 'Failed to transcribe speech', details: error.message });
     }
 };
