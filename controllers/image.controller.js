@@ -101,10 +101,33 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                         imagePrompt = imagePrompt.substring(0, MAX_IMAGE_PROMPT_CHARS).trimEnd() + '...';
                         console.log(`✂️  [ImageGen] Prompt truncated from ${prompt.length} → ${imagePrompt.length} chars to prevent text-only response.`);
                     }
-                    // Prefix with an unambiguous image-generation instruction
-                    const IMAGE_DIRECTIVE = 'Create a visual infographic image illustrating: ';
-                    if (!imagePrompt.toLowerCase().startsWith('create') && !imagePrompt.toLowerCase().startsWith('generate') && !imagePrompt.toLowerCase().startsWith('draw') && !imagePrompt.toLowerCase().startsWith('design')) {
+                    
+                    // Check if the user explicitly requests text inside the image
+                    const lowerPrompt = prompt.toLowerCase();
+                    const textKeywords = [
+                        'text', 'word', 'write', 'written', 'label', 'caption', 'quote', 
+                        'overlay', 'infographic', 'title', 'phrase', 'slogan', 'message', 
+                        'letter', 'font', 'watermark', 'branding', 'logo text', 'typography',
+                        'saying', 'says', 'with the words', 'with the text'
+                    ];
+                    const hasQuotes = /"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'/.test(prompt);
+                    const requestsText = textKeywords.some(keyword => lowerPrompt.includes(keyword)) || hasQuotes;
+
+                    // Prefix with an unambiguous clean image-generation directive (no "infographic" by default)
+                    const IMAGE_DIRECTIVE = requestsText 
+                        ? 'Create a visual image illustrating: ' 
+                        : 'Create a clean, high-quality visual image illustrating: ';
+
+                    if (!imagePrompt.toLowerCase().startsWith('create') && 
+                        !imagePrompt.toLowerCase().startsWith('generate') && 
+                        !imagePrompt.toLowerCase().startsWith('draw') && 
+                        !imagePrompt.toLowerCase().startsWith('design')) {
                         imagePrompt = IMAGE_DIRECTIVE + imagePrompt;
+                    }
+
+                    // Enforce clean, text-free output by default
+                    if (!requestsText) {
+                        imagePrompt += '. The generated image must remain completely clean and text-free, containing no text, words, letters, watermarks, labels, captions, or written content.';
                     }
                     console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream...`);
                     const response = await client.models.generateContentStream({
