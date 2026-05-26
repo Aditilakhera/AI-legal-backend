@@ -129,12 +129,21 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                     if (!requestsText) {
                         imagePrompt += '. The generated image must remain completely clean and text-free, containing no text, words, letters, watermarks, labels, captions, or written content.';
                     }
-                    console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream...`);
+                    let geminiRatio = '1:1'; // safe default
+                    if (aspectRatio === '16:9') geminiRatio = '16:9';
+                    else if (aspectRatio === '9:16') geminiRatio = '9:16';
+                    else if (aspectRatio === '4:3') geminiRatio = '4:3';
+                    else if (aspectRatio === '3:4') geminiRatio = '3:4';
+                    else if (aspectRatio === '4:5') geminiRatio = '4:5';
+                    else if (aspectRatio === '1:1') geminiRatio = '1:1';
+
+                    console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream with ratio ${geminiRatio}...`);
                     const response = await client.models.generateContentStream({
                         model,
                         contents: imagePrompt,
                         config: {
                             responseModalities: [Modality.TEXT, Modality.IMAGE],
+                            imageConfig: { aspectRatio: geminiRatio }
                         },
                     });
 
