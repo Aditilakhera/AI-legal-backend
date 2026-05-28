@@ -60,12 +60,13 @@ export const generateVideo = async (req, res) => {
     }
 
     // 2. Execute via Pipeline
+    const resolution = req.body.resolution || '1080p';
     const pipelineResult = await executeVideoPipeline(
         prompt,
         async (refinedPrompt, activeModel) => {
             return await generateVideoFromPrompt(
                 refinedPrompt, duration, quality, finalAspectRatio, 
-                activeModel, '1080p', imageGcsUri, imageMimeType
+                activeModel, resolution, imageGcsUri, imageMimeType
             );
         },
         {
@@ -275,7 +276,7 @@ export const generateVideoFromPrompt = async (prompt, duration, quality, aspectR
   } catch (error) {
     logger.error(`[VERTEX VIDEO ERROR] ${error.message}`);
     try { fs.appendFileSync('debug_video.log', `${new Date().toISOString()} - ERROR: ${error.message}\n`); } catch (e) { }
-    return null;
+    throw error; // Re-throw so pipeline receives the real Vertex AI error, not null
   }
 };
 

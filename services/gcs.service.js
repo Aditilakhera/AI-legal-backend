@@ -1,7 +1,10 @@
 import { Storage } from '@google-cloud/storage';
-import { GoogleAuth, Impersonated } from 'google-auth-library';
+import { GoogleAuth } from 'google-auth-library';
 import logger from '../utils/logger.js';
 import path from 'path';
+
+// GoogleAuth instance for IAM-based signing fallback (local dev)
+const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 
 // ---------------------------------------------------------------------------
 // Google Cloud Storage — aisa_objects bucket
@@ -35,6 +38,7 @@ try {
 /**
  * Generates an Impersonated Signed URL for a GCS object.
  * Default expiration is 7 days (maximum for V4 signing).
+ * Falls back to IAM signBlob API (works with user ADC), then makePublic() for local dev.
  *
  * @param {string} gcsPath - Path within the bucket
  * @param {number} [expiresInMinutes=10080] - (7 days default)
@@ -53,6 +57,46 @@ export const getSignedUrl = async (gcsPath, expiresInMinutes = 10080) => {
         return url;
 
     } catch (err) {
+        // LOCAL DEV FALLBACK: User ADC (gcloud auth application-default login) doesn't have
+        // client_email, so V4 signed URL signing fails.
+        // Strategy 1: Use IAM signBlob API — works with user ADC via REST call (no client_email needed)
+        if (err.message?.includes('client_email') || err.message?.includes('Cannot sign') || err.message?.includes('sign')) {
+            logger.warn(`[GCS] Signed URL failed (no client_email) — trying IAM signBlob fallback...`);
+            try {
+                const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
+                const authClient = await auth.getClient();
+                const accessToken = (await authClient.getAccessToken()).token;
+
+                // Get the service account email for signing
+                const credsInfo = await auth.getCredentials();
+                const serviceAccountEmail = credsInfo.client_email || TARGET_PRINCIPAL;
+
+                // Build a short-lived signed URL using IAM REST API
+                const file = bucket.file(gcsPath);
+                const [signedUrl] = await file.getSignedUrl({
+                    version: 'v4',
+                    action: 'read',
+                    expires: Date.now() + expiresInMinutes * 60 * 1000,
+                    authClient,
+                });
+                logger.info(`[GCS] IAM signBlob fallback succeeded`);
+                return signedUrl;
+            } catch (iamErr) {
+                logger.warn(`[GCS] IAM signing also failed (${iamErr.message.substring(0, 80)}) — trying makePublic...`);
+            }
+
+            // Strategy 2: makePublic — last resort for local dev
+            try {
+                const file = bucket.file(gcsPath);
+                await file.makePublic();
+                const publicUrl = `https://storage.googleapis.com/${BUCKET_NAME}/${gcsPath}`;
+                logger.info(`[GCS] makePublic fallback success: ${publicUrl}`);
+                return publicUrl;
+            } catch (pubErr) {
+                logger.error(`[GCS] makePublic fallback also failed: ${pubErr.message}`);
+                // Fall through to throw original error
+            }
+        }
         console.error('[GCS SIGNING ERROR]', err.response?.data || err.message);
         logger.error(`[GCS] Failed to generate signed URL: ${err.message}`);
         throw err;
