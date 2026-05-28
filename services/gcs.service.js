@@ -63,15 +63,7 @@ export const getSignedUrl = async (gcsPath, expiresInMinutes = 10080) => {
         if (err.message?.includes('client_email') || err.message?.includes('Cannot sign') || err.message?.includes('sign')) {
             logger.warn(`[GCS] Signed URL failed (no client_email) — trying IAM signBlob fallback...`);
             try {
-                const projectId = process.env.GCP_PROJECT_ID || 'ai-mall-484810';
                 const authClient = await auth.getClient();
-                const accessToken = (await authClient.getAccessToken()).token;
-
-                // Get the service account email for signing
-                const credsInfo = await auth.getCredentials();
-                const serviceAccountEmail = credsInfo.client_email || TARGET_PRINCIPAL;
-
-                // Build a short-lived signed URL using IAM REST API
                 const file = bucket.file(gcsPath);
                 const [signedUrl] = await file.getSignedUrl({
                     version: 'v4',
@@ -94,7 +86,7 @@ export const getSignedUrl = async (gcsPath, expiresInMinutes = 10080) => {
                 return publicUrl;
             } catch (pubErr) {
                 logger.error(`[GCS] makePublic fallback also failed: ${pubErr.message}`);
-                // Fall through to throw original error
+                // Fall through to throw original signing error
             }
         }
         console.error('[GCS SIGNING ERROR]', err.response?.data || err.message);
@@ -102,6 +94,7 @@ export const getSignedUrl = async (gcsPath, expiresInMinutes = 10080) => {
         throw err;
     }
 };
+
 
 /**
  * Uploads a Buffer to the aisa_objects GCS bucket and ALWAYS returns a signed URL.
