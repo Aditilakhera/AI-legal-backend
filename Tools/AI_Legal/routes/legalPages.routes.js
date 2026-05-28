@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import { verifyToken } from '../../../middleware/authorization.js';
 import LegalPage from '../../../models/LegalPage.js';
 
@@ -22,6 +23,12 @@ router.get('/:pageType', async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid page type' });
         }
 
+        // DB Down Fallback - prevent indefinite hanging due to Mongoose buffering
+        if (mongoose.connection.readyState !== 1) {
+            console.log(`[DB] MongoDB unreachable during GET /api/legal/${pageType}. Bypassing query and returning null.`);
+            return res.json({ success: true, data: null }); // Frontend will use its defaults
+        }
+
         const page = await LegalPage.findOne({ pageType });
         if (!page) {
             return res.json({ success: true, data: null }); // Frontend uses defaults
@@ -41,6 +48,11 @@ router.put('/:pageType', verifyToken, isAdmin, async (req, res) => {
         const validTypes = ['cookie-policy', 'terms-of-service', 'privacy-policy'];
         if (!validTypes.includes(pageType)) {
             return res.status(400).json({ success: false, message: 'Invalid page type' });
+        }
+
+        // DB Down Fallback - fail immediately instead of hanging
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ success: false, message: 'Database is currently unreachable. Cannot update legal pages.' });
         }
 
         const page = await LegalPage.findOneAndUpdate(

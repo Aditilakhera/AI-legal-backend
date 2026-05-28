@@ -27,7 +27,7 @@ export const getQuote = async (symbol) => {
 
     // 2. Yahoo Finance fallback
     try {
-        const result = await yf.quote(mapSymbolForYahoo(symbol));
+        const result = await yf.quote(mapSymbolForYahoo(symbol), {}, { validateResult: false });
         if (result) {
             return {
                 symbol: result.symbol,
@@ -83,7 +83,7 @@ const generateSimulatedIntradayData = (basePrice = 100) => {
  */
 export const getNews = async (symbol) => {
     try {
-        const result = await yf.search(mapSymbolForYahoo(symbol));
+        const result = await yf.search(mapSymbolForYahoo(symbol), {}, { validateResult: false });
         if (result && result.news && Array.isArray(result.news)) {
             return result.news.slice(0, 10).map(item => ({
                 title: item.title,
@@ -123,7 +123,7 @@ export const getHistorical = async (symbol) => {
             period1: start,
             period2: end,
             interval: '1d'
-        });
+        }, { validateResult: false });
         if (Array.isArray(result)) {
             return result.map(item => ({
                 date: item.date.toISOString().split('T')[0],
