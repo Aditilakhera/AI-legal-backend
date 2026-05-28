@@ -21,7 +21,7 @@ export const searchStocks = async (keywords) => {
     try {
         // Search both Yahoo and Angel One in parallel
         const [yfResults, angelResults] = await Promise.allSettled([
-            yf.search(keywords),
+            yf.search(keywords, {}, { validateResult: false }),
             searchAngelOneStocks(keywords)
         ]);
 
@@ -65,7 +65,7 @@ export const searchStocks = async (keywords) => {
 export const getStockQuote = async (symbol) => {
     try {
         const mappedSymbol = mapSymbolForYahoo(symbol);
-        const result = await yf.quote(mappedSymbol);
+        const result = await yf.quote(mappedSymbol, {}, { validateResult: false });
         
         if (result) {
             return {
@@ -94,7 +94,7 @@ export const getStockQuote = async (symbol) => {
 export const getStockOverview = async (symbol) => {
     try {
         const mappedSymbol = mapSymbolForYahoo(symbol);
-        const result = await yf.quoteSummary(mappedSymbol, { modules: ['summaryDetail', 'defaultKeyStatistics', 'assetProfile'] });
+        const result = await yf.quoteSummary(mappedSymbol, { modules: ['summaryDetail', 'defaultKeyStatistics', 'assetProfile'] }, { validateResult: false });
         
         if (result) {
             const sd = result.summaryDetail || {};
@@ -130,7 +130,7 @@ export const getStockOverview = async (symbol) => {
 export const getStockNews = async (symbol) => {
     try {
         const mappedSymbol = mapSymbolForYahoo(symbol);
-        const result = await yf.search(mappedSymbol);
+        const result = await yf.search(mappedSymbol, {}, { validateResult: false });
         
         if (result.news && Array.isArray(result.news)) {
             return result.news.slice(0, 5).map(item => ({
@@ -163,7 +163,7 @@ export const getHistoricalData = async (symbol) => {
             period1: start,
             period2: end,
             interval: '1d'
-        });
+        }, { validateResult: false });
         
         if (Array.isArray(result)) {
             return result.map(item => ({

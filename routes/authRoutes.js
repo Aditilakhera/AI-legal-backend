@@ -643,31 +643,62 @@ router.get("/google", async (req, res) => {
 // POST /google — called by frontend after @react-oauth/google returns an access token
 router.post("/google", async (req, res) => {
   try {
-    const { credential, email, name, picture } = req.body;
+    const { credential, email: bodyEmail, name: bodyName, picture: bodyPicture } = req.body;
 
-    if (!credential || !email) {
-      return res.status(400).json({ error: "Missing required fields: credential and email are required" });
+    if (!credential) {
+      return res.status(400).json({ error: "Missing required field: credential is required" });
     }
 
-    // Verify the access token with Google and extract the Google sub (providerId)
     let googleId;
-    try {
-      const tokenInfo = await axios.get(
-        `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${credential}`
-      );
-      // tokeninfo returns "sub" for ID tokens and "user_id" for access tokens
-      googleId = tokenInfo.data.sub || tokenInfo.data.user_id || email;
-    } catch (tokenErr) {
-      // Fallback: verify by calling userinfo endpoint
+    let email = bodyEmail;
+    let name = bodyName;
+    let picture = bodyPicture;
+
+    // Check if the credential is a JWT ID token or an access token
+    const isJwt = credential.split(".").length === 3;
+
+    if (isJwt) {
       try {
-        const userInfo = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
-          headers: { Authorization: `Bearer ${credential}` },
+        const ticket = await client.verifyIdToken({
+          idToken: credential,
+          audience: process.env.GOOGLE_CLIENT_ID,
         });
-        googleId = userInfo.data.sub || email;
-      } catch (userInfoErr) {
-        console.error("[Google Login] Token verification failed:", userInfoErr.message);
-        return res.status(401).json({ error: "Invalid or expired Google access token" });
+        const payload = ticket.getPayload();
+        googleId = payload.sub;
+        if (!email) email = payload.email;
+        if (!name) name = payload.name;
+        if (!picture) picture = payload.picture;
+      } catch (jwtErr) {
+        console.error("[Google Login] JWT Verification failed:", jwtErr.message);
+        return res.status(401).json({ error: "Invalid or expired Google ID Token" });
       }
+    } else {
+      // It's an access token. Verify via Google API.
+      try {
+        const tokenInfo = await axios.get(
+          `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${credential}`
+        );
+        googleId = tokenInfo.data.sub || tokenInfo.data.user_id;
+        if (!email) email = tokenInfo.data.email;
+      } catch (tokenErr) {
+        // Fallback: verify by calling userinfo endpoint
+        try {
+          const userInfo = await axios.get("https://www.googleapis.com/oauth2/v3/userinfo", {
+            headers: { Authorization: `Bearer ${credential}` },
+          });
+          googleId = userInfo.data.sub;
+          if (!email) email = userInfo.data.email;
+          if (!name) name = userInfo.data.name;
+          if (!picture) picture = userInfo.data.picture;
+        } catch (userInfoErr) {
+          console.error("[Google Login] Access token verification failed:", userInfoErr.message);
+          return res.status(401).json({ error: "Invalid or expired Google Access Token" });
+        }
+      }
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: "Email could not be verified from Google account" });
     }
 
     // Delegate to the shared social-user handler (isRedirect=false → returns JSON)
@@ -927,27 +958,7 @@ router.get("/:provider/callback", async (req, res) => {
   }
 });
 
-router.post("/google", async (req, res) => {
-  const { credential, email, name, picture } = req.body;
-  try {
-    let profile = { email, name, picture, provider: 'google' };
-
-    if (credential) {
-      const userInfoRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${credential}` }
-      });
-      profile.email = userInfoRes.data.email;
-      profile.name = userInfoRes.data.name;
-      profile.picture = userInfoRes.data.picture;
-      profile.providerId = userInfoRes.data.sub;
-    }
-
-    return handleSocialUser(profile, req, res, false);
-  } catch (error) {
-    console.error("[Google Auth POST Error]:", error);
-    res.status(500).json({ error: "Google Authentication failed" });
-  }
-});
+// Duplicate Google POST route removed to prevent overriding verified auth flow
 
 router.post("/social-login", async (req, res) => {
   const { email, name, picture, provider, providerId } = req.body;
