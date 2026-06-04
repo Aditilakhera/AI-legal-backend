@@ -40,9 +40,16 @@ export const findPrecedents = async (userQuery, caseContext = null, language = '
 
     // 3. Process top 5 with AI for detailed structured data
     const topCandidates = rankedCandidates.slice(0, 5);
-    const processedPrecedents = await Promise.all(
-        topCandidates.map(async (c) => await processPrecedentWithAI(c, caseContext, language))
-    );
+    
+    let processedPrecedents = [];
+    try {
+        processedPrecedents = await processPrecedentsBatchWithAI(topCandidates, caseContext, language);
+    } catch (batchErr) {
+        logger.warn(`[Precedents] Batch AI processing failed, falling back to individual: ${batchErr.message}`);
+        processedPrecedents = await Promise.all(
+            topCandidates.map(async (c) => await processPrecedentWithAI(c, caseContext, language))
+        );
+    }
 
     return {
         mode: modeLabel,
@@ -100,7 +107,45 @@ const searchExternal = async (query) => {
         });
 
         const extractedCases = safeParseLLMJson(extractionResponse, []);
-        return extractedCases.map(c => ({ ...c, source: 'API' }));
+        
+        const savedCases = [];
+        for (const c of extractedCases) {
+            try {
+                // Check if already exists in DB by citation (case-insensitive) or case name
+                let dbCase = null;
+                if (c.citation && c.citation !== "Citation unavailable") {
+                    dbCase = await Precedent.findOne({
+                        citation: { $regex: new RegExp(`^${c.citation.trim()}$`, 'i') }
+                    });
+                }
+                
+                if (!dbCase && c.case_name) {
+                    dbCase = await Precedent.findOne({
+                        case_name: { $regex: new RegExp(`^${c.case_name.trim()}$`, 'i') }
+                    });
+                }
+                
+                if (!dbCase) {
+                    dbCase = await Precedent.create({
+                        case_name: c.case_name,
+                        court: c.court || 'Supreme Court',
+                        year: parseInt(c.year) || 2025,
+                        citation: c.citation || 'Citation unavailable',
+                        text: c.text || c.facts || c.reasoning || '',
+                        tags: c.area ? [c.area] : []
+                    });
+                }
+                
+                savedCases.push({
+                    ...dbCase.toObject(),
+                    source: 'API'
+                });
+            } catch (saveErr) {
+                logger.error(`[Precedents] Failed to cache external case to DB: ${saveErr.message}`);
+                savedCases.push({ ...c, source: 'API' });
+            }
+        }
+        return savedCases;
     } catch (error) {
         logger.error(`[Precedents] External search failed: ${error.message}`);
         return [];
@@ -131,6 +176,15 @@ const rankPrecedents = (precedents, query, context) => {
 };
 
 const processPrecedentWithAI = async (caseData, context = null, language = 'English') => {
+    // If we have cached ai_analysis, we can reuse it
+    if (!context && caseData.ai_analysis) {
+        logger.info(`[Precedents] Cache HIT (Individual) for: ${caseData.case_name}`);
+        return {
+            ...caseData.ai_analysis,
+            similarity: { relevance_score: 95, matching_factors: ["Pre-analyzed landmark case"] }
+        };
+    }
+
     const isHindi = language === 'Hindi' || language === 'hi';
     const langRule = isHindi
         ? "\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use 'Simple Hindi + English term in brackets' for all legal concepts (e.g. 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').\n- Maintain professional legal tone."
@@ -206,10 +260,163 @@ const processPrecedentWithAI = async (caseData, context = null, language = 'Engl
             isJson: true
         });
 
-        return safeParseLLMJson(response);
+        const parsed = safeParseLLMJson(response);
+        
+        // Cache the result back to DB (if it exists)
+        if (parsed && caseData._id) {
+            const cacheData = { ...parsed };
+            delete cacheData.similarity;
+            Precedent.findByIdAndUpdate(caseData._id, { $set: { ai_analysis: cacheData } })
+                .catch(err => logger.error(`[Precedents] Failed to cache ai_analysis in individual fallback for ${caseData._id}: ${err.message}`));
+        }
+
+        return parsed;
     } catch (error) {
         logger.error(`[Precedents] AI processing failed for ${caseData.case_name}: ${error.message}`);
         return null;
+    }
+};
+
+/**
+ * processPrecedentsBatchWithAI
+ * Packages all candidate cases into a single Gemini 2.5 Flash request.
+ * Uses cached DB data to keep context small and fast.
+ */
+export const processPrecedentsBatchWithAI = async (candidates, context = null, language = 'English') => {
+    if (!candidates || candidates.length === 0) return [];
+
+    const isHindi = language === 'Hindi' || language === 'hi';
+    const langRule = isHindi
+        ? "\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use 'Simple Hindi + English term in brackets' for all legal concepts (e.g. 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').\n- Maintain professional legal tone."
+        : `\n\n### MANDATORY LANGUAGE RULE:\n- Respond entirely in ${language}.`;
+
+    // We serialize candidates for the prompt
+    const candidatesDataString = candidates.map((c, index) => {
+        // If candidate already has ai_analysis in DB, pass only facts/reasoning to save tokens and speed up execution
+        const candText = c.ai_analysis 
+            ? `Facts: ${c.ai_analysis.case_context?.facts || ''}\nReasoning: ${c.ai_analysis.judgment_basis?.legal_reasoning || ''}` 
+            : (c.text || c.facts || c.reasoning || '');
+            
+        return `
+    CANDIDATE ${index + 1}:
+    ID: ${c._id || index}
+    Name: ${c.case_name}
+    Citation: ${c.citation}
+    Court: ${c.court}
+    Year: ${c.year}
+    Text: ${candText}
+    `;
+    }).join('\n---\n');
+
+    const prompt = `
+    You are a Senior Legal Research Intelligence System. 
+    Analyze the following case laws and provide a complete, structured landmark judgment report for each candidate case.
+    ${langRule}
+    
+    CANDIDATE CASES:
+    ${candidatesDataString}
+    
+    ${context ? `CONTEXT OF MY CURRENT CASE:
+    Summary: ${context.summary || context.caseSummary}
+    Issues: ${context.legalIssues ? context.legalIssues.join(', ') : 'N/A'}` : ''}
+
+    REQUIRED JSON FORMAT (STRICT):
+    Return ONLY a JSON array containing objects. Each object MUST correspond to a candidate case and have this exact structure:
+    {
+        "id": "ID of the candidate case (match the ID from candidate data above, e.g. the MongoDB _id or index)",
+        "case_identity": {
+            "case_name": "...",
+            "court": "...",
+            "year": "...",
+            "citation": "...",
+            "bench": "...",
+            "district": "...",
+            "area": "..."
+        },
+        "case_context": {
+            "facts": "Short & clear key facts",
+            "legal_issue": "The specific question decided"
+        },
+        "judgment_outcome": {
+            "final_decision": "Who won and what was the result",
+            "type": "Allowed / Dismissed / Partially Allowed / etc."
+        },
+        "judgment_basis": {
+            "legal_reasoning": "Detailed logic for the decision",
+            "principles_applied": ["e.g., Natural Justice", "Contractual Obligation"],
+            "relevant_laws": ["e.g., Article 21", "Section 138 of NI Act"]
+        },
+        "landmark_value": {
+            "importance": "Why this case is a landmark",
+            "precedent_status": "Whether it set a new precedent or followed one",
+            "impact": "How it affects future cases"
+        },
+        "similarity": {
+            "relevance_score": 0-100, // Evaluate this based on comparison to the CURRENT CASE context above (or set standard high score if no context)
+            "matching_factors": ["Fact matching", "Law matching", "Issue matching"]
+        },
+        "key_takeaways": [
+            "3-5 bullet insights from the judgment"
+        ],
+        "tags": ["Tag1", "Tag2"]
+    }
+
+    RULES:
+    - Return ONLY the raw JSON array. Do not wrap in markdown or explanation.
+    - Focus on decision logic and legal reasoning, not just description.
+    - Prioritize high-authority interpretations.
+    - Use scannable, structured text. Avoid long paragraphs.
+    - If my current case context is provided, explain the similarity precisely.
+    - DO NOT hallucinate citations.
+    `;
+
+    try {
+        logger.info(`[Precedents] Starting batch AI processing for ${candidates.length} candidates.`);
+        const response = await vertexService.AskVertexRaw(prompt, {
+            modelOverride: 'gemini-2.5-flash',
+            temperature: 0.1,
+            isJson: true,
+            maxOutputTokens: 8192 // Ensure enough space for all reports
+        });
+
+        const results = safeParseLLMJson(response, []);
+        
+        // Map the results back to the original candidates
+        const processed = candidates.map((cand, idx) => {
+            const matchId = cand._id ? cand._id.toString() : idx.toString();
+            let matchedObj = results.find(r => r.id && r.id.toString() === matchId);
+            if (!matchedObj && results[idx]) {
+                matchedObj = results[idx]; // fallback to index mapping
+            }
+
+            if (!matchedObj) {
+                logger.warn(`[Precedents] No batch AI results matched candidate ${cand.case_name}.`);
+                return null;
+            }
+
+            const finalObj = {
+                ...matchedObj,
+                _id: cand._id || null,
+                source: cand.source || 'API'
+            };
+
+            // Asynchronously cache the base AI analysis in MongoDB
+            if (cand._id) {
+                const cacheData = { ...matchedObj };
+                delete cacheData.id;
+                delete cacheData.similarity; // do not cache context-dependent similarity
+                
+                Precedent.findByIdAndUpdate(cand._id, { $set: { ai_analysis: cacheData } })
+                    .catch(err => logger.error(`[Precedents] Failed to cache ai_analysis to DB for ${cand._id}: ${err.message}`));
+            }
+
+            return finalObj;
+        }).filter(Boolean);
+
+        return processed;
+    } catch (error) {
+        logger.error(`[Precedents] Batch AI processing failed: ${error.message}`);
+        throw error;
     }
 };
 

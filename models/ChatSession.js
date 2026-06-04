@@ -56,7 +56,8 @@ const chatSessionSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: false
+    required: false,
+    index: true
   },
   guestId: {
     type: String,
@@ -77,5 +78,10 @@ const chatSessionSchema = new mongoose.Schema({
   isShared: { type: Boolean, default: false },
   shareId: { type: String, unique: true, sparse: true, index: true }
 }, { timestamps: true });
+
+chatSessionSchema.index({ userId: 1, lastModified: -1 });
+chatSessionSchema.index({ guestId: 1, lastModified: -1 });
+chatSessionSchema.index({ projectId: 1, lastModified: -1 });
+
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 export default ChatSession

@@ -23,7 +23,8 @@ const precedentSchema = new mongoose.Schema({
     citation: {
         type: String,
         required: true,
-        trim: true
+        trim: true,
+        index: true
     },
     tags: [{
         type: String,
@@ -39,6 +40,10 @@ const precedentSchema = new mongoose.Schema({
     lastExtracted: {
         type: Date,
         default: Date.now
+    },
+    ai_analysis: {
+        type: mongoose.Schema.Types.Mixed,
+        required: false
     }
 }, { 
     timestamps: true 

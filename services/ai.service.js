@@ -208,9 +208,18 @@ Maintain any text response outside the JSON block.`;
                 return `${m.role}: ${text.trim()}`;
             }).join(' | ');
 
+            const isSpecializedMode = mode && mode !== 'NORMAL_CHAT' && mode !== 'CHAT';
+            
             // Run independent pre-processing tasks in parallel
             const [intentResult, ragResult] = await Promise.all([
-                classifyIntent(message, images || documents || [], chatSummary).catch(() => null),
+                isSpecializedMode
+                    ? Promise.resolve({
+                        intent: toolName || (mode === 'LEGAL_TOOLKIT' ? 'legal_free_chat' : mode.toLowerCase()),
+                        tools: [toolName || (mode === 'LEGAL_TOOLKIT' ? 'legal_free_chat' : mode.toLowerCase())],
+                        confidence: 1.0,
+                        classified: false
+                      })
+                    : classifyIntent(message, images || documents || [], chatSummary).catch(() => null),
                 vertexService.analyzeRAGRequirements(message).catch(() => ({ needsRAG: false, rewrittenQuery: message }))
             ]);
 
@@ -577,6 +586,28 @@ export const reloadVectorStore = async () => {
 
 export const generateRelatedQuestions = async (userMessage, aiResponse, language = 'English', mode = 'GENERAL') => {
     try {
+        const lowerMsg = (userMessage || "").toLowerCase().trim();
+        const greetings = ['hi', 'hello', 'hii', 'hey', 'yo', 'namaste', 'greeting', 'hola', 'dear'];
+        const isGreeting = greetings.some(g => lowerMsg === g || lowerMsg.startsWith(g + ' ')) || lowerMsg.length < 5;
+
+        if (isGreeting) {
+            if (mode === 'LEGAL_TOOLKIT') {
+                return [
+                    "How does AI Legal work?",
+                    "What documents can you draft?",
+                    "Can you analyze a contract?",
+                    "How to draft a legal notice?"
+                ];
+            } else {
+                return [
+                    "What can you do?",
+                    "Show me your features",
+                    "Tell me about AISA",
+                    "How do I generate an image?"
+                ];
+            }
+        }
+
         const prompt = `You are an intelligent suggestion engine integrated into a chat system.
 
 Your task is to generate 3 to 5 highly relevant, clickable follow-up suggestions after every AI response.

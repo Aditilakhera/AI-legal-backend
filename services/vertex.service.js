@@ -80,6 +80,18 @@ const findOrCreateCorpus = async () => {
  */
 export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL') => {
     try {
+        const lower = (query || "").toLowerCase().trim();
+        const pureFillers = [
+            'hi', 'hello', 'hii', 'hey', 'thanks', 'thank you', 'okay', 'ok',
+            'great', 'awesome', 'happy to help', 'see you', 'bye', 'goodbye',
+            'hope this helps', 'no problem', 'you are welcome', 'got it',
+            'sure', 'alright', 'noted', 'understood'
+        ];
+        if (pureFillers.some(f => lower === f) || lower.length < 3) {
+            logger.info(`[Vertex RAG] Skipping retrieval for greeting/short filler query: "${query}"`);
+            return null;
+        }
+
         const corpusId = await findOrCreateCorpus();
         if (!corpusId) {
             logger.warn("[Vertex RAG] Retrieval skipped: No Corpus ID.");
@@ -230,6 +242,12 @@ export const analyzeRAGRequirements = async (query) => {
 
         if (!needsRAG) {
             return { needsRAG: false, rewrittenQuery: query };
+        }
+
+        const wordsCount = (query || "").trim().split(/\s+/).length;
+        if (wordsCount < 5) {
+            logger.info(`[RAG-Analyzer] Skipping rewriting for short query: "${query}"`);
+            return { needsRAG: true, rewrittenQuery: query };
         }
 
         const rewriteTemplate = configService.getConfig('QUERY_REWRITE_PROMPT', 'Rewrite the user question for search: {user_question}');

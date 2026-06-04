@@ -118,6 +118,28 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // Serve static frontend files from 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Apple Pay Domain Verification ───────────────────────────────────────────
+// Apple's servers verify your domain by accessing this exact URL
+// File must be placed at: Aisa_backend_beta/public/.well-known/apple-developer-merchantid-domain-association
+import fs from 'fs';
+const serveAppleVerification = (req, res) => {
+  let filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association.txt');
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association');
+  }
+  
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'text/plain');
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send('Apple Pay domain verification file not found. Please add it to public/.well-known/');
+  }
+};
+
+app.get('/.well-known/apple-developer-merchantid-domain-association.txt', serveAppleVerification);
+app.get('/.well-known/apple-developer-merchantid-domain-association', serveAppleVerification);
+
+
 // API Health Check (moved from root)
 app.get("/api/health", (req, res) => {
   res.send("All working")

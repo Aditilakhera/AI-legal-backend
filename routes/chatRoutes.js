@@ -310,7 +310,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
     const userId = req.user ? req.user.id : null;
 
     if (!session) {
-      const aiTitle = await aiService.generateConversationTitle(content);
+      const words = (content || "").trim().split(/\s+/);
+      const aiTitle = words.slice(0, 5).join(' ') + (words.length > 5 ? '...' : '') || "New Chat";
       session = new ChatSession({
         sessionId: sessionId || `temp_${Date.now()}`,
         userId: userId || null,
@@ -324,7 +325,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       if (userId) await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
     } else if (session) {
       if (isGenericTitle) {
-        const aiTitle = await aiService.generateConversationTitle(content);
+        const words = (content || "").trim().split(/\s+/);
+        const aiTitle = words.slice(0, 5).join(' ') + (words.length > 5 ? '...' : '') || "New Chat";
         if (aiTitle) session.title = aiTitle;
       }
       

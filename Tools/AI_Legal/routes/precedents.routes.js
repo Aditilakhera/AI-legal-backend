@@ -11,15 +11,24 @@ const router = express.Router();
  * @desc Find legal precedents based on query or case context
  */
 router.post('/search', async (req, res) => {
+    const startTime = Date.now();
     try {
         const { query, projectId, language } = req.body;
         
+        const dbStart = Date.now();
         let caseContext = null;
         if (projectId) {
             caseContext = await Project.findById(projectId);
         }
+        const dbDuration = Date.now() - dbStart;
 
+        const processStart = Date.now();
         const results = await findPrecedents(query, caseContext, language);
+        const processDuration = Date.now() - processStart;
+
+        const totalDuration = Date.now() - startTime;
+        logger.info(`[PrecedentsRoute] Search completed in ${totalDuration}ms (DB Context: ${dbDuration}ms, Retrieval & AI: ${processDuration}ms)`);
+
         res.json(results);
     } catch (error) {
         logger.error(`[PrecedentsRoute] Search failed: ${error.message}`);
