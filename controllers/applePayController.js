@@ -162,8 +162,15 @@ export const validateAppleMerchant = async (req, res) => {
 
         // Paths to your Merchant Identity Certificate files
         // These files are created from the .p12 certificate from Apple Developer
-        const certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
-        const keyPath = path.join(__dirname, '../certs/apple-pay-merchant.key');
+        let certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
+        let keyPath = path.join(__dirname, '../certs/apple-pay-merchant.key');
+
+        // Check if mounted as secrets in production (GCP Cloud Run)
+        const prodCertPath = '/app/certs-pem/apple-pay-merchant.pem';
+        const prodKeyPath = '/app/certs-key/apple-pay-merchant.key';
+
+        if (fs.existsSync(prodCertPath)) certPath = prodCertPath;
+        if (fs.existsSync(prodKeyPath)) keyPath = prodKeyPath;
 
         // Check if certificates exist
         if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
