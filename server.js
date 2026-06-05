@@ -123,13 +123,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 // File must be placed at: Aisa_backend_beta/public/.well-known/apple-developer-merchantid-domain-association
 import fs from 'fs';
 const serveAppleVerification = (req, res) => {
-  let filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association.txt');
+  let filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association');
   if (!fs.existsSync(filePath)) {
-    filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association');
+    filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association.txt');
   }
   
   if (fs.existsSync(filePath)) {
-    res.setHeader('Content-Type', 'text/plain');
+    // Apple Pay verification file is a binary DER PKCS#7 signature
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.sendFile(filePath);
   } else {
     res.status(404).send('Apple Pay domain verification file not found. Please add it to public/.well-known/');
