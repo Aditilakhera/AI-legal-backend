@@ -53,13 +53,14 @@ export const createApplePayOrder = async (req, res) => {
         if (planId) {
             const plan = await Plan.findById(planId);
             if (!plan) return res.status(404).json({ success: false, message: "Plan not found" });
-            amount = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
-            itemName = plan.planName;
+            // ✅ Always convert to Number to avoid NaN.toFixed() → "The string did not match the expected pattern."
+            amount = Number(billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly) || 0;
+            itemName = plan.planName || 'Plan';
         } else if (packageId) {
             const creditPackage = await CreditPackage.findById(packageId);
             if (!creditPackage) return res.status(404).json({ success: false, message: "Package not found" });
-            amount = creditPackage.price;
-            itemName = creditPackage.packageName;
+            amount = Number(creditPackage.price) || 0;
+            itemName = creditPackage.packageName || 'Credit Pack';
         } else {
             return res.status(400).json({ success: false, message: "planId or packageId is required" });
         }
@@ -68,12 +69,20 @@ export const createApplePayOrder = async (req, res) => {
             return res.status(200).json({ success: true, isFree: true });
         }
 
+        // ✅ Guard: if amount is still not a valid positive number, reject
+        if (isNaN(amount) || amount <= 0) {
+            return res.status(400).json({ success: false, message: `Invalid plan price: ${amount}` });
+        }
+
         let finalAmount = amount;
         let finalCurrency = currency.toUpperCase();
 
         if (finalCurrency === 'USD') {
             finalAmount = Math.round((amount / 83.5) * 100) / 100;
         }
+
+        // ✅ Ensure finalAmount is a clean number (no floating point artifacts)
+        finalAmount = Math.round(finalAmount * 100) / 100;
 
         const amountInSmallestUnit = Math.round(finalAmount * 100);
 
@@ -89,24 +98,32 @@ export const createApplePayOrder = async (req, res) => {
             }
         });
 
-        console.log(`[ApplePay] Order created: ${order.id} for ₹${amount}`);
+        console.log(`[ApplePay] Order created: ${order.id} for ${finalCurrency} ${finalAmount}`);
+
+        // ✅ amount string: Apple Pay requires format "^[0-9]+(\\.[0-9][0-9])?$"
+        //    toFixed(2) guarantees e.g. "499.00" — NEVER "NaN", never scientific notation
+        const amountString = finalAmount.toFixed(2);
+
+        // ✅ Sanitize label: only ASCII printable chars. Em dash (—) can cause pattern errors on some iOS versions.
+        const safeLabel = `AISA - ${itemName.replace(/[^\x20-\x7E]/g, '')}`;
 
         return res.status(200).json({
             success: true,
             orderId: order.id,
             amount: finalAmount,
             currency: finalCurrency,
-            amountDisplay: finalCurrency === 'INR' ? `₹${amount}` : `$${finalAmount}`,
+            amountDisplay: finalCurrency === 'INR' ? `\u20B9${amount}` : `$${finalAmount}`,
             itemName,
             // Apple Pay payment request config (used by ApplePaySession on frontend)
             applePayRequest: {
                 countryCode: finalCurrency === 'USD' ? 'US' : 'IN',
                 currencyCode: finalCurrency === 'USD' ? 'USD' : 'INR',
-                supportedNetworks: ['visa', 'masterCard', 'amex', 'discover'],
+                // ✅ Only visa & masterCard for India (discover not widely supported in IN)
+                supportedNetworks: ['visa', 'masterCard'],
                 merchantCapabilities: ['supports3DS'],
                 total: {
-                    label: `AISA — ${itemName}`,
-                    amount: finalAmount.toFixed(2),
+                    label: safeLabel,
+                    amount: amountString,  // e.g. "499.00"
                     type: 'final'
                 }
             }
