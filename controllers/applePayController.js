@@ -216,7 +216,7 @@ export const validateAppleMerchant = async (req, res) => {
                 );
                 return res.status(503).json({
                     success: false,
-                    message: 'Apple Pay certificate configuration error: cert and key do not match. Please redeploy with correct APPLE_PAY_CERT_B64 and APPLE_PAY_KEY_B64.',
+                    message: `Apple Pay certificate configuration error: cert and key do not match. Source: ${certSource}. Cert Hash: ${certHash}, Key Hash: ${keyHash}`,
                     setupRequired: true
                 });
             }
