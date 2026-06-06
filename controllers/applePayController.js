@@ -160,75 +160,134 @@ export const validateAppleMerchant = async (req, res) => {
         const domain = process.env.APPLE_PAY_DOMAIN;
         const displayName = process.env.APPLE_PAY_DISPLAY_NAME || 'AISA';
 
-        // ── Load certificates (3 methods, in priority order) ─────────────────
-        // Method 1: Environment variables (base64 encoded) — best for Cloud Run
-        // Method 2: Mounted volume paths (GCP Secret Manager volume mounts)
-        // Method 3: Local certs/ folder (development)
+        // ── Load certificates (Self-Healing Waterfall) ───────────────────────
         let certContent = null;
         let keyContent  = null;
-        let certSource  = 'unknown';
+        let certSource  = 'none';
+        const loadLogs  = [];
 
-        if (process.env.APPLE_PAY_CERT_B64 && process.env.APPLE_PAY_KEY_B64) {
-            // Method 1: Decode from environment variables
-            certContent = Buffer.from(process.env.APPLE_PAY_CERT_B64, 'base64').toString('utf8');
-            keyContent  = Buffer.from(process.env.APPLE_PAY_KEY_B64,  'base64').toString('utf8');
-            certSource  = 'environment variables (base64)';
-            console.log('[ApplePay] Using certificates from environment variables.');
-        } else {
-            // Method 2 & 3: Read from file paths
-            let certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
-            let keyPath  = path.join(__dirname, '../certs/apple-pay-merchant.key');
+        const { createPrivateKey, createPublicKey, X509Certificate, createHash } = crypto;
 
-            const prodCertPath = '/app/certs-pem/apple-pay-merchant.pem';
-            const prodKeyPath  = '/app/certs-key/apple-pay-merchant.key';
-            if (fs.existsSync(prodCertPath)) certPath = prodCertPath;
-            if (fs.existsSync(prodKeyPath))  keyPath  = prodKeyPath;
-
-            if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-                console.warn('[ApplePay] Merchant Identity Certificate not found at:', certPath);
-                return res.status(503).json({
-                    success: false,
-                    message: "Apple Pay merchant certificate not configured. Please add your Merchant Identity Certificate.",
-                    setupRequired: true
-                });
+        function checkMatch(cert, key) {
+            try {
+                const privKey = createPrivateKey(key);
+                const pubFromKey = createPublicKey(privKey).export({ type: 'spki', format: 'der' });
+                const pubFromCert = new X509Certificate(cert).publicKey.export({ type: 'spki', format: 'der' });
+                const keyHash = createHash('md5').update(pubFromKey).digest('hex');
+                const certHash = createHash('md5').update(pubFromCert).digest('hex');
+                return { valid: keyHash === certHash, certHash, keyHash };
+            } catch (err) {
+                return { valid: false, error: err.message };
             }
-            certContent = fs.readFileSync(certPath);
-            keyContent  = fs.readFileSync(keyPath);
-            certSource  = `files (${certPath})`;
         }
 
-        // ── CRITICAL: Verify cert and key match BEFORE calling Apple ──────────
-        // Prevents: error:05800074:x509 certificate routines::key values mismatch
-        try {
-            const { createPrivateKey, createPublicKey, X509Certificate, createHash } = crypto;
-            const privKey    = createPrivateKey(keyContent);
-            const pubFromKey = createPublicKey(privKey).export({ type: 'spki', format: 'der' });
-            const pubFromCert = new X509Certificate(certContent).publicKey.export({ type: 'spki', format: 'der' });
-            const keyHash  = createHash('md5').update(pubFromKey).digest('hex');
-            const certHash = createHash('md5').update(pubFromCert).digest('hex');
-            if (keyHash !== certHash) {
-                console.error(
-                    '[ApplePay] ❌ CERT/KEY MISMATCH DETECTED!\n' +
-                    `  Source: ${certSource}\n` +
-                    `  Cert pubkey hash: ${certHash}\n` +
-                    `  Key  pubkey hash: ${keyHash}\n` +
-                    '  Fix: Ensure APPLE_PAY_CERT_B64 and APPLE_PAY_KEY_B64 env vars are from the same keypair.'
-                );
-                return res.status(503).json({
-                    success: false,
-                    message: `Apple Pay certificate configuration error: cert and key do not match. Source: ${certSource}. Cert Hash: ${certHash}, Key Hash: ${keyHash}`,
-                    setupRequired: true
-                });
+        // --- METHOD 1: Environment Variables (Base64) ---
+        if (process.env.APPLE_PAY_CERT_B64 && process.env.APPLE_PAY_KEY_B64) {
+            try {
+                const cert = Buffer.from(process.env.APPLE_PAY_CERT_B64, 'base64').toString('utf8');
+                const key  = Buffer.from(process.env.APPLE_PAY_KEY_B64,  'base64').toString('utf8');
+                const check = checkMatch(cert, key);
+                if (check.valid) {
+                    certContent = cert;
+                    keyContent  = key;
+                    certSource  = 'environment variables (base64)';
+                } else {
+                    loadLogs.push(`Method 1 (Env Vars) failed: key/cert mismatch (cert: ${check.certHash}, key: ${check.keyHash})`);
+                }
+            } catch (e) {
+                loadLogs.push(`Method 1 (Env Vars) failed: ${e.message}`);
             }
-            console.log(`[ApplePay] ✅ Cert/key pair verified (hash: ${certHash.substring(0, 8)}…) from ${certSource}`);
-        } catch (certCheckErr) {
-            console.error('[ApplePay] Failed to validate cert/key pair:', certCheckErr.message);
+        } else {
+            loadLogs.push('Method 1 (Env Vars) skipped: variables not set');
+        }
+
+        // --- METHOD 2: Committed Files in Root (merchant_id.cer & apple-pay-merchant-NEW.key) ---
+        if (!certContent) {
+            const rootCerPath = path.join(__dirname, '../merchant_id.cer');
+            const rootKeyPath = path.join(__dirname, '../apple-pay-merchant-NEW.key');
+            if (fs.existsSync(rootCerPath) && fs.existsSync(rootKeyPath)) {
+                try {
+                    const derBuffer = fs.readFileSync(rootCerPath);
+                    const base64 = derBuffer.toString('base64');
+                    const lines = base64.match(/.{1,64}/g).join('\n');
+                    const cert = `-----BEGIN CERTIFICATE-----\n${lines}\n-----END CERTIFICATE-----\n`;
+                    const key  = fs.readFileSync(rootKeyPath, 'utf8');
+                    
+                    const check = checkMatch(cert, key);
+                    if (check.valid) {
+                        certContent = cert;
+                        keyContent  = key;
+                        certSource  = `root files (${rootCerPath})`;
+                    } else {
+                        loadLogs.push(`Method 2 (Root Files) failed: key/cert mismatch (cert: ${check.certHash}, key: ${check.keyHash})`);
+                    }
+                } catch (e) {
+                    loadLogs.push(`Method 2 (Root Files) failed: ${e.message}`);
+                }
+            } else {
+                loadLogs.push('Method 2 (Root Files) skipped: files not found');
+            }
+        }
+
+        // --- METHOD 3: Secret Manager Volume Mounts ---
+        if (!certContent) {
+            const prodCertPath = '/app/certs-pem/apple-pay-merchant.pem';
+            const prodKeyPath  = '/app/certs-key/apple-pay-merchant.key';
+            if (fs.existsSync(prodCertPath) && fs.existsSync(prodKeyPath)) {
+                try {
+                    const cert = fs.readFileSync(prodCertPath, 'utf8');
+                    const key  = fs.readFileSync(prodKeyPath, 'utf8');
+                    const check = checkMatch(cert, key);
+                    if (check.valid) {
+                        certContent = cert;
+                        keyContent  = key;
+                        certSource  = `mounted secrets (${prodCertPath})`;
+                    } else {
+                        loadLogs.push(`Method 3 (Mounted Secrets) failed: key/cert mismatch (cert: ${check.certHash}, key: ${check.keyHash})`);
+                    }
+                } catch (e) {
+                    loadLogs.push(`Method 3 (Mounted Secrets) failed: ${e.message}`);
+                }
+            } else {
+                loadLogs.push('Method 3 (Mounted Secrets) skipped: files not found');
+            }
+        }
+
+        // --- METHOD 4: Local certs/ folder (development/compiled fallback) ---
+        if (!certContent) {
+            const certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
+            const keyPath  = path.join(__dirname, '../certs/apple-pay-merchant.key');
+            if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+                try {
+                    const cert = fs.readFileSync(certPath, 'utf8');
+                    const key  = fs.readFileSync(keyPath, 'utf8');
+                    const check = checkMatch(cert, key);
+                    if (check.valid) {
+                        certContent = cert;
+                        keyContent  = key;
+                        certSource  = `local certs folder (${certPath})`;
+                    } else {
+                        loadLogs.push(`Method 4 (Local Folder) failed: key/cert mismatch (cert: ${check.certHash}, key: ${check.keyHash})`);
+                    }
+                } catch (e) {
+                    loadLogs.push(`Method 4 (Local Folder) failed: ${e.message}`);
+                }
+            } else {
+                loadLogs.push('Method 4 (Local Folder) skipped: files not found');
+            }
+        }
+
+        // If all methods failed to produce matching cert/key
+        if (!certContent || !keyContent) {
+            console.error('[ApplePay] All certificate loading methods failed:\n' + loadLogs.join('\n'));
             return res.status(503).json({
                 success: false,
-                message: 'Apple Pay certificate validation failed: ' + certCheckErr.message,
+                message: 'Apple Pay certificate configuration failed. None of the configured methods provided a matching certificate/key pair. Logs:\n' + loadLogs.join('\n'),
                 setupRequired: true
             });
         }
+
+        console.log(`[ApplePay] ✅ Using validated certificate pair from ${certSource}`);
 
         // Call Apple's merchant validation endpoint
         const merchantSession = await callAppleValidationEndpoint({
