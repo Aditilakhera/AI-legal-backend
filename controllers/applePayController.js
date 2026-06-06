@@ -160,33 +160,45 @@ export const validateAppleMerchant = async (req, res) => {
         const domain = process.env.APPLE_PAY_DOMAIN;
         const displayName = process.env.APPLE_PAY_DISPLAY_NAME || 'AISA';
 
-        // Paths to your Merchant Identity Certificate files
-        // These files are created from the .p12 certificate from Apple Developer
-        let certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
-        let keyPath = path.join(__dirname, '../certs/apple-pay-merchant.key');
+        // ── Load certificates (3 methods, in priority order) ─────────────────
+        // Method 1: Environment variables (base64 encoded) — best for Cloud Run
+        // Method 2: Mounted volume paths (GCP Secret Manager volume mounts)
+        // Method 3: Local certs/ folder (development)
+        let certContent = null;
+        let keyContent  = null;
 
-        // Check if mounted as secrets in production (GCP Cloud Run)
-        const prodCertPath = '/app/certs-pem/apple-pay-merchant.pem';
-        const prodKeyPath = '/app/certs-key/apple-pay-merchant.key';
+        if (process.env.APPLE_PAY_CERT_B64 && process.env.APPLE_PAY_KEY_B64) {
+            // Method 1: Decode from environment variables
+            certContent = Buffer.from(process.env.APPLE_PAY_CERT_B64, 'base64').toString('utf8');
+            keyContent  = Buffer.from(process.env.APPLE_PAY_KEY_B64,  'base64').toString('utf8');
+            console.log('[ApplePay] Using certificates from environment variables.');
+        } else {
+            // Method 2 & 3: Read from file paths
+            let certPath = path.join(__dirname, '../certs/apple-pay-merchant.pem');
+            let keyPath  = path.join(__dirname, '../certs/apple-pay-merchant.key');
 
-        if (fs.existsSync(prodCertPath)) certPath = prodCertPath;
-        if (fs.existsSync(prodKeyPath)) keyPath = prodKeyPath;
+            const prodCertPath = '/app/certs-pem/apple-pay-merchant.pem';
+            const prodKeyPath  = '/app/certs-key/apple-pay-merchant.key';
+            if (fs.existsSync(prodCertPath)) certPath = prodCertPath;
+            if (fs.existsSync(prodKeyPath))  keyPath  = prodKeyPath;
 
-        // Check if certificates exist
-        if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-            console.warn('[ApplePay] Merchant Identity Certificate not found at:', certPath);
-            return res.status(503).json({
-                success: false,
-                message: "Apple Pay merchant certificate not configured. Please add your Merchant Identity Certificate.",
-                setupRequired: true
-            });
+            if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+                console.warn('[ApplePay] Merchant Identity Certificate not found at:', certPath);
+                return res.status(503).json({
+                    success: false,
+                    message: "Apple Pay merchant certificate not configured. Please add your Merchant Identity Certificate.",
+                    setupRequired: true
+                });
+            }
+            certContent = fs.readFileSync(certPath);
+            keyContent  = fs.readFileSync(keyPath);
         }
 
         // Call Apple's merchant validation endpoint
         const merchantSession = await callAppleValidationEndpoint({
             validationURL,
-            certPath,
-            keyPath,
+            certContent,
+            keyContent,
             merchantId,
             domain,
             displayName
@@ -246,7 +258,7 @@ export const verifyApplePayment = async (req, res) => {
 
 // ─── Internal: Call Apple's Validation Endpoint ──────────────────────────────
 
-function callAppleValidationEndpoint({ validationURL, certPath, keyPath, merchantId, domain, displayName }) {
+function callAppleValidationEndpoint({ validationURL, certContent, keyContent, merchantId, domain, displayName }) {
     return new Promise((resolve, reject) => {
         const payload = JSON.stringify({
             merchantIdentifier: merchantId,
@@ -254,8 +266,8 @@ function callAppleValidationEndpoint({ validationURL, certPath, keyPath, merchan
             displayName: displayName
         });
 
-        const cert = fs.readFileSync(certPath);
-        const key = fs.readFileSync(keyPath);
+        const cert = certContent;
+        const key  = keyContent;
 
         const urlObj = new URL(validationURL);
         const options = {
