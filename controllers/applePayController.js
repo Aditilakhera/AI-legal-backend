@@ -166,11 +166,13 @@ export const validateAppleMerchant = async (req, res) => {
         // Method 3: Local certs/ folder (development)
         let certContent = null;
         let keyContent  = null;
+        let certSource  = 'unknown';
 
         if (process.env.APPLE_PAY_CERT_B64 && process.env.APPLE_PAY_KEY_B64) {
             // Method 1: Decode from environment variables
             certContent = Buffer.from(process.env.APPLE_PAY_CERT_B64, 'base64').toString('utf8');
             keyContent  = Buffer.from(process.env.APPLE_PAY_KEY_B64,  'base64').toString('utf8');
+            certSource  = 'environment variables (base64)';
             console.log('[ApplePay] Using certificates from environment variables.');
         } else {
             // Method 2 & 3: Read from file paths
@@ -192,6 +194,40 @@ export const validateAppleMerchant = async (req, res) => {
             }
             certContent = fs.readFileSync(certPath);
             keyContent  = fs.readFileSync(keyPath);
+            certSource  = `files (${certPath})`;
+        }
+
+        // ── CRITICAL: Verify cert and key match BEFORE calling Apple ──────────
+        // Prevents: error:05800074:x509 certificate routines::key values mismatch
+        try {
+            const { createPrivateKey, createPublicKey, X509Certificate, createHash } = crypto;
+            const privKey    = createPrivateKey(keyContent);
+            const pubFromKey = createPublicKey(privKey).export({ type: 'spki', format: 'der' });
+            const pubFromCert = new X509Certificate(certContent).publicKey.export({ type: 'spki', format: 'der' });
+            const keyHash  = createHash('md5').update(pubFromKey).digest('hex');
+            const certHash = createHash('md5').update(pubFromCert).digest('hex');
+            if (keyHash !== certHash) {
+                console.error(
+                    '[ApplePay] ❌ CERT/KEY MISMATCH DETECTED!\n' +
+                    `  Source: ${certSource}\n` +
+                    `  Cert pubkey hash: ${certHash}\n` +
+                    `  Key  pubkey hash: ${keyHash}\n` +
+                    '  Fix: Ensure APPLE_PAY_CERT_B64 and APPLE_PAY_KEY_B64 env vars are from the same keypair.'
+                );
+                return res.status(503).json({
+                    success: false,
+                    message: 'Apple Pay certificate configuration error: cert and key do not match. Please redeploy with correct APPLE_PAY_CERT_B64 and APPLE_PAY_KEY_B64.',
+                    setupRequired: true
+                });
+            }
+            console.log(`[ApplePay] ✅ Cert/key pair verified (hash: ${certHash.substring(0, 8)}…) from ${certSource}`);
+        } catch (certCheckErr) {
+            console.error('[ApplePay] Failed to validate cert/key pair:', certCheckErr.message);
+            return res.status(503).json({
+                success: false,
+                message: 'Apple Pay certificate validation failed: ' + certCheckErr.message,
+                setupRequired: true
+            });
         }
 
         // Call Apple's merchant validation endpoint

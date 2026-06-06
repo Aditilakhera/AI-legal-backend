@@ -19,25 +19,26 @@ const __dirname = path.dirname(__filename);
 
 console.log('\n🍎 Apple Pay Certificate Setup\n' + '─'.repeat(40));
 
-// ── Paths ─────────────────────────────────────────────────────────────────────
-const cerPath    = path.join(__dirname, 'apple-pay-cert.cer');         // Input: from Apple
-const keyPath    = path.join(__dirname, 'apple-pay-merchant.key');      // Input: generated earlier
+// ── Paths ─────────────────────────────────────────────────────────────────────────────────
+const cerPath    = path.join(__dirname, 'merchant_id.cer');              // Input: Merchant Identity cert from Apple
+const keyPath    = path.join(__dirname, 'apple-pay-merchant-NEW.key');   // Input: matching private key (NEW key)
 const certsDir   = path.join(__dirname, 'certs');
 const outCertPem = path.join(certsDir, 'apple-pay-merchant.pem');       // Output: cert PEM
 const outKeyPem  = path.join(certsDir, 'apple-pay-merchant.key');       // Output: key copy
 
-// ── Check files exist ─────────────────────────────────────────────────────────
+// ── Check files exist ────────────────────────────────────────────────────────────────────────
 let hasErrors = false;
 
 if (!fs.existsSync(cerPath)) {
-    console.error('❌ apple-pay-cert.cer NOT FOUND at:', cerPath);
-    console.error('   → Please copy your .cer file from Downloads and rename it to: apple-pay-cert.cer');
+    console.error('❌ merchant_id.cer NOT FOUND at:', cerPath);
+    console.error('   → This is the Merchant Identity Certificate downloaded from Apple Developer Portal.');
+    console.error('   → It should be named merchant_id.cer (NOT apple-pay-cert.cer which is an iOS distribution cert)');
     hasErrors = true;
 }
 
 if (!fs.existsSync(keyPath)) {
-    console.error('❌ apple-pay-merchant.key NOT FOUND at:', keyPath);
-    console.error('   → Run: node generate-apple-pay-csr.js first');
+    console.error('❌ apple-pay-merchant-NEW.key NOT FOUND at:', keyPath);
+    console.error('   → Run: node generate-apple-pay-csr.js first to generate the matching key');
     hasErrors = true;
 }
 
@@ -52,7 +53,7 @@ if (!fs.existsSync(certsDir)) {
     console.log('✅ Created certs/ directory');
 }
 
-// ── Convert .cer (DER format) → .pem (Base64 format) ─────────────────────────
+// ── Convert .cer (DER format) → .pem (Base64 format) ─────────────────
 try {
     const derBuffer = fs.readFileSync(cerPath);
     
@@ -64,6 +65,29 @@ try {
     
     const pemContent = `-----BEGIN CERTIFICATE-----\n${lines}\n-----END CERTIFICATE-----\n`;
     
+    // ── Verify cert and key MATCH before writing ─────────────────────────────────
+    const crypto = await import('crypto');
+    const keyPem = fs.readFileSync(keyPath);
+    try {
+        const privKey    = crypto.createPrivateKey(keyPem);
+        const pubFromKey = crypto.createPublicKey(privKey).export({ type: 'spki', format: 'der' });
+        const pubFromCert = new crypto.X509Certificate(pemContent).publicKey.export({ type: 'spki', format: 'der' });
+        const keyHash  = crypto.createHash('md5').update(pubFromKey).digest('hex');
+        const certHash = crypto.createHash('md5').update(pubFromCert).digest('hex');
+        if (keyHash !== certHash) {
+            console.error('❌ CERT/KEY MISMATCH!');
+            console.error('  Cert pubkey hash:', certHash);
+            console.error('  Key  pubkey hash:', keyHash);
+            console.error('  The merchant_id.cer does NOT match apple-pay-merchant-NEW.key!');
+            console.error('  You must use the key that was used to generate the CSR uploaded to Apple.');
+            process.exit(1);
+        }
+        console.log('✅ Cert and key MATCH (hash:', certHash.substring(0, 8) + '...');
+    } catch (matchErr) {
+        console.error('❌ Failed to verify cert/key match:', matchErr.message);
+        process.exit(1);
+    }
+
     fs.writeFileSync(outCertPem, pemContent);
     console.log('✅ Certificate converted and saved:', outCertPem);
 } catch (err) {
