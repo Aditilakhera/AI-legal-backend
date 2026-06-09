@@ -286,13 +286,98 @@ io.on('connection', (socket) => {
     activeRealtimeSubscriptions.set(socket.id, { symbol, intervalId });
   });
 
-  socket.on('request_historical', async ({ symbol }) => {
+  socket.on('request_historical', async ({ symbol, token }) => {
     console.log(`[Socket] ${socket.id} requested historical data for: ${symbol}`);
     try {
+        if (!symbol) {
+            return socket.emit('historical_data_response', { error: 'Symbol is required' });
+        }
+
+        let userId = null;
+        let isAdmin = false;
+
+        if (token) {
+            try {
+                const jwt = (await import('jsonwebtoken')).default;
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                userId = decoded.id;
+
+                const User = (await import('./models/User.js')).default;
+                const userRec = await User.findById(userId);
+                if (userRec && (userRec.role === 'admin' || (userRec.email && userRec.email.toLowerCase() === 'admin@uwo24.com'))) {
+                    isAdmin = true;
+                }
+            } catch (err) {
+                console.error(`[Socket request_historical] Token verification failed:`, err.message);
+            }
+        }
+
+        if (!userId) {
+            return socket.emit('historical_data_response', { error: 'Unauthorized access: Invalid or missing token' });
+        }
+
+        const uppercaseSymbol = symbol.toUpperCase().trim();
+        const tabName = 'historical';
+
+        // 1. Check if already unlocked in DB
+        const UnlockedStockTab = (await import('./models/UnlockedStockTab.js')).default;
+        const existingUnlock = await UnlockedStockTab.findOne({
+            userId,
+            symbol: uppercaseSymbol,
+            tab: tabName
+        });
+
+        if (existingUnlock || isAdmin) {
+            console.log(`[Socket] Tab '${tabName}' already unlocked for stock ${uppercaseSymbol} (User: ${userId}). Bypassing deduction.`);
+            const historical = await stockService.getHistorical(symbol);
+            return socket.emit('historical_data_response', { historical });
+        }
+
+        // 2. Check user's credit balance
+        const User = (await import('./models/User.js')).default;
+        const user = await User.findById(userId);
+        if (!user) {
+            return socket.emit('historical_data_response', { error: 'User not found' });
+        }
+
+        const cost = 5; // Historical Chart cost is 5 credits
+        if (user.credits < cost) {
+            return socket.emit('historical_data_response', {
+                error: 'Insufficient credits',
+                code: 'OUT_OF_CREDITS',
+                required: cost,
+                available: user.credits
+            });
+        }
+
+        // 3. Fetch data first to make sure it succeeds before charging
         const historical = await stockService.getHistorical(symbol);
+
+        // 4. Deduct credits and log
+        user.credits -= cost;
+        await user.save();
+
+        const CreditLog = (await import('./models/CreditLog.js')).default;
+        await CreditLog.create({
+            userId: user._id,
+            action: 'ai_cashflow',
+            description: 'AISA CashFlow Explorer (Historical Tab Access)',
+            credits: -cost,
+            balanceAfter: user.credits
+        });
+
+        // 5. Save unlock record
+        await UnlockedStockTab.findOneAndUpdate(
+            { userId, symbol: uppercaseSymbol, tab: tabName },
+            { createdAt: new Date() },
+            { upsert: true, new: true }
+        );
+
+        console.log(`[Socket] Deducted ${cost} credits and marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} (User: ${userId})`);
         socket.emit('historical_data_response', { historical });
     } catch (error) {
-        socket.emit('historical_data_response', { error: 'Failed to fetch historical data' });
+        console.error(`[Socket] request_historical error:`, error.message);
+        socket.emit('historical_data_response', { error: error.message || 'Failed to fetch historical data' });
     }
   });
 

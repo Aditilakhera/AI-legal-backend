@@ -222,6 +222,25 @@ export const subscriptionService = {
             console.error('CreditLog save failed in deductCreditsFromMeta:', logErr.message);
         }
 
+        // 📝 Record Stock Tab Unlock
+        if (creditMeta.tabName && creditMeta.symbol) {
+            try {
+                const UnlockedStockTab = (await import('../models/UnlockedStockTab.js')).default;
+                await UnlockedStockTab.findOneAndUpdate(
+                    {
+                        userId: creditMeta.userId,
+                        symbol: creditMeta.symbol.toUpperCase().trim(),
+                        tab: creditMeta.tabName
+                    },
+                    { createdAt: new Date() },
+                    { upsert: true, new: true }
+                );
+                console.log(`[CreditSystem] Marked tab '${creditMeta.tabName}' as unlocked for stock ${creditMeta.symbol} (User: ${creditMeta.userId})`);
+            } catch (err) {
+                console.error(`[CreditSystem] Failed to save unlocked stock tab:`, err.message);
+            }
+        }
+
         return true;
     },
 

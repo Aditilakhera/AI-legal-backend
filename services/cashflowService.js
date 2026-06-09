@@ -36,18 +36,29 @@ export const searchStocks = async (keywords) => {
             });
         }
 
-        // Add Yahoo results
+        // Add Yahoo results (filtered to Indian stocks only)
         if (yfResults.status === 'fulfilled' && yfResults.value.quotes) {
             yfResults.value.quotes.forEach(q => {
-                if (!seenSymbols.has(q.symbol)) {
-                    quotes.push({
-                        symbol: q.symbol,
-                        name: q.shortname || q.longname || q.symbol,
-                        type: q.quoteType,
-                        region: q.region,
-                        currency: q.currency
-                    });
-                    seenSymbols.add(q.symbol);
+                const isIndianYahooStock = (q.region && q.region.toUpperCase() === 'IN') ||
+                                           (q.symbol && (q.symbol.endsWith('.NS') || q.symbol.endsWith('.BO'))) ||
+                                           (q.currency && q.currency.toUpperCase() === 'INR');
+                if (isIndianYahooStock) {
+                    let formattedSymbol = q.symbol;
+                    if (formattedSymbol.endsWith('.NS')) {
+                        formattedSymbol = formattedSymbol.replace('.NS', '.NSE');
+                    } else if (formattedSymbol.endsWith('.BO')) {
+                        formattedSymbol = formattedSymbol.replace('.BO', '.BSE');
+                    }
+                    if (!seenSymbols.has(formattedSymbol)) {
+                        quotes.push({
+                            symbol: formattedSymbol,
+                            name: q.shortname || q.longname || q.symbol,
+                            type: q.quoteType,
+                            region: 'IN',
+                            currency: 'INR'
+                        });
+                        seenSymbols.add(formattedSymbol);
+                    }
                 }
             });
         }

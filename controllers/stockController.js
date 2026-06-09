@@ -4,11 +4,16 @@ import logger from '../utils/logger.js';
 import { subscriptionService } from '../services/subscriptionService.js';
 import { retrieveContextFromRag } from '../services/vertex.service.js';
 import { AskVertexRaw } from '../services/vertex.service.js';
+import { isIndianStock } from '../utils/validation.js';
 
 export const getQuote = async (req, res) => {
     try {
         const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+        
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
         
         const quote = await stockService.getQuote(symbol);
         res.json({ quote });
@@ -22,6 +27,10 @@ export const getIntraday = async (req, res) => {
     try {
         const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
 
         const intraday = await stockService.getIntraday(symbol);
         
@@ -41,6 +50,10 @@ export const getNews = async (req, res) => {
         const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
 
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
+
         const news = await stockService.getNews(symbol);
 
         if (req.creditMeta) {
@@ -58,6 +71,10 @@ export const getHistorical = async (req, res) => {
     try {
         const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
 
         const historical = await stockService.getHistorical(symbol);
 
@@ -77,6 +94,10 @@ export const getAdvisory = async (req, res) => {
         const { symbol } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
 
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
+
         const advisory = await stockService.getAdvisory(symbol);
 
         if (req.creditMeta) {
@@ -94,6 +115,9 @@ export const getResearch = async (req, res) => {
     try {
         const { symbol, name } = req.query;
         if (symbol) {
+            if (!await isIndianStock(symbol)) {
+                return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+            }
             const snapshot = await stockService.getAiSnapshot(symbol, name);
             if (req.creditMeta) {
                 await subscriptionService.deductCreditsFromMeta(req.creditMeta);
@@ -120,6 +144,10 @@ export const getGrahamAnalysis = async (req, res) => {
     try {
         const { symbol, name, price } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
 
         const stockName = name || symbol.split('.')[0];
         
@@ -230,6 +258,10 @@ export const getKiyosakiAnalysis = async (req, res) => {
         const { symbol, name, price } = req.query;
         if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
 
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
+        }
+
         const stockName = name || symbol.split('.')[0];
         
         // Stock-specific + principle-focused query for better RAG retrieval
@@ -333,3 +365,30 @@ export const searchStocks = async (req, res) => {
         res.status(500).json({ error: 'Failed to search stocks' });
     }
 };
+
+/**
+ * GET /api/stock/unlocked-tabs?symbol=TCS.BSE
+ * Returns which tabs the current user has already unlocked for a given stock.
+ * Used by the frontend to show lock/unlock indicators and avoid re-fetching paid data.
+ */
+export const getUnlockedTabs = async (req, res) => {
+    try {
+        const { symbol } = req.query;
+        if (!symbol) return res.status(400).json({ error: 'Symbol is required' });
+
+        const userId = req.user.id || req.user._id;
+        const UnlockedStockTab = (await import('../models/UnlockedStockTab.js')).default;
+
+        const unlocks = await UnlockedStockTab.find({
+            userId,
+            symbol: symbol.toUpperCase().trim()
+        });
+
+        const unlockedTabs = unlocks.map(u => u.tab);
+        res.json({ symbol: symbol.toUpperCase().trim(), unlockedTabs });
+    } catch (error) {
+        logger.error(`[Stock Controller] UnlockedTabs Error: ${error.message}`);
+        res.status(500).json({ error: 'Failed to fetch unlock status' });
+    }
+};
+

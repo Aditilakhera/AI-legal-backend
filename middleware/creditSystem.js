@@ -84,6 +84,34 @@ export const creditMiddleware = async (req, res, next) => {
     const action = actionLabel.action;
     const symbol = req.query?.symbol || req.body?.symbol || '';
     const userId = req.user.id || req.user._id;
+    
+    // ── CHECK STOCK TAB UNLOCKS ──────────────────────────────────────────────
+    let tabName = null;
+    if (basePath.includes('/api/stock/')) {
+        const parts = basePath.split('/api/stock/');
+        if (parts.length > 1) {
+            tabName = parts[1];
+        }
+    }
+
+    if (tabName && symbol) {
+        try {
+            const UnlockedStockTab = (await import('../models/UnlockedStockTab.js')).default;
+            const uppercaseSymbol = symbol.toUpperCase().trim();
+            const existingUnlock = await UnlockedStockTab.findOne({
+                userId,
+                symbol: uppercaseSymbol,
+                tab: tabName
+            });
+            if (existingUnlock) {
+                console.log(`[CreditSystem] Tab '${tabName}' already unlocked for stock ${uppercaseSymbol} (User: ${userId}). Bypassing deduction.`);
+                return next();
+            }
+        } catch (err) {
+            console.error(`[CreditSystem] Failed to check existing unlock for stock tab:`, err.message);
+        }
+    }
+
     const dedupKey = `${userId}:${action}:${basePath}:${symbol}`;
 
     // Clean up cache periodically (very simple)
@@ -281,7 +309,9 @@ export const creditMiddleware = async (req, res, next) => {
             userId: user._id,
             cost: cost,
             action: actionLabel.action,
-            description: actionLabel.description
+            description: actionLabel.description,
+            symbol: symbol,
+            tabName: tabName
         };
 
         next();

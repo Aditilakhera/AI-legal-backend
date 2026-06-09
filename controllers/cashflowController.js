@@ -2,15 +2,20 @@ import * as cashflowService from '../services/cashflowService.js';
 import * as emailService from '../services/emailService.js';
 import User from '../models/User.js';
 import logger from '../utils/logger.js';
+import { isIndianStock } from '../utils/validation.js';
 
 /**
  * Search for stocks
  */
 export const searchStocks = async (req, res) => {
     try {
-        const { keywords } = req.query;
+        const { keywords, country } = req.query;
         if (!keywords) {
             return res.status(400).json({ error: 'Keywords are required' });
+        }
+
+        if (country && country.toUpperCase() !== 'IN') {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
         }
 
         const matches = await cashflowService.searchStocks(keywords);
@@ -26,6 +31,10 @@ export const getStockQuote = async (req, res) => {
         const { symbol } = req.query;
         if (!symbol) {
             return res.status(400).json({ error: 'Stock symbol is required' });
+        }
+
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
         }
 
         const quote = await cashflowService.getStockQuote(symbol);
@@ -60,6 +69,10 @@ export const analyzeStock = async (req, res) => {
 
         if (!symbol) {
             return res.status(400).json({ error: 'Stock symbol is required' });
+        }
+
+        if (!await isIndianStock(symbol)) {
+            return res.status(400).json({ error: 'Only Indian stocks are currently available.' });
         }
 
         const user = await User.findById(userId);
