@@ -322,22 +322,61 @@ export const verifyApplePayment = async (req, res) => {
 
         const userId = req.user.id || req.user._id;
 
-        // Verify Razorpay signature if present
-        if (razorpay_payment_id && razorpay_signature) {
-            const body = razorpay_order_id + "|" + razorpay_payment_id;
-            const expectedSignature = crypto
-                .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-                .update(body)
-                .digest('hex');
+        // --- ENVIRONMENT DETECTION ---
+        const isTestMode = 
+            !process.env.NODE_ENV || 
+            ['development', 'localhost', 'staging', 'sandbox', 'uat', 'test'].includes(process.env.NODE_ENV.toLowerCase()) ||
+            (process.env.APPLE_PAY_ENV || 'TEST').toUpperCase() !== 'PRODUCTION' ||
+            req.hostname === 'localhost' ||
+            req.hostname === '127.0.0.1' ||
+            (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_ID.startsWith('rzp_test'));
 
-            if (expectedSignature !== razorpay_signature) {
-                console.warn('[ApplePay] Signature mismatch!');
-                return res.status(400).json({ success: false, message: "Payment verification failed — invalid signature." });
-            }
+        if (isTestMode) {
+            console.log(`[ApplePay] Test environment detected (Hostname: ${req.hostname}, NodeEnv: ${process.env.NODE_ENV}). Bypassing plan/credit changes for user ${userId}.`);
+            return res.status(200).json({
+                success: true,
+                isTest: true,
+                message: "Test Payment Successful – No credits or subscription have been applied because the system is running in test mode."
+            });
         }
 
-        console.log(`[ApplePay] Payment verified: ${razorpay_payment_id} for user ${userId}`);
+        // --- STRICT PRODUCTION VERIFICATION ---
+        if (!razorpay_payment_id || !razorpay_signature || !razorpay_order_id) {
+            console.warn('[ApplePay] Missing signature parameters in production verification request.');
+            return res.status(400).json({ success: false, message: "Payment verification failed — missing signature parameters." });
+        }
 
+        // 1. Verify Razorpay signature locally
+        const body = razorpay_order_id + "|" + razorpay_payment_id;
+        const expectedSignature = crypto
+            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .update(body)
+            .digest('hex');
+
+        if (expectedSignature !== razorpay_signature) {
+            console.warn('[ApplePay] Signature mismatch in production! Possible fraud attempt.');
+            return res.status(400).json({ success: false, message: "Payment verification failed — invalid signature." });
+        }
+
+        // 2. Fetch status directly from the payment provider (Razorpay)
+        try {
+            const paymentDetails = await razorpay.payments.fetch(razorpay_payment_id);
+            if (paymentDetails.status !== 'captured' && paymentDetails.status !== 'authorized') {
+                console.warn(`[ApplePay] Razorpay status is '${paymentDetails.status}', expected 'captured' or 'authorized'.`);
+                return res.status(400).json({ success: false, message: `Payment is not successful (status: ${paymentDetails.status}).` });
+            }
+            if (paymentDetails.order_id !== razorpay_order_id) {
+                console.warn(`[ApplePay] Order ID mismatch. Expected '${razorpay_order_id}', got '${paymentDetails.order_id}' from Razorpay.`);
+                return res.status(400).json({ success: false, message: "Payment verification failed — order ID mismatch." });
+            }
+        } catch (fetchError) {
+            console.error('[ApplePay] Failed to fetch payment from Razorpay:', fetchError);
+            return res.status(500).json({ success: false, message: "Failed to verify payment status with payment gateway." });
+        }
+
+        console.log(`[ApplePay] Production payment verified: ${razorpay_payment_id} for user ${userId}`);
+
+        // --- ACTIVATE PLAN OR ADD CREDITS (Only in verified Production) ---
         if (planId) {
             return await _activatePlan({ userId, planId, billingCycle, paymentId: razorpay_payment_id, res });
         } else if (packageId) {
