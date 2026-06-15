@@ -67,6 +67,32 @@ route.get("/", verifyToken, async (req, res) => {
     }
 });
 
+// GET /api/user/:id - Retrieve profile details by ID
+route.get("/:id", verifyToken, async (req, res) => {
+    try {
+        const userId = req.params.id;
+        
+        // Return dummy data in case MongoDB is not connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(200).json({
+                _id: userId,
+                name: "AISA Member",
+                email: "member@aisa.in",
+                avatar: ""
+            });
+        }
+
+        const user = await userModel.findById(userId).select("name email avatar role");
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+        res.status(200).json(user);
+    } catch (error) {
+        console.error("[GET USER BY ID ERROR]", error);
+        res.status(500).json({ error: "Failed to fetch user profile" });
+    }
+});
+
 // PUT /api/user - Update general user fields (name, avatar, etc.)
 route.put("/", verifyToken, async (req, res) => {
     try {

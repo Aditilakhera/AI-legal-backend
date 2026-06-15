@@ -51,6 +51,8 @@ import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
 import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
 import friendChatRoutes from './routes/friendChatRoutes.js';
+import chatsRoutes from './routes/chats.js';
+import messagesRoutes from './routes/messages.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 
@@ -201,6 +203,10 @@ app.use('/api/social-agent-review', socialReviewRoutes);
 app.use('/api/media', mediaProxyRoutes);
 app.use('/api/brand', brandRoutes);
 app.use('/api/friends', friendChatRoutes);
+app.use('/api/chats', chatsRoutes);
+app.use('/api/messages', messagesRoutes);
+app.use('/api/users', userRoute); // Aliased users routes to same user controller
+
 
 
 // Admin Panel (Admin only)

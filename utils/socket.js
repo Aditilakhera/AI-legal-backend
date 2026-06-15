@@ -41,6 +41,32 @@ export const initSocket = (server) => {
             }
         });
 
+        socket.on('chat:join', (chatId) => {
+            if (chatId) {
+                socket.join(chatId.toString());
+                console.log(`[Socket] User joined chat room: ${chatId}`);
+            }
+        });
+
+        socket.on('chat:leave', (chatId) => {
+            if (chatId) {
+                socket.leave(chatId.toString());
+                console.log(`[Socket] User left chat room: ${chatId}`);
+            }
+        });
+
+        socket.on('typing:start', ({ chatId, userId }) => {
+            if (chatId && userId) {
+                socket.to(chatId.toString()).emit('typing:start', { chatId, userId });
+            }
+        });
+
+        socket.on('typing:end', ({ chatId, userId }) => {
+            if (chatId && userId) {
+                socket.to(chatId.toString()).emit('typing:end', { chatId, userId });
+            }
+        });
+
         socket.on('disconnect', () => {
             console.log(`[Socket] Client disconnected: ${socket.id}`);
         });
