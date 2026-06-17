@@ -1178,59 +1178,7 @@ ${GLOBAL_RULES}
 - Your goal is to help the user manage their legal journey, understand their case details, and provide strategic advice.
 - If a "CASE CONTEXT" (uploaded document) is provided, treat it as the absolute source of truth for the facts of the case.
 - Help with drafting, evidence analysis, and next steps specifically related to this case.
-- Maintain a highly professional, supportive, and formal legal tone.
 - Language: Strictly follow the user's input language (English/Hindi/Hinglish).
-
-🚨 🔥 MANDATORY SUGGESTION ENGINE (MY CASE ONLY)
-After EVERY response, you MUST show feature suggestions related to that specific case in a clean, structured, and clickable format. This MUST appear at the very bottom of your response, after all other sections (even after 'JUDICIAL PERSPECTIVE').
-
-🔷 Display Format (MANDATORY EXACT MATCH):
-
-💡 Suggested Next Actions (for this case):
-
-👉 **Draft Maker**
-Create a legal notice or reply for this case
-[🔗 Action: Open Draft Maker](action:legal_draft_maker)
-
-👉 **Case Predictor**
-Analyze possible case outcome and success probability
-[🔗 Action: Open Case Predictor](action:legal_case_predictor)
-
-👉 **Argument Builder**
-Prepare strong legal arguments for court
-[🔗 Action: Open Argument Builder](action:legal_argument_builder)
-
-👉 **Evidence Analyst**
-Evaluate documents and strengthen evidence
-[🔗 Action: Open Evidence Analyst](action:legal_evidence_checker)
-
-🔷 Tool Key Mapping (Use these exact keys in the action link):
-- Draft Maker -> action:legal_draft_maker
-- Case Predictor -> action:legal_case_predictor
-- Argument Builder -> action:legal_argument_builder
-- Evidence Analyst -> action:legal_evidence_checker
-- Contract Analyzer -> action:legal_contract_analyzer
-- Strategy Engine -> action:legal_strategy_engine
-
-🔷 Dynamic Suggestion Logic:
-- Divorce / Alimony case → Draft Maker, Case Predictor, Argument Builder
-- Contract case → Contract Analyzer, Draft Maker
-- Criminal case → Evidence Analyst, Strategy Engine
-👉 Always match suggestions with case context dynamically.
-
-🔷 Locked Feature Logic (If you know it's a premium feature or if the user implies it):
-Show it like this (adding (Premium) to title and changing link text):
-
-👉 **Case Predictor (Premium)**
-Analyze possible case outcome and success probability
-[🔒 Action: Unlock & Open](action:legal_case_predictor)
-
-🔷 STRICT RULE:
-- NEVER skip suggestions.
-- Suggestions MUST BE in this multi-line structured format, not in one line.
-- ALWAYS include the clickable action link in the format \`[🔗 Action: Open Tool Name](action:tool_key)\`.
-- ALWAYS show them at the very end of every single response in My Case.
-- Minimum 2 suggestions required.
 `
 };
 ;
@@ -1257,10 +1205,6 @@ You are an advanced AI Legal Assistant.
 - Workflow: ${FEATURE_WORKFLOWS[toolKey] || "Standard AI Legal Processing"}
 - Instruction:
 ${basePrompt}
-
-━━━━━━━━━━━━━━━━━━━━━━━
-START RESPONSE WITH:
-**[ACTIVE TOOL: ${toolName}]**
 `;
     }
 
@@ -1323,10 +1267,6 @@ ${basePrompt}
 - Bullet points only (-).
 - DO NOT use any symbols like →, [], {}.
 - DO NOT include legal disclaimers in the main response.
-- Response MUST START ONLY with the tool tag below.
-
-START RESPONSE WITH:
-**[ACTIVE TOOL: ${toolName}]**
 `;
 
 };

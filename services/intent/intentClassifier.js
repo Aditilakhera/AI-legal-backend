@@ -40,27 +40,18 @@ ${toolList}
 4. confidence must be a float from 0.0 to 1.0.
 5. If intent is ambiguous OR confidence < 0.5, set intent: "uncertain" and provide a clarification_question.
 6. You MUST handle Hinglish, Hindi, Arabic, and all major world languages — detect and note the language.
-7. For image+video combos ("edit this image" with attachment), prefer image_edit or image_to_video over text_to_image.
-8. "Make a video with music" = text_to_video + text_to_audio (two separate tools, listed in order).
-9. ONLY use legal_free_chat if the user EXPLICITLY asks for legal advice, mentions a specific law/court, or describes a very clear legal dispute. Do NOT use legal_free_chat for generic questions (e.g. "what is a computer", "how to cook rice", IT/tech support), simple definitions, or ambiguous acronyms (like CS, IT, etc).
-10. **LEGAL SMART SUGGESTIONS**: If the intent is legal (starts with legal_), you MUST provide 2-3 extra relevant tool IDs in the "suggestions" array that could help the user further.
+7. ONLY use legal_free_chat if the user EXPLICITLY asks for legal advice, mentions a specific law/court, or describes a very clear legal dispute. Do NOT use legal_free_chat for generic questions (e.g. "what is a computer", "how to cook rice", IT/tech support), simple definitions, or ambiguous acronyms (like CS, IT, etc).
+8. **LEGAL SMART SUGGESTIONS**: If the intent is legal (starts with legal_), you MUST provide 2-3 extra relevant tool IDs in the "suggestions" array that could help the user further.
     - Example: User wants a "Legal Notice for non-payment" -> intent: legal_notice_generator, suggestions: ["legal_evidence_checker", "legal_case_predictor", "legal_strategy_engine"].
     - Example: User asks "Is this contract safe?" -> intent: legal_contract_analyzer, suggestions: ["legal_clause_scanner", "legal_clause_rewriter"].
-12. **STOCK ANALYSIS**: If the user asks about a stock (e.g. "Reliance analysis", "TCS buy or sell", "What about Google stock?"), use stock_researcher. Always try to extract the likely stock symbol or name into metadata.stock_symbol if possible.
-13. estimated_credits = sum of creditCost for all tools in the pipeline.
+9. estimated_credits = sum of creditCost for all tools in the pipeline.
 
 ## Tool Credit Costs (for estimated_credits calculation)
 - normal_chat: 0
 - legal_free_chat: 0
-- text_to_image: 60
-- image_edit: 60
-- text_to_video: 300 (base, 5 sec fast model 1080p)
-- image_to_video: 50
 - text_to_audio: 25
 - web_search: 15
 - deep_search: 30
-- stock_researcher: 50
-- code_writer: 10
 - file_analysis: 5
 - file_conversion: 15
 - knowledge_base: 10

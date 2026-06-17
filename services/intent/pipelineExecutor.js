@@ -19,21 +19,13 @@ const loadHandlers = async () => {
 
     try {
         const chatRoutes = await import('../../routes/chatRoutes.js');
-        const videoController = await import('../../controllers/videoController.js');
         const voiceController = await import('../../controllers/voiceController.js');
-        const imageController = await import('../../controllers/image.controller.js');
-        const magicEditController = await import('../../controllers/magicEdit.controller.js');
 
         // Map tool names → handler functions
         handlers['normal_chat'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'NORMAL_CHAT');
-        handlers['text_to_image'] = (ctx) => delegateToEndpoint('/api/image', ctx, 'IMAGE_GEN');
-        handlers['image_edit'] = (ctx) => delegateToEndpoint('/api/edit-image', ctx, 'IMAGE_EDIT');
-        handlers['text_to_video'] = (ctx) => delegateToEndpoint('/api/video', ctx, 'VIDEO_GEN');
-        handlers['image_to_video'] = (ctx) => delegateToEndpoint('/api/video', ctx, 'IMAGE_TO_VIDEO');
         handlers['text_to_audio'] = (ctx) => delegateToEndpoint('/api/voice/synthesize', ctx, 'AUDIO_TALK');
         handlers['web_search'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'web_search');
         handlers['deep_search'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'DEEP_SEARCH');
-        handlers['code_writer'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'CODING_HELP');
         handlers['file_analysis'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'FILE_ANALYSIS');
         handlers['file_conversion'] = (ctx) => delegateToEndpoint('/api/chat', ctx, 'FILE_CONVERSION');
         handlers['knowledge_base'] = (ctx) => delegateToEndpoint('/api/aibase/knowledge', ctx, 'RAG');

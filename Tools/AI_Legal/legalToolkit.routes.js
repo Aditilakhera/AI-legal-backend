@@ -171,13 +171,6 @@ ${message}
 
         // 🔥 STEP 4: FINAL RESPONSE CLEAN + TOOL TAG
         let finalReply = responseData.reply.trim();
-        
-        // 🏷️ ENSURE TOOL TAG EXISTS (UI FIX) - Skip for Draft Maker for clean PDF output
-        // 🏷️ ENSURE TOOL TAG EXISTS (UI FIX) - Skip for Drafting Tools for clean output
-        if (!isDraftingTool && !finalReply.startsWith('**[ACTIVE TOOL:')) {
-            const toolDisplayName = tool.name || toolName;
-            finalReply = `**[ACTIVE TOOL: ${toolDisplayName}]**\n\n` + finalReply;
-        }
 
         // 💰 Deduct credits on successful execution
         if (req.creditMeta && req.creditMeta.cost > 0) {

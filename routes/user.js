@@ -496,7 +496,6 @@ route.delete("/:id", verifyToken, async (req, res) => {
         await Promise.allSettled([
             safeDelete('ChatSession', { userId: targetUserId }),
 
-            safeDelete('PersonalTask', { user: targetUserId }),
             safeDelete('Reminder', { userId: targetUserId }),
             safeDelete('Feedback', { userId: targetUserId }),
             safeDelete('Report', { userId: targetUserId }),

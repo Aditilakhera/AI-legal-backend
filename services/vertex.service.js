@@ -568,7 +568,14 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         if (onChunk) {
             let fullText = '';
             for await (const chunk of result.stream) {
-                const text = chunk.text();
+                let text = '';
+                if (typeof chunk.text === 'function') {
+                    text = chunk.text();
+                } else if (chunk.candidates?.[0]?.content?.parts?.[0]?.text) {
+                    text = chunk.candidates[0].content.parts[0].text;
+                } else if (chunk.text && typeof chunk.text === 'string') {
+                    text = chunk.text;
+                }
                 fullText += text;
                 onChunk(text);
             }

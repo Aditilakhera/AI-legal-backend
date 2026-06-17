@@ -3,7 +3,6 @@ import { verifyToken } from '../middleware/authorization.js';
 import ChatSession from '../models/ChatSession.js';
 import UserMemory from '../models/UserMemory.js';
 import Reminder from '../models/Reminder.js';
-import PersonalTask from '../models/PersonalTask.js';
 import Feedback from '../models/Feedback.js';
 import Notification from '../models/Notification.js';
 const router = express.Router();
@@ -11,7 +10,7 @@ const router = express.Router();
 /**
  * DELETE /api/user/data
  * GDPR / CCPA compliant data deletion endpoint
- * Deletes all user-generated data (chats, memory, reminders, tasks, feedback)
+ * Deletes all user-generated data (chats, memory, reminders, feedback)
  * Payment/Transaction records are retained for legal/financial compliance
  */
 router.delete('/data', verifyToken, async (req, res) => {
@@ -30,10 +29,6 @@ router.delete('/data', verifyToken, async (req, res) => {
         // 3. Delete Reminders
         const reminderResult = await Reminder.deleteMany({ userId });
         results.reminders = reminderResult.deletedCount;
-
-        // 4. Delete Personal Tasks
-        const taskResult = await PersonalTask.deleteMany({ userId });
-        results.tasks = taskResult.deletedCount;
 
         // 5. Delete Feedback
         const feedbackResult = await Feedback.deleteMany({ userId });
@@ -69,11 +64,10 @@ router.get('/data/export', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        const [chatSessions, memory, reminders, tasks] = await Promise.all([
+        const [chatSessions, memory, reminders] = await Promise.all([
             ChatSession.find({ userId }).select('-__v').lean(),
             UserMemory.findOne({ userId }).select('-__v').lean(),
-            Reminder.find({ userId }).select('-__v').lean(),
-            PersonalTask.find({ userId }).select('-__v').lean()
+            Reminder.find({ userId }).select('-__v').lean()
         ]);
 
         res.status(200).json({
@@ -82,8 +76,7 @@ router.get('/data/export', verifyToken, async (req, res) => {
             data: {
                 chatSessions: chatSessions || [],
                 memory: memory || null,
-                reminders: reminders || [],
-                tasks: tasks || []
+                reminders: reminders || []
             }
         });
 

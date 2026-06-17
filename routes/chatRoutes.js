@@ -18,11 +18,6 @@ import { requiresWebSearch, extractSearchQuery, processSearchResults, getWebSear
 import { performWebSearch } from "../services/searchService.js";
 import { convertFile } from "../utils/fileConversion.js";
 import officeParser from 'officeparser';
-import { generateVideoFromPrompt } from "../controllers/videoController.js";
-import { generateImageFromPrompt } from "../controllers/image.controller.js";
-import { generateFollowUpPrompts } from "../utils/imagePromptController.js";
-import { executeImagePipeline, executeVideoPipeline } from "../services/generationPipeline.js";
-import { selectVideoModel } from "../services/modelSelector.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess } from '../services/subscriptionService.js';
 import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
@@ -316,69 +311,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         } catch (e) { /* ignore parse error */ }
       }
 
-      if (data.action === 'generate_image' && data.prompt) {
-        try {
-            const pipelineResult = await executeImagePipeline(
-                data.prompt,
-                async (finalPrompt, activeModel) => {
-                    return await generateImageFromPrompt(finalPrompt, null, aspectRatio || '1:1', activeModel);
-                },
-                { modelId: reqModelId || 'gemini-2.5-flash', enhance: true }
-            );
-            
-            if (pipelineResult.url) {
-                finalResponse.imageUrl = pipelineResult.url;  
-                finalResponse.reply = reply;
-
-                // 🧠 Generate Smart Prompts for the Image
-                const followUpPrompts = await generateFollowUpPrompts(data.prompt, pipelineResult.url).catch(() => []);
-                finalResponse.suggestions = followUpPrompts;
-            }
-        } catch (pipeErr) {
-            console.error("[MediaGen] generate_image pipeline error:", pipeErr);
-        }
-      } else if (data.action === 'modify_image' && data.prompt) {
-        let sourceImage = (Array.isArray(image) && image.length > 0) ? image[0] : (image || null);
-        if (sourceImage) {
-          try {
-            const pipelineResult = await executeImagePipeline(
-                data.prompt,
-                async (finalPrompt, activeModel) => {
-                    return await generateImageFromPrompt(finalPrompt, sourceImage, aspectRatio || '1:1', activeModel);
-                },
-                { modelId: reqModelId || 'gemini-2.5-flash', enhance: true }
-            );
-
-            if (pipelineResult.url) {
-              finalResponse.imageUrl = pipelineResult.url;
-              finalResponse.reply = reply;
-
-              // 🧠 Generate Smart Prompts for the Edited Image
-              const followUpPrompts = await generateFollowUpPrompts(data.prompt, pipelineResult.url).catch(() => []);
-              finalResponse.suggestions = followUpPrompts;
-            }
-          } catch (pipeErr) {
-              console.error("[MediaGen] modify_image pipeline error:", pipeErr);
-          }
-        }
-      } else if (data.action === 'generate_video' && data.prompt) {
-        try {
-          const resolvedVideoModel = selectVideoModel(reqModelId, 'fast', req.user?.isPremium || false);
-          const pipelineResult = await executeVideoPipeline(
-            data.prompt,
-            async (refinedPrompt, activeModel) => {
-              return await generateVideoFromPrompt(refinedPrompt, 5, 'fast', '16:9', activeModel, '1080p');
-            },
-            { modelId: resolvedVideoModel, enhance: true }
-          );
-          if (pipelineResult?.url) {
-            finalResponse.videoUrl = pipelineResult.url;
-            finalResponse.reply = reply;
-          }
-        } catch (videoErr) {
-          console.error('[MediaGen] generate_video pipeline error:', videoErr);
-        }
-      } else if (data.action === 'file_conversion' && (image || document)) {
+      if (data.action === 'file_conversion' && (image || document)) {
         try {
           const docToConvert = (Array.isArray(document) ? document[0] : document) || (Array.isArray(image) ? image[0] : image);
           

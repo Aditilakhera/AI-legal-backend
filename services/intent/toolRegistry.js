@@ -21,80 +21,6 @@ export const TOOL_REGISTRY = {
         emoji: '💬'
     },
 
-    text_to_image: {
-        name: 'AISA Image Generation',
-        description: 'Generate high-quality images from text prompts using Imagen',
-        inputs: ['text'],
-        outputs: ['image/png'],
-        handler: 'imageRoutes',
-        endpoint: '/api/image',
-        creditCost: 60,
-        isPremium: true,
-        requiresAssets: false,
-        dependencies: [],
-        isInternal: false,
-        emoji: '🖼️',
-        models: ['imagen-3.0-generate-001', 'imagen-4.0-ultra-generate-001'],
-        configOptions: {
-            aspectRatio: ['1:1', '16:9', '9:16', '4:3'],
-            modelId: 'imagen-3.0-generate-001'
-        }
-    },
-
-    image_edit: {
-        name: 'AISA Image Editor',
-        description: 'Edit or modify an existing uploaded image',
-        inputs: ['text', 'image'],
-        outputs: ['image/png'],
-        handler: 'magicEditRoutes',
-        endpoint: '/api/edit-image',
-        creditCost: 60,
-        isPremium: true,
-        requiresAssets: true,
-        requiredAssetTypes: ['image'],
-        dependencies: [],
-        isInternal: false,
-        emoji: '🎨'
-    },
-
-    text_to_video: {
-        name: 'AISA Video Generation',
-        description: 'Generate video clips from text descriptions using Veo models',
-        inputs: ['text'],
-        outputs: ['video/mp4'],
-        handler: 'videoRoutes',
-        endpoint: '/api/video',
-        creditCost: 1500,
-        isPremium: true,
-        requiresAssets: false,
-        dependencies: [],
-        isInternal: false,
-        emoji: '🎬',
-        models: ['veo-3.1-fast-generate-001', 'veo-3.1-generate-001'],
-        fallbackModel: 'veo-3.1-fast-generate-001',
-        configOptions: {
-            duration: { min: 5, max: 60, default: 5 },
-            resolution: ['1080p', '4k'],
-            aspectRatio: ['16:9', '9:16', '1:1'],
-            modelId: 'veo-3.1-fast-generate-001'
-        }
-    },
-
-    image_to_video: {
-        name: 'AISA Image-to-Video',
-        description: 'Animate a still image into a short video clip',
-        inputs: ['text', 'image'],
-        outputs: ['video/mp4'],
-        handler: 'videoRoutes',
-        endpoint: '/api/video',
-        creditCost: 50,
-        isPremium: true,
-        requiresAssets: true,
-        requiredAssetTypes: ['image'],
-        dependencies: [],
-        isInternal: false,
-        emoji: '🎞️'
-    },
 
     text_to_audio: {
         name: 'AISA Audio Synthesis',
@@ -149,21 +75,6 @@ export const TOOL_REGISTRY = {
         modeKey: 'DEEP_SEARCH'
     },
 
-    code_writer: {
-        name: 'AISA Code Writer',
-        description: 'AI-powered code generation, debugging, and explanation',
-        inputs: ['text', 'document'],
-        outputs: ['text', 'code'],
-        handler: 'chatRoutes',
-        endpoint: '/api/chat',
-        creditCost: 10,
-        isPremium: false,
-        requiresAssets: false,
-        dependencies: [],
-        isInternal: false,
-        emoji: '💻',
-        modeKey: 'CODING_HELP'
-    },
 
     file_analysis: {
         name: 'AISA Document Intelligence',
@@ -488,21 +399,6 @@ export const TOOL_REGISTRY = {
         isInternal: false,
         emoji: '🏛️',
         modeKey: 'LEGAL_TOOLKIT'
-    },
-    stock_researcher: {
-        name: 'AI Stock Researcher',
-        description: 'Professional stock analysis, risk evaluation, and recommendations (AI Snapshot)',
-        inputs: ['text'],
-        outputs: ['text', 'snapshot'],
-        handler: 'chatRoutes',
-        endpoint: '/api/chat',
-        creditCost: 50,
-        isPremium: true,
-        requiresAssets: false,
-        dependencies: [],
-        isInternal: false,
-        emoji: '📈',
-        modeKey: 'STOCK_RESEARCH'
     },
     gmail_assistant: {
         name: 'Gmail Assistant',

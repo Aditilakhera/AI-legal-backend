@@ -12,7 +12,7 @@ import userRoute from './routes/user.js'
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initSocket } from './utils/socket.js';
-import * as stockService from './services/stockService.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,12 +24,9 @@ import knowledgeRoute from './routes/knowledge.routes.js';
 
 import notificationRoutes from "./routes/notificationRoutes.js";
 import supportRoutes from './routes/supportRoutes.js';
-import personalTaskRoutes from './routes/personalTaskRoutes.js';
 import feedbackRoutes from './routes/feedbackRoutes.js';
 import voiceRoutes from './routes/voiceRoutes.js';
 import reminderRoutes from './routes/reminderRoutes.js';
-import imageRoutes from './routes/image.routes.js';
-import videoRoutes from './routes/videoRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import projectRoutes from './routes/projectRoutes.js';
 import memoryRoutes from './routes/memoryRoutes.js';
@@ -37,16 +34,9 @@ import pricingRoutes from './routes/pricingRoutes.js';
 import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
-import magicEditRoutes from './routes/magicEdit.routes.js';
 import legalRoutes from './Tools/AI_Legal/routes/legalPages.routes.js';
 import intentRoutes from './routes/intentRoutes.js';
-import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
-import socialAgentRoutes from './routes/socialMediaGenerator.routes.js';
-import socialReviewRoutes from './routes/socialAgentReview.routes.js';
 import mediaProxyRoutes from './routes/mediaProxy.routes.js';
-import brandRoutes from './routes/brandFetch.route.js';
-import cashflowRoutes from './routes/cashflowRoutes.js';
-import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
 import connectorsRoutes from './routes/connectors.routes.js';
 import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
@@ -173,21 +163,13 @@ app.use('/api/precedents', precedentsRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/voice', voiceRoutes);
-app.use('/api/image', imageRoutes);
-app.use('/api/edit-image', magicEditRoutes);
-app.use('/api/video', videoRoutes);
-
 // Intent Routing & Orchestration System
 app.use('/api/intent', intentRoutes);
-app.use('/api/cashflow', cashflowRoutes);
-app.use('/api/stock', stockRoutes);
-
 // Utility & Support
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/feedback', feedbackRoutes);
 app.use('/api/support', supportRoutes);
-app.use('/api/personal-assistant', personalTaskRoutes);
 app.use('/api/memory', memoryRoutes);
 app.use('/api/connectors', connectorsRoutes);
 
@@ -197,11 +179,7 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/payment', paymentRoutes);
 
 app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/ai-ad', aiAdAgentRoutes);
-app.use('/api/social-agent', socialAgentRoutes);
-app.use('/api/social-agent-review', socialReviewRoutes);
 app.use('/api/media', mediaProxyRoutes);
-app.use('/api/brand', brandRoutes);
 app.use('/api/friends', friendChatRoutes);
 app.use('/api/chats', chatsRoutes);
 app.use('/api/messages', messagesRoutes);
@@ -262,136 +240,10 @@ const server = app.listen(PORT, () => {
 // --- WebSockets ---
 const io = initSocket(server);
 
-const activeRealtimeSubscriptions = new Map(); // socket.id -> { symbol, intervalId }
-
 io.on('connection', (socket) => {
-  // Existing Market Data Logic (Kept for compatibility)
-  socket.on('subscribe_realtime', async ({ symbol }) => {
-    console.log(`[Socket] ${socket.id} subscribed to realtime: ${symbol}`);
-    
-    if (activeRealtimeSubscriptions.has(socket.id)) {
-        clearInterval(activeRealtimeSubscriptions.get(socket.id).intervalId);
-    }
-
-    try {
-        const initialData = await stockService.getQuote(symbol);
-        socket.emit('realtime_update', { quote: initialData });
-    } catch (err) {}
-
-    const intervalId = setInterval(async () => {
-        try {
-            const data = await stockService.getQuote(symbol);
-            if (data) {
-                socket.emit('realtime_update', { quote: data });
-            }
-        } catch (error) {
-            console.error(`[Socket] Live fetch error for ${symbol}:`, error.message);
-        }
-    }, 2000);
-
-    activeRealtimeSubscriptions.set(socket.id, { symbol, intervalId });
-  });
-
-  socket.on('request_historical', async ({ symbol, token }) => {
-    console.log(`[Socket] ${socket.id} requested historical data for: ${symbol}`);
-    try {
-        if (!symbol) {
-            return socket.emit('historical_data_response', { error: 'Symbol is required' });
-        }
-
-        let userId = null;
-        let isAdmin = false;
-
-        if (token) {
-            try {
-                const jwt = (await import('jsonwebtoken')).default;
-                const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                userId = decoded.id;
-
-                const User = (await import('./models/User.js')).default;
-                const userRec = await User.findById(userId);
-                if (userRec && (userRec.role === 'admin' || (userRec.email && userRec.email.toLowerCase() === 'admin@uwo24.com'))) {
-                    isAdmin = true;
-                }
-            } catch (err) {
-                console.error(`[Socket request_historical] Token verification failed:`, err.message);
-            }
-        }
-
-        if (!userId) {
-            return socket.emit('historical_data_response', { error: 'Unauthorized access: Invalid or missing token' });
-        }
-
-        const uppercaseSymbol = symbol.toUpperCase().trim();
-        const tabName = 'historical';
-
-        // 1. Check if already unlocked in DB
-        const UnlockedStockTab = (await import('./models/UnlockedStockTab.js')).default;
-        const existingUnlock = await UnlockedStockTab.findOne({
-            userId,
-            symbol: uppercaseSymbol,
-            tab: tabName
-        });
-
-        if (existingUnlock || isAdmin) {
-            console.log(`[Socket] Tab '${tabName}' already unlocked for stock ${uppercaseSymbol} (User: ${userId}). Bypassing deduction.`);
-            const historical = await stockService.getHistorical(symbol);
-            return socket.emit('historical_data_response', { historical });
-        }
-
-        // 2. Check user's credit balance
-        const User = (await import('./models/User.js')).default;
-        const user = await User.findById(userId);
-        if (!user) {
-            return socket.emit('historical_data_response', { error: 'User not found' });
-        }
-
-        const cost = 5; // Historical Chart cost is 5 credits
-        if (user.credits < cost) {
-            return socket.emit('historical_data_response', {
-                error: 'Insufficient credits',
-                code: 'OUT_OF_CREDITS',
-                required: cost,
-                available: user.credits
-            });
-        }
-
-        // 3. Fetch data first to make sure it succeeds before charging
-        const historical = await stockService.getHistorical(symbol);
-
-        // 4. Deduct credits and log
-        user.credits -= cost;
-        await user.save();
-
-        const CreditLog = (await import('./models/CreditLog.js')).default;
-        await CreditLog.create({
-            userId: user._id,
-            action: 'ai_cashflow',
-            description: 'AISA CashFlow Explorer (Historical Tab Access)',
-            credits: -cost,
-            balanceAfter: user.credits
-        });
-
-        // 5. Save unlock record
-        await UnlockedStockTab.findOneAndUpdate(
-            { userId, symbol: uppercaseSymbol, tab: tabName },
-            { createdAt: new Date() },
-            { upsert: true, new: true }
-        );
-
-        console.log(`[Socket] Deducted ${cost} credits and marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} (User: ${userId})`);
-        socket.emit('historical_data_response', { historical });
-    } catch (error) {
-        console.error(`[Socket] request_historical error:`, error.message);
-        socket.emit('historical_data_response', { error: error.message || 'Failed to fetch historical data' });
-    }
-  });
-
+  console.log(`[Socket] Client connected: ${socket.id}`);
   socket.on('disconnect', () => {
-    if (activeRealtimeSubscriptions.has(socket.id)) {
-        clearInterval(activeRealtimeSubscriptions.get(socket.id).intervalId);
-        activeRealtimeSubscriptions.delete(socket.id);
-    }
+    console.log(`[Socket] Client disconnected: ${socket.id}`);
   });
 });
 
