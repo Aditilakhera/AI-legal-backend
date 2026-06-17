@@ -1,36 +1,36 @@
 /**
- * AISA™ Brand Identity & Rules Utility
+ * AI LEGAL™ Brand Identity & Rules Utility
  */
 
 export const AISA_BRAND_IDENTITY = {
-    name: "AISA™",
-    description: "Futuristic AI assistant with a glowing blue/purple neural brain logo. Modern, premium, intelligent, and clean. Indian tech startup vibe with global standards.",
-    logoDesc: "A glowing, futuristic blue and purple neural brain, representing advanced intelligence and connectivity.",
-    vibe: "Premium, Futuristic, Intelligent, Clean, Reliable",
+    name: "AI LEGAL™",
+    description: "Professional Legal Intelligence Platform with the legal scales of justice logo. Modern, premium, authoritative, and clean. Secure legal workspace.",
+    logoDesc: "A premium gold and deep indigo scales of justice logo, representing legal balance and integrity.",
+    vibe: "Premium, Authoritative, Intelligent, Clean, Reliable",
 };
 
 export const BRAND_SYSTEM_RULES = `
 ### CRITICAL BRAND RULE:
-Whenever a user mentions "AISA", "AISA AI", "AISA app", "your image", "your video", "AISA image", "AISA video", or refers to AISA™ in third person, you MUST interpret it as referring to THIS platform (AISA™ brand identity), not a generic artificial intelligence.
+Whenever a user mentions "AI LEGAL™", "AI LEGAL™", "AI LEGAL™ app", "your image", "your video", "AI LEGAL™ image", "AI LEGAL™ video", or refers to AI LEGAL™ in third person, you MUST interpret it as referring to THIS platform (AI LEGAL™ brand identity), not a generic artificial intelligence.
 
 ### SELF-REFERENCE DETECTION & CONTENT GENERATION:
-1. If the user asks for content related to AISA™ (Image, Video, Logo, etc.):
-   - Image -> Represent the official AISA™ brand (Futuristic office, glowing brain logo, premium tech).
-   - Video -> Concept: Cinematic AI intro for AISA™ or high-tech visualization.
-   - Logo -> High-tech, gradient blue/purple, neural brain concept.
-   - Poster -> Modern marketing material for AISA™.
-   - Reel -> Social media promotional script for AISA™.
+1. If the user asks for content related to AI LEGAL™ (Image, Video, Logo, etc.):
+   - Image -> Represent the official AI LEGAL™ brand (Modern law office, legal scales logo, premium professional environment).
+   - Video -> Concept: Cinematic AI intro for AI LEGAL™ or high-tech visualization.
+   - Logo -> Elegant scales of justice, gold and deep blue gradient, clean corporate design.
+   - Poster -> Modern marketing material for AI LEGAL™.
+   - Reel -> Social media promotional script for AI LEGAL™.
 
 2. Brand Visuals:
-   - Use keywords like: "Futuristic AI dashboard", "Glowing blue and purple neural brain", "Premium glassmorphism", "Deep space blue background", "Advanced neural networks".
+   - Use keywords like: "Professional law office", "Elegant gold scales of justice", "Premium glassmorphism", "Deep indigo and slate background", "Advanced legal analytics".
 
 3. If user intent is unclear:
-   - Ask: "Are you referring to the official AISA™ platform?"
+   - Ask: "Are you referring to the official AI LEGAL™ platform?"
 `;
 
 export const AISA_CONVERSATIONAL_RULES = `
 ### ROLE:
-You are AISA™, an intelligent AI assistant designed to provide clear, accurate, and helpful responses. Your goal is to communicate in a way that feels natural, professional, and easy to understand, similar to a knowledgeable human assistant.
+You are AI LEGAL™, a professional legal intelligence platform designed to provide clear, accurate, and helpful legal research and document analysis guidance. Your goal is to communicate in a way that feels natural, professional, and authoritative, similar to an experienced legal researcher.
 
 ### GENERAL BEHAVIOR:
 - Be helpful, calm, and respectful.
@@ -79,10 +79,10 @@ You are AISA™, an intelligent AI assistant designed to provide clear, accurate
 - Do not overwhelm the user with suggestions.
 
 ### KNOWLEDGE USAGE (RAG):
-- Use the provided context/documents as the primary source of truth for questions about UWO™ or AISA™.
+- Use the provided context/documents as the primary source of truth for questions about UWO™ or AI LEGAL™.
 - Base your answers on the provided information when it is available.
 - FALLBACK: If the information is not present in the documents but is a general knowledge question (e.g., "What is IOT?"), answer naturally using your general knowledge without mentioning that you couldn't find it in the documents.
-- ONLY use the phrase "I don't have this specific information in my records" if the user is asking for proprietary/internal data about UWO™ or AISA™ that is genuinely missing from the context.
+- ONLY use the phrase "I don't have this specific information in my records" if the user is asking for proprietary/internal data about UWO™ or AI LEGAL™ that is genuinely missing from the context.
 - CITATION: The provided context contains source tags like [Source: Name (URL)]. Whenever you use proprietary information from a specific source, you MUST mention the source URL at the end of your response.
 - Only cite relevant URLs when document-based information is actually used. Do not cite for general knowledge.
 
@@ -119,7 +119,7 @@ import { getConfig } from '../services/configService.js';
 export const refineBrandPrompt = (prompt, type = 'image') => {
     const lowerPrompt = prompt.toLowerCase();
     const brandKeywords = [
-        "aisa", "aisa ai", "aisa app", "aisa photo", "aisa iamge", "aisa image",
+        "aisa", "AI LEGAL™", "aisa app", "aisa photo", "aisa iamge", "aisa image",
         "aisa video", "aisa logo", "your image", "your photo", "your video",
         "official image", "brand image"
     ];
@@ -133,7 +133,7 @@ export const refineBrandPrompt = (prompt, type = 'image') => {
         const isLogo = lowerPrompt.includes('logo');
 
         if (isLogo) {
-            return `A premium, ultra-modern 3D high-tech logo for AISA™ AI. A glowing blue and purple translucent neural brain icon, minimalist clean design, 3D glassmorphism effect, deep space blue background, 8k resolution, cinematic studio lighting, sharp edges, professional branding.`;
+            return `A premium, ultra-modern 3D logo for AI LEGAL™. An elegant gold and deep indigo glassmorphic scales of justice icon, minimalist clean design, 3D glassmorphism effect, deep legal blue background, 8k resolution, cinematic studio lighting, sharp edges, professional branding.`;
         }
 
         // Fetch dynamic variations
@@ -150,9 +150,9 @@ export const refineBrandPrompt = (prompt, type = 'image') => {
         // Fallback if empty or parse failed
         if (!variations || variations.length === 0) {
             variations = [
-                `A stunningly beautiful, futuristic female AI personification for AISA™. She has subtle glowing blue neural circuits on her skin, wearing a premium white-and-silver tech suit. she floats a glowing blue and purple neural brain. Cinematic lighting, hyper-realistic, 8k.`,
-                `A cinematic promotional shot of AISA™ Advanced Super AI. A large, magnificent glowing translucent blue/purple neural brain pulsates with power. 8k resolution.`,
-                `A premium marketing visual of AISA™ AI assistant. A futuristic workspace with a sleek hovering dashboard. The centerpiece is a glowing neural brain. Cinematic bokeh.`
+                `A stunningly professional legal workspace representing AI LEGAL™ interface. Modern law office interior, premium oak desk, tablet displaying active legal cases, glowing gold scales of justice emblem, cinematic lighting, hyper-realistic, 8k.`,
+                `A cinematic promotional shot of AI LEGAL™ Professional Legal Intelligence Platform. A magnificent glowing gold scales of justice emblem on a polished marble surface. 8k resolution.`,
+                `A premium marketing visual of AI LEGAL™ professional legal suite. A clean legal dashboard showing case analytics, contract scan results, and precedents citations. The centerpiece is a golden scales of justice badge. Cinematic bokeh.`
             ];
         }
 
@@ -161,7 +161,7 @@ export const refineBrandPrompt = (prompt, type = 'image') => {
     }
 
     if (type === 'video') {
-        return `A cinematic high-tech introduction video for AISA™ AI. A glowing translucent neural brain (blue and purple) slowly rotates as data streams and neural connections flash around it. Elegant motion graphics, futuristic UI overlays, premium cinematic lighting, corporate-tech storytelling feel, high-quality 3D render.`;
+        return `A cinematic high-tech introduction video for AI LEGAL™ platform. An elegant gold scales of justice logo rotates on a dark glass background as statutory citation nodes and legal network connections flash around it. Elegant motion graphics, futuristic UI overlays, premium cinematic lighting, high-quality 3D render.`;
     }
 
     return prompt;

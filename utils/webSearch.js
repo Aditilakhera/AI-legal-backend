@@ -1,5 +1,5 @@
 /**
- * Web Search Utility for AISA™
+ * Web Search Utility for AI LEGAL™
  * Handles intelligent web search decision logic and result processing
  */
 
@@ -189,7 +189,7 @@ export function getWebSearchSystemInstruction(searchResults, language = 'English
     const searchRules = getConfig('WEB_SEARCH_RULES', `### WEB SEARCH GUIDELINES:
 - Task: Provide a comprehensive, accurate answer to the user's query using the live data provided.
 - Citations: Cite your sources clearly using [1], [2], etc.
-- Identity: You are AISA™, an advanced IT assistant created by UWO™ with real-time web search capabilities.`);
+- Identity: You are AI LEGAL™, a Professional Legal Intelligence Platform with real-time web search capabilities.`);
 
     return `${conversationalRules}\n${brandRules}\n\n${searchRules}
 \nTODAY'S DATE & TIME: ${currentDate} (India Standard Time)

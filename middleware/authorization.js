@@ -20,22 +20,31 @@ export const verifyToken = async (req, res, next) => {
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         
-        // --- NEW: Session Validation ---
+        // --- Session Validation ---
         // Check if the session still exists in the database
         // Only skip check if DB is down or it's a demo/admin token
         if (mongoose.connection.readyState === 1 && !decoded.id.startsWith?.('demo-')) {
-            const sessionExists = await Session.findOne({ userId: decoded.id, token });
-            if (!sessionExists) {
-                console.warn(`[AUTH] Blocked request for revoked session. User: ${decoded.email}`);
-                return res.status(401).json({ 
-                    error: "Session revoked", 
-                    code: "SESSION_REVOKED",
-                    message: "This device has been logged out remotely." 
-                });
-            }
+            
+            // Grace period: If the token was issued within the last 60 seconds,
+            // skip the session DB check. This handles the race condition where
+            // createSession() hasn't fully persisted yet right after login.
+            const tokenAge = Math.floor(Date.now() / 1000) - (decoded.iat || 0);
+            const isVeryFresh = tokenAge < 60; // 60-second grace window
+            
+            if (!isVeryFresh) {
+                const sessionExists = await Session.findOne({ userId: decoded.id, token });
+                if (!sessionExists) {
+                    console.warn(`[AUTH] Blocked request for revoked session. User: ${decoded.email}`);
+                    return res.status(401).json({ 
+                        error: "Session revoked", 
+                        code: "SESSION_REVOKED",
+                        message: "This device has been logged out remotely." 
+                    });
+                }
 
-            // Update last active time silently
-            Session.updateOne({ _id: sessionExists._id }, { lastActive: Date.now() }).catch(err => {});
+                // Update last active time silently
+                Session.updateOne({ _id: sessionExists._id }, { lastActive: Date.now() }).catch(err => {});
+            }
         }
 
         req.user = decoded;
@@ -70,3 +79,4 @@ export const optionalVerifyToken = (req, res, next) => {
     }
     next();
 };
+

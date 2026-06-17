@@ -540,8 +540,13 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         // 3. Generate Content
         let result;
+        const { onChunk } = options;
         try {
-            result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+            if (onChunk) {
+                result = await model.generateContentStream({ contents: [{ role: 'user', parts }] });
+            } else {
+                result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+            }
         } catch (execErr) {
             if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-2.5-flash') {
                 logger.warn(`[VERTEX] Execution failed for ${selectedModelName}. Retrying with gemini-2.5-flash.`);
@@ -550,11 +555,37 @@ export const askVertex = async (prompt, context = null, options = {}) => {
                     systemInstruction: systemInstruction,
                     generationConfig: { maxOutputTokens: 4096 }
                 });
-                result = await fallbackModel.generateContent({ contents: [{ role: 'user', parts }] });
+                if (onChunk) {
+                    result = await fallbackModel.generateContentStream({ contents: [{ role: 'user', parts }] });
+                } else {
+                    result = await fallbackModel.generateContent({ contents: [{ role: 'user', parts }] });
+                }
             } else {
                 throw execErr;
             }
         }
+
+        if (onChunk) {
+            let fullText = '';
+            for await (const chunk of result.stream) {
+                const text = chunk.text();
+                fullText += text;
+                onChunk(text);
+            }
+            
+            // 4. JSON Parsing Attempt (If mode expects JSON)
+            if (options.mode === 'FILE_CONVERSION' || (systemInstruction && systemInstruction.includes('JSON'))) {
+                fullText = fullText.replace(/```json\s*|\s*```/g, '').trim();
+            }
+
+            logger.info(`[VERTEX] Streaming completed successfully (${fullText.length} chars).`);
+            
+            if (options.returnSources) {
+                return { text: fullText, sources: [] };
+            }
+            return fullText;
+        }
+
         const response = await result.response;
         const candidate = response.candidates?.[0];
 

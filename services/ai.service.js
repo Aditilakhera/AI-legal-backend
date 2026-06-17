@@ -83,7 +83,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName, onChunk } = options;
 
         const lowerMsg = message.toLowerCase().trim();
         const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web', 'what can you do', 'your features', 'your capabilities', 'who are you', 'how can you help', 'tell me about your services'];
@@ -351,7 +351,8 @@ Maintain any text response outside the JSON block.`;
                 mode,
                 images,
                 documents,
-                userName
+                userName,
+                onChunk
             });
             finalResponseData = { text: vertexResponse, isRealTime: false };
         } else {
@@ -416,7 +417,8 @@ Maintain any text response outside the JSON block.`;
                 const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, {
                     userName,
                     systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`,
-                    mode: 'RAG'
+                    mode: 'RAG',
+                    onChunk
                 });
                 
                 logger.info(`[RAG-Pipeline] ✅ RAG Response Generated Successfully (${ragResponse?.length || 0} chars).`);
@@ -496,7 +498,8 @@ Maintain any text response outside the JSON block.`;
                         systemInstruction: finalSystemInstruction,
                         mode: mode || 'GENERAL',
                         images,
-                        documents
+                        documents,
+                        onChunk
                     });
                 }
 

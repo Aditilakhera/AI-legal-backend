@@ -98,10 +98,10 @@ export const createGooglePayOrder = async (req, res) => {
                 // In TEST mode → merchantId is not required and causes errors if invalid
                 // In PRODUCTION → use your verified Google Pay Merchant ID
                 merchantInfo: isTestMode
-                    ? { merchantName: 'AISA' }
+                    ? { merchantName: 'AI LEGAL™' }
                     : {
                         merchantId: process.env.GOOGLE_PAY_MERCHANT_ID,
-                        merchantName: 'AISA'
+                        merchantName: 'AI LEGAL™'
                     },
                 transactionInfo: {
                     totalPriceStatus: 'FINAL',

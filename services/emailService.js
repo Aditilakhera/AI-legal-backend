@@ -52,7 +52,7 @@ export const sendAdminNotification = async (ticket) => {
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
-                    <h1 style="color: white; margin: 0;">AISA Admin</h1>
+                    <h1 style="color: white; margin: 0;">AI LEGAL™ Admin</h1>
                     <p style="color: #f0f0f0; margin: 5px 0 0 0;">New Support Ticket Received</p>
                 </div>
                 
@@ -78,7 +78,7 @@ export const sendAdminNotification = async (ticket) => {
                 </div>
                 
                 <div style="background: #f1f5f9; padding: 15px; border-radius: 0 0 10px 10px; text-align: center; color: #64748b; font-size: 12px;">
-                    <p style="margin: 0;">AISA Platform - Admin Notifications</p>
+                    <p style="margin: 0;">AI LEGAL™ Platform - Admin Notifications</p>
                     <p style="margin: 5px 0 0 0;">This is an automated notification. Please do not reply to this email.</p>
                 </div>
             </div>
@@ -106,11 +106,11 @@ export const sendVendorReply = async (vendorEmail, vendorName, message, ticketId
     const mailOptions = {
         from: EMAIL_CONFIG.user,
         to: vendorEmail,
-        subject: `✉️ Reply from AISA Admin - Ticket #${ticketId.substring(18).toUpperCase()}`,
+        subject: `✉️ Reply from AI LEGAL™ Admin - Ticket #${ticketId.substring(18).toUpperCase()}`,
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
                 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px 10px 0 0; text-align: center;">
-                    <h1 style="color: white; margin: 0;">AISA</h1>
+                    <h1 style="color: white; margin: 0;">AI LEGAL™</h1>
                     <p style="color: #f0f0f0; margin: 5px 0 0 0;">Admin Response</p>
                 </div>
                 
@@ -132,7 +132,7 @@ export const sendVendorReply = async (vendorEmail, vendorName, message, ticketId
                 </div>
                 
                 <div style="background: #f1f5f9; padding: 15px; border-radius: 0 0 10px 10px; text-align: center; color: #64748b; font-size: 12px;">
-                    <p style="margin: 0;">AISA Platform</p>
+                    <p style="margin: 0;">AI LEGAL™ Platform</p>
                     <p style="margin: 5px 0 0 0;">Thank you for being a valued vendor!</p>
                 </div>
             </div>
@@ -193,7 +193,7 @@ export const sendFeedbackAdminNotification = async (feedback) => {
                 </div>
                 
                 <div style="background: #f1f5f9; padding: 15px; border-radius: 0 0 10px 10px; text-align: center; color: #64748b; font-size: 12px;">
-                    <p style="margin: 0;">AISA Platform - Feedback System</p>
+                    <p style="margin: 0;">AI LEGAL™ Platform - Feedback System</p>
                     <p style="margin: 5px 0 0 0;">This is an automated notification.</p>
                 </div>
             </div>
@@ -292,7 +292,7 @@ export const sendCashFlowReport = async (userEmail, userName, stockData, analysi
                     </div>
 
                     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #edf2f7; text-align: center; color: #a0aec0; font-size: 12px;">
-                        <p style="margin: 0;">&copy; ${new Date().getFullYear()} AISA Intelligence Platform. All rights reserved.</p>
+                        <p style="margin: 0;">&copy; ${new Date().getFullYear()} AI LEGAL™ Intelligence Platform. All rights reserved.</p>
                         <p style="margin: 5px 0 0;">This report was requested by ${userName} (${userEmail}).</p>
                     </div>
                 </div>
@@ -323,11 +323,11 @@ export const sendShareLinkEmail = async (targetEmail, shareLink, sessionTitle, s
     const mailOptions = {
         from: EMAIL_CONFIG.user,
         to: targetEmail,
-        subject: `🔗 Shared AISA Chat: ${sessionTitle}`,
+        subject: `🔗 Shared AI LEGAL™ Chat: ${sessionTitle}`,
         html: `
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
                 <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px; text-align: center; color: white;">
-                    <h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.025em;">AISA Intelligence</h1>
+                    <h1 style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.025em;">AI LEGAL™ Intelligence</h1>
                     <p style="margin: 8px 0 0; opacity: 0.9; font-size: 14px;">Conversation Shared With You</p>
                 </div>
 
@@ -338,20 +338,20 @@ export const sendShareLinkEmail = async (targetEmail, shareLink, sessionTitle, s
                     
                     <h2 style="color: #1e293b; margin: 0 0 12px; font-size: 20px; font-weight: 700;">${sessionTitle}</h2>
                     <p style="color: #64748b; margin: 0 0 32px; line-height: 1.6; font-size: 15px;">
-                        ${senderName} has shared an interesting AI conversation with you on AISA. Click the button below to view the full chat history.
+                        ${senderName} has shared an interesting AI conversation with you on AI LEGAL™. Click the button below to view the full chat history.
                     </p>
 
                     <a href="${shareLink}" style="display: inline-block; background: #6366f1; color: white; padding: 16px 36px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 15px; box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.3);">View Conversation</a>
                     
                     <div style="margin-top: 32px; padding-top: 32px; border-top: 1px solid #f1f5f9;">
                         <p style="color: #94a3b8; font-size: 13px; margin: 0;">
-                            Don't have an account? <a href="https://aisa24.com" style="color: #6366f1; text-decoration: none; font-weight: 600;">Get started with AISA</a>
+                            Don't have an account? <a href="https://aisa24.com" style="color: #6366f1; text-decoration: none; font-weight: 600;">Get started with AI LEGAL™</a>
                         </p>
                     </div>
                 </div>
 
                 <div style="background: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
-                    <p style="margin: 0;">&copy; ${new Date().getFullYear()} AISA Intelligence Platform</p>
+                    <p style="margin: 0;">&copy; ${new Date().getFullYear()} AI LEGAL™ Intelligence Platform</p>
                     <p style="margin: 4px 0 0;">This is an automated share notification based on a user request.</p>
                 </div>
             </div>

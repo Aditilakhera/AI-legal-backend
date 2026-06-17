@@ -21,7 +21,7 @@ export const initSocket = (server) => {
             /* Optional: Send a login alert
             io.to(userId.toString()).emit('new_notification', {
                 id: `login_${Date.now()}`,
-                title: 'Connected to AISA™',
+                title: 'Connected to AI LEGAL™',
                 desc: 'Real-time synchronization established.',
                 type: 'success',
                 time: new Date(),

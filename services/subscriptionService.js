@@ -153,6 +153,9 @@ export const subscriptionService = {
             }
         }
 
+        const isAdmin = user.role === 'admin' || (user.email && user.email.toLowerCase() === 'admin@uwo24.com');
+        if (isAdmin) return true;
+
         const totalCost = toolsRequested.reduce((acc, tool) => acc + getToolCost(tool, metadata), 0);
         if ((user.credits || 0) < totalCost) {
             throw new Error("Insufficient credits");
@@ -163,6 +166,9 @@ export const subscriptionService = {
     deductCredits: async (userId, toolsUsed = [], sessionId, metadata = {}) => {
         const user = await User.findById(userId);
         if (!user) throw new Error("User not found");
+
+        const isAdmin = user.role === 'admin' || (user.email && user.email.toLowerCase() === 'admin@uwo24.com');
+        if (isAdmin) return true;
 
         const totalCost = toolsUsed.reduce((acc, tool) => acc + getToolCost(tool, metadata), 0);
 

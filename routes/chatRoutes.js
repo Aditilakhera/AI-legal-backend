@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import ChatSession from "../models/ChatSession.js";
+import Project from "../models/Project.js";
 import { generativeModel, genAIInstance, modelName as primaryModelName } from "../config/vertex.js";
 import userModel from "../models/User.js";
 import Guest from "../models/Guest.js";
@@ -160,6 +161,122 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       filteredDocuments = validDocs;
     }
 
+    // ── SSE Streaming Mode ───────────────────────────────────────────────────
+    if (req.body.stream === true) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      let fullText = '';
+      const streamOnChunk = (chunk) => {
+        if (chunk && res.writable) {
+          fullText += chunk;
+          res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+          if (typeof res.flush === 'function') res.flush();
+        }
+      };
+
+      try {
+        const chatResponse = await aiService.chat(content, activeDocContent, {
+          systemInstruction,
+          mode,
+          images: image,
+          documents: filteredDocuments,
+          userName: req.user?.name ? req.user.name.split(' ')[0] : undefined,
+          language,
+          conversationId: sessionId,
+          userId: req.user?.id || req.user?._id,
+          model,
+          history,
+          onChunk: streamOnChunk
+        });
+
+        // If the service returned text directly (e.g. search/image mode fallback), emit remainder
+        const finalReply = chatResponse.text || fullText || '';
+        if (finalReply && finalReply !== fullText) {
+          const remainder = finalReply.slice(fullText.length);
+          if (remainder) {
+            res.write(`data: ${JSON.stringify({ chunk: remainder })}\n\n`);
+            if (typeof res.flush === 'function') res.flush();
+            fullText = finalReply;
+          }
+        }
+
+        const isWebSearchResponse = chatResponse.isRealTime || false;
+        const searchSources = chatResponse.sources || [];
+        const detectedMode = chatResponse.mode || mode || 'CHAT';
+
+        // Session persistence (same as non-stream path)
+        if (!skipSession) {
+          let session = await ChatSession.findOne({ sessionId });
+          const userId = req.user ? req.user.id : null;
+          const isGenericTitle = !session || session.title === 'New Chat' || session.title === 'Greeting' || session.title === 'General Chat' || (session.title && session.title.includes('...'));
+
+          if (!session) {
+            const words = (content || '').trim().split(/\s+/);
+            const aiTitle = words.slice(0, 5).join(' ') + (words.length > 5 ? '...' : '') || 'New Chat';
+            session = new ChatSession({
+              sessionId: sessionId || `temp_${Date.now()}`,
+              userId: userId || null,
+              guestId: req.guest?.guestId || null,
+              projectId: (req.body.projectId === 'default' || req.body.projectId === 'all') ? null : (req.body.projectId || null),
+              title: aiTitle || 'New Chat',
+              detectedMode: detectedMode || 'NORMAL_CHAT',
+              activeTool: req.body.activeTool || null,
+              messages: []
+            });
+            if (userId) await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
+          } else if (isGenericTitle) {
+            const words = (content || '').trim().split(/\s+/);
+            const aiTitle = words.slice(0, 5).join(' ') + (words.length > 5 ? '...' : '') || 'New Chat';
+            if (aiTitle) session.title = aiTitle;
+          }
+
+          if (detectedMode) session.detectedMode = detectedMode;
+          if (req.body.activeTool) session.activeTool = req.body.activeTool;
+
+          const hasUserMsg = session.messages.some(m => m.id === userMsgId || (m.role === 'user' && m.content === content));
+          if (!hasUserMsg) {
+            session.messages.push({ id: userMsgId || `be_${Date.now()}`, role: 'user', content: content || (image ? 'Image interaction' : 'Action'), timestamp: Date.now() });
+          }
+          session.messages.push({
+            id: aiMsgId || `be_ai_${Date.now() + 1}`,
+            role: 'model',
+            content: fullText || 'Thinking...',
+            timestamp: Date.now() + 1,
+            isRealTime: isWebSearchResponse,
+            sources: searchSources,
+            suggestions: chatResponse.suggestions || []
+          });
+
+          session.lastModified = Date.now();
+          await session.save();
+
+          const finalUserId = req.user?.id || req.user?._id;
+          if (finalUserId) {
+            await subscriptionService.deductCredits(finalUserId, toolsRequested, sessionId, req.body).catch(() => {});
+          }
+
+          // Send final metadata
+          res.write(`data: ${JSON.stringify({ done: true, title: session.title, sessionId: session.sessionId, sources: searchSources, suggestions: chatResponse.suggestions || [], isRealTime: isWebSearchResponse })}\n\n`);
+        } else {
+          res.write(`data: ${JSON.stringify({ done: true, sources: searchSources, suggestions: chatResponse.suggestions || [], isRealTime: isWebSearchResponse })}\n\n`);
+        }
+
+        if (res.writable) res.end();
+      } catch (streamErr) {
+        console.error('[Stream] Error:', streamErr.message);
+        if (res.writable) {
+          res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+          res.end();
+        }
+      }
+      return;
+    }
+
+    // ── Standard (Non-Streaming) Mode ────────────────────────────────────────
     // 3. UNIFIED AI SERVICE CALL
     const chatResponse = await aiService.chat(content, activeDocContent, {
       systemInstruction,
@@ -399,23 +516,49 @@ router.get('/', optionalVerifyToken, identifyGuest, async (req, res) => {
     let sessions = [];
     const projectId = req.query.projectId;
 
+    const query = {};
     if (userId) {
-      const query = { userId: userId };
-      if (projectId && projectId !== 'null' && projectId !== 'undefined' && projectId !== 'default' && projectId !== 'all') {
+      query.userId = userId;
+      if (req.query.all === 'true' || projectId === 'all') {
+        // Skip projectId filter to return all chats
+      } else if (projectId && projectId !== 'null' && projectId !== 'undefined' && projectId !== 'default') {
         query.projectId = projectId;
       } else {
         // If no projectId or 'null', return chats where projectId is null or doesn't exist
         query.projectId = { $in: [null, undefined] };
       }
-
-      sessions = await ChatSession.find(query)
-        .select('sessionId title lastModified userId projectId activeTool detectedMode')
-        .sort({ lastModified: -1 });
     } else if (guestId) {
-      sessions = await ChatSession.find({ guestId: guestId })
-        .select('sessionId title lastModified guestId activeTool detectedMode')
-        .sort({ lastModified: -1 });
+      query.guestId = guestId;
     }
+
+    // Support search query parameter
+    if (req.query.q) {
+      const searchRegex = new RegExp(req.query.q, 'i');
+      let matchingProjectIds = [];
+      try {
+        const matchingProjects = await Project.find({
+          $or: [
+            { name: searchRegex },
+            { clientName: searchRegex }
+          ]
+        }).select('_id');
+        matchingProjectIds = matchingProjects.map(p => p._id);
+      } catch (err) {
+        console.warn("Failed to search projects:", err);
+      }
+
+      query.$or = [
+        { title: searchRegex },
+        { 'messages.content': searchRegex },
+        { projectId: { $in: matchingProjectIds } }
+      ];
+    }
+
+    sessions = await ChatSession.find(query)
+      .select('sessionId title lastModified userId projectId activeTool detectedMode')
+      .populate('projectId', 'name clientName')
+      .sort({ lastModified: -1 });
+
     res.json(sessions);
   } catch (err) {
     console.error(err);

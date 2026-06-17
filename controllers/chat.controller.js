@@ -16,7 +16,7 @@ import Tesseract from 'tesseract.js';
 // @access  Public (for now)
 export const chat = async (req, res, next) => {
     try {
-        const { message, conversationId, activeDocContent, systemInstruction, mode, image, document } = req.body;
+        const { message, conversationId, activeDocContent, systemInstruction, mode, image, document, stream } = req.body;
 
         if (!message && (!image || image.length === 0) && (!document || document.length === 0)) {
             return res.status(400).json({ success: false, message: 'Message or attachment is required' });
@@ -29,6 +29,104 @@ export const chat = async (req, res, next) => {
             if (user && user.name) userName = user.name.split(' ')[0];
         }
 
+        // ── SSE Streaming Mode ──────────────────────────────────────────────────
+        if (stream === true) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.flushHeaders?.();
+
+            let fullText = '';
+
+            const onChunk = (chunk) => {
+                if (chunk && res.writable) {
+                    fullText += chunk;
+                    const payload = JSON.stringify({ chunk });
+                    res.write(`data: ${payload}\n\n`);
+                    // Flush the buffer so clients receive chunks immediately
+                    if (typeof res.flush === 'function') res.flush();
+                }
+            };
+
+            try {
+                const chatResponse = await aiService.chat(message, activeDocContent, {
+                    systemInstruction,
+                    mode,
+                    images: image,
+                    documents: document,
+                    userName,
+                    conversationId,
+                    userId: req.user?.id || req.user?._id,
+                    onChunk
+                });
+
+                // If ai.service returned a response (non-streaming fallback for search/video/etc.)
+                // emit any remaining text that wasn't chunked
+                const responseText = chatResponse.text || fullText;
+                if (responseText && responseText !== fullText) {
+                    // Flush remaining response as one chunk
+                    const remaining = responseText.replace(fullText, '');
+                    if (remaining) {
+                        res.write(`data: ${JSON.stringify({ chunk: remaining })}\n\n`);
+                        if (typeof res.flush === 'function') res.flush();
+                        fullText = responseText;
+                    }
+                }
+
+                const { isRealTime, sources, suggestions } = chatResponse;
+
+                // Persist to DB
+                let conversation;
+                if (conversationId) conversation = await Conversation.findById(conversationId);
+
+                if (!conversation) {
+                    let titleSourceText = message || 'New Conversation';
+                    const generatedTitle = await aiService.generateConversationTitle(titleSourceText);
+                    conversation = new Conversation({
+                        userId: req.user?.id || req.user?._id || 'admin',
+                        title: generatedTitle,
+                        messages: []
+                    });
+                }
+
+                conversation.messages.push({ role: 'user', text: message || '[Attachment Uploaded]' });
+                conversation.messages.push({
+                    role: 'assistant',
+                    text: fullText || responseText,
+                    isRealTime: isRealTime || false,
+                    sources: sources || [],
+                    suggestions: suggestions || []
+                });
+                conversation.lastMessageAt = Date.now();
+                await conversation.save();
+
+                if (req.creditMeta && req.creditMeta.cost > 0) {
+                    await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+                }
+
+                // Send final metadata event
+                const donePayload = JSON.stringify({
+                    done: true,
+                    conversationId: conversation._id,
+                    title: conversation.title,
+                    sources: sources || [],
+                    suggestions: suggestions || [],
+                    isRealTime: isRealTime || false
+                });
+                res.write(`data: ${donePayload}\n\n`);
+                res.end();
+            } catch (streamErr) {
+                logger.error(`[Stream] Error during streaming: ${streamErr.message}`);
+                if (res.writable) {
+                    res.write(`data: ${JSON.stringify({ error: streamErr.message })}\n\n`);
+                    res.end();
+                }
+            }
+            return;
+        }
+
+        // ── Standard (Non-Streaming) Mode ───────────────────────────────────────
         // 1. Get AI Response (Pass detailed context)
         const chatResponse = await aiService.chat(message, activeDocContent, {
             systemInstruction,

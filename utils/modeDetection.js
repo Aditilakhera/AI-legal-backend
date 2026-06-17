@@ -1,5 +1,5 @@
 /**
- * Mode Detection Utility for AISA™
+ * Mode Detection Utility for AI LEGAL™
  * Automatically detects the appropriate mode based on user input and context
  */
 
@@ -116,7 +116,7 @@ import { getConfig } from '../services/configService.js';
  * @returns {string} - System instruction for the mode
  */
 export function getModeSystemInstruction(mode, language = 'English', context = {}) {
-  const { agentName = 'AISA', agentCategory = 'General', fileCount = 0 } = context;
+  const { agentName = 'AI LEGAL™', agentCategory = 'General', fileCount = 0 } = context;
 
   const baseIdentity = `You are ${agentName}, powered by UWO (Unified Web Options & Services Pvt. Ltd.) — an IT-registered technology company founded in 2020 and headquartered in Jabalpur, Madhya Pradesh.
 UWO specializes in AI solutions, business automation, and flagship project AI Mall™ (a global AI marketplace and automation ecosystem).
@@ -149,7 +149,7 @@ Use "---SPLIT_RESPONSE---" delimiter between each file's analysis.` : ''}`;
 
     case MODES.NORMAL_CHAT:
     default:
-      const chatInstruct = getConfig('AISA_CONVERSATIONAL_RULES', `You are a friendly, intelligent conversational assistant for AISA™.`);
+      const chatInstruct = getConfig('AISA_CONVERSATIONAL_RULES', `You are a friendly, intelligent conversational assistant for AI LEGAL™.`);
       return `${baseIdentity}\n\n${chatInstruct}${languageRule}`;
   }
 }
@@ -167,7 +167,7 @@ export function getModeName(mode) {
     [MODES.CONTENT_WRITING]: 'Content Writing',
     [MODES.CODING_HELP]: 'Coding Help',
     [MODES.TASK_ASSISTANT]: 'Task Assistant',
-    [MODES.DEEP_SEARCH]: 'Deep Search'
+    [MODES.DEEP_SEARCH]: 'Precedents Search & Citations'
   };
   return names[mode] || 'Chat';
 }

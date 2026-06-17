@@ -13,6 +13,81 @@ const router = express.Router();
  * Note: getStrictToolPrompt was removed in favor of centralized services/legal/legalPrompts.js
  */
 
+const buildCaseContextString = (caseContext) => {
+    if (!caseContext) return '';
+    
+    let ctx = `=== CASE WORKSPACE CONTEXT ===\n`;
+    ctx += `Case Name: ${caseContext.name || 'N/A'}\n`;
+    ctx += `Client: ${caseContext.clientName || 'N/A'}\n`;
+    ctx += `Opponent: ${caseContext.opponentName || 'N/A'}\n`;
+    ctx += `Case Type: ${caseContext.caseType || 'N/A'}\n`;
+    ctx += `Current Stage: ${caseContext.stage || 'N/A'}\n`;
+    ctx += `Priority: ${caseContext.priority || 'N/A'}\n`;
+    ctx += `Case Summary: ${caseContext.summary || caseContext.caseSummary || 'N/A'}\n\n`;
+    
+    if (caseContext.facts && caseContext.facts.length > 0) {
+        ctx += `### Timeline & Key Facts:\n`;
+        caseContext.facts.forEach((f, i) => {
+            const dateStr = f.date ? new Date(f.date).toLocaleDateString() : 'Unknown Date';
+            ctx += `${i + 1}. [${dateStr}] ${f.event || ''} - ${f.description || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    if (caseContext.hearings && caseContext.hearings.length > 0) {
+        ctx += `### Hearings Schedule:\n`;
+        caseContext.hearings.forEach((h, i) => {
+            const dateStr = h.date ? new Date(h.date).toLocaleDateString() : 'Unknown Date';
+            ctx += `${i + 1}. [${dateStr} ${h.time || ''}] ${h.courtName || ''} (${h.location || ''}) - Status: ${h.status || ''} - Notes: ${h.notes || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    if (caseContext.documents && caseContext.documents.length > 0) {
+        ctx += `### Case Documents & Contracts:\n`;
+        caseContext.documents.forEach((d, i) => {
+            ctx += `${i + 1}. [${d.type || 'Document'}] Name: ${d.name || ''} - URL: ${d.url || ''} - Extracted Data/Summary: ${d.extractedData ? JSON.stringify(d.extractedData) : 'N/A'}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    if (caseContext.evidence && caseContext.evidence.length > 0) {
+        ctx += `### Evidence Vault:\n`;
+        caseContext.evidence.forEach((ev, i) => {
+            ctx += `${i + 1}. Name: ${ev.name || ''} - Type: ${ev.type || ''} - Description: ${ev.description || ''} - Admissibility: ${ev.admissibility || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    if (caseContext.research && caseContext.research.length > 0) {
+        ctx += `### Saved Research & Laws:\n`;
+        caseContext.research.forEach((r, i) => {
+            ctx += `${i + 1}. Act/Provision: ${r.lawName || ''} Section ${r.section || ''} - Description: ${r.description || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+
+    if (caseContext.savedPrecedents && caseContext.savedPrecedents.length > 0) {
+        ctx += `### Key Court Precedents:\n`;
+        caseContext.savedPrecedents.forEach((p, i) => {
+            ctx += `${i + 1}. Title: ${p.title || ''} - Citation: ${p.citation || ''} - Summary: ${p.summary || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    if (caseContext.tasks && caseContext.tasks.length > 0) {
+        ctx += `### Tasks & Action Items:\n`;
+        caseContext.tasks.forEach((t, i) => {
+            const dlStr = t.deadline ? new Date(t.deadline).toLocaleDateString() : 'No Deadline';
+            ctx += `${i + 1}. Title: ${t.title || ''} - Status: ${t.status || ''} - Deadline: ${dlStr} - Priority: ${t.priority || ''}\n`;
+        });
+        ctx += `\n`;
+    }
+    
+    ctx += `=== END OF CASE CONTEXT ===\n\n`;
+    return ctx;
+};
+
 /**
  * POST /api/legal-toolkit/execute
  */
@@ -24,7 +99,8 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
             sessionId,
             attachments = [],
             conversationHistory = [],
-            language
+            language,
+            caseContext
         } = req.body;
 
         if (!toolName) {
@@ -49,7 +125,10 @@ router.post('/execute', verifyToken, creditMiddleware, async (req, res) => {
         }
 
         // 🔥 STEP 1: Get STRICT TOOL PROMPT from Centralized Service
-        const systemPrompt = getLegalPrompt(toolName);
+        let systemPrompt = getLegalPrompt(toolName);
+        if (caseContext) {
+            systemPrompt = buildCaseContextString(caseContext) + systemPrompt;
+        }
 
         // 🔥 STEP 2: FORCE TOOL MODE (ALIGNED WITH DRAFT-FIRST WORKFLOW)
         const draftingTools = ['legal_draft_maker', 'legal_notice_generator', 'legal_fir_generator', 'legal_affidavit_generator', 'legal_free_chat', 'legal_my_case'];

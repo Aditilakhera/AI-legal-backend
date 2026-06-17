@@ -105,7 +105,7 @@ export const createApplePayOrder = async (req, res) => {
         const amountString = finalAmount.toFixed(2);
 
         // ✅ Sanitize label: only ASCII printable chars. Em dash (—) can cause pattern errors on some iOS versions.
-        const safeLabel = `AISA - ${itemName.replace(/[^\x20-\x7E]/g, '')}`;
+        const safeLabel = `AI LEGAL™ - ${itemName.replace(/[^\x20-\x7E]/g, '')}`;
 
         return res.status(200).json({
             success: true,
