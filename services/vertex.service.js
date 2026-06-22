@@ -461,10 +461,16 @@ export const askVertex = async (prompt, context = null, options = {}) => {
             systemInstruction = systemInstruction + dateContext;
         }
 
-        // Add User Name context if provided
-        if (options.userName) {
+        // Add User Name context if provided (except for legal toolkit specialized modes to avoid conversational pollution)
+        if (options.userName && !options.isLegalTool) {
             systemInstruction += `\n### USER IDENTIFICATION:\nThe user's name is ${options.userName}. You MUST use their name to address them directly and naturally in your responses (e.g., "Yes, Sakshi", or "Here is the information, ${options.userName}"). Make the conversation feel personalized by acknowledging their name.\n`;
         }
+
+        if (options.toolName === 'legal_contract_analyzer') {
+            logger.info(`\n\n[CONTRACT-ANALYZER-SYSTEM-PROMPT] systemInstruction reaching LLM:\n${systemInstruction}\n[CONTRACT-ANALYZER-SYSTEM-PROMPT-END]\n\n`);
+        }
+
+        const isJsonMode = !!(options.isJson || options.mode === 'JSON' || options.mode === 'FILE_CONVERSION' || (systemInstruction && (systemInstruction.includes("JSON format") || systemInstruction.includes("STRICT JSON") || systemInstruction.includes("JSON object") || systemInstruction.includes("JSON verification object") || systemInstruction.includes("JSON action"))));
 
         let finalPrompt = prompt;
         // Combine context with prompt if available (if not using system instruction to carry context)
@@ -488,6 +494,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         
         if (selectedModelName && genAIInstance) {
             logger.info(`[VERTEX] Mapping: ${rawModelName} -> ${selectedModelName} (with System Instruction)`);
+            logger.info(`\n\n[VERTEX-PROMPT] systemInstruction reaching LLM:\n${systemInstruction}\n[VERTEX-PROMPT-END]\n\n`);
             model = genAIInstance.getGenerativeModel({
                 model: selectedModelName,
                 safetySettings: [
@@ -498,7 +505,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
                 ],
                 generationConfig: {
                     maxOutputTokens: 4096,
-                    responseMimeType: (systemInstruction && (systemInstruction.includes("JSON") || options.isJson)) ? "application/json" : "text/plain"
+                    responseMimeType: isJsonMode ? "application/json" : "text/plain"
                 },
                 systemInstruction: systemInstruction,
                 tools: options.useSearch ? [{ googleSearch: {} }] : []
@@ -525,17 +532,22 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         if (documents && documents.length > 0) {
-            const documentParts = documents.flatMap(doc => [
-                { text: `[Attached Document Name: ${doc.name || 'document'}]` },
-                {
-                    inlineData: {
-                        data: doc.base64Data,
-                        mimeType: doc.mimeType || 'application/pdf'
+            const nonAudioDocs = documents.filter(doc => 
+                !(doc.mimeType?.startsWith('audio/') || doc.name?.match(/\.(m4a|mp3|wav|ogg|aac|flac|webm)$/i))
+            );
+            if (nonAudioDocs.length > 0) {
+                const documentParts = nonAudioDocs.flatMap(doc => [
+                    { text: `[Attached Document Name: ${doc.name || 'document'}]` },
+                    {
+                        inlineData: {
+                            data: doc.base64Data,
+                            mimeType: doc.mimeType || 'application/pdf'
+                        }
                     }
-                }
-            ]);
-            // Prepend documents to the prompt
-            parts = [...documentParts, ...parts];
+                ]);
+                // Prepend documents to the prompt
+                parts = [...documentParts, ...parts];
+            }
         }
 
         // 3. Generate Content
@@ -581,7 +593,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
             }
             
             // 4. JSON Parsing Attempt (If mode expects JSON)
-            if (options.mode === 'FILE_CONVERSION' || (systemInstruction && systemInstruction.includes('JSON'))) {
+            if (isJsonMode) {
                 fullText = fullText.replace(/```json\s*|\s*```/g, '').trim();
             }
 
@@ -607,7 +619,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // 4. JSON Parsing Attempt (If mode expects JSON)
-        if (options.mode === 'FILE_CONVERSION' || (systemInstruction && systemInstruction.includes('JSON'))) {
+        if (isJsonMode) {
             text = text.replace(/```json\s*|\s*```/g, '').trim();
         }
 

@@ -147,6 +147,7 @@ const userSchema = new mongoose.Schema({
 
     credits: { type: Number, default: 500 },
     founderStatus: { type: Boolean, default: false },
+    pushToken: { type: String, default: null },
 
     notificationsInbox: [{
         id: String,
@@ -155,7 +156,8 @@ const userSchema = new mongoose.Schema({
         type: { type: String, enum: ['promo', 'update', 'alert', 'success', 'info', 'error'], default: 'promo' },
         time: { type: Date, default: Date.now },
         isRead: { type: Boolean, default: false },
-        voice: { type: String, default: 'none' }
+        voice: { type: String, default: 'none' },
+        data: { type: mongoose.Schema.Types.Mixed, default: null }
     }]
 }, { timestamps: true });
 

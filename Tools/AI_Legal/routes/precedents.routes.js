@@ -1,6 +1,7 @@
 import express from 'express';
 import { findPrecedents } from '../services/precedents.service.js';
 import Project from '../../../models/Project.js';
+import Precedent from '../../../models/Precedent.js';
 import logger from '../../../utils/logger.js';
 import { generatePrecedentPDF } from '../services/pdf.service.js';
 
@@ -15,20 +16,12 @@ router.post('/search', async (req, res) => {
     try {
         const { query, projectId, language } = req.body;
         
-        const dbStart = Date.now();
         let caseContext = null;
         if (projectId) {
             caseContext = await Project.findById(projectId);
         }
-        const dbDuration = Date.now() - dbStart;
 
-        const processStart = Date.now();
         const results = await findPrecedents(query, caseContext, language);
-        const processDuration = Date.now() - processStart;
-
-        const totalDuration = Date.now() - startTime;
-        logger.info(`[PrecedentsRoute] Search completed in ${totalDuration}ms (DB Context: ${dbDuration}ms, Retrieval & AI: ${processDuration}ms)`);
-
         res.json(results);
     } catch (error) {
         logger.error(`[PrecedentsRoute] Search failed: ${error.message}`);
@@ -49,8 +42,25 @@ router.post('/analyze', async (req, res) => {
             activeCaseData = await Project.findById(projectId);
         }
 
+        // Fetch full precedent from DB if only lightweight info/ID is provided
+        let fullPrecedentData = precedentData;
+        if (precedentData && precedentData._id) {
+            const dbPrecedent = await Precedent.findById(precedentData._id);
+            if (dbPrecedent) {
+                fullPrecedentData = dbPrecedent.toObject();
+            }
+        } else if (precedentData && (precedentData.case_name || precedentData.case_identity?.case_name)) {
+            const searchName = precedentData.case_name || precedentData.case_identity?.case_name;
+            const dbPrecedent = await Precedent.findOne({
+                case_name: { $regex: new RegExp(`^${searchName.trim()}$`, 'i') }
+            });
+            if (dbPrecedent) {
+                fullPrecedentData = dbPrecedent.toObject();
+            }
+        }
+
         const { analyzePrecedent } = await import('../services/precedents.service.js');
-        const analysis = await analyzePrecedent(actionType, precedentData, activeCaseData, language);
+        const analysis = await analyzePrecedent(actionType, fullPrecedentData, activeCaseData, language);
         
         res.json({ analysis });
     } catch (error) {
@@ -94,7 +104,24 @@ router.post('/generate-pdf', async (req, res) => {
             return res.status(400).json({ error: 'Precedent data is required' });
         }
 
-        const pdfBuffer = await generatePrecedentPDF(precedentData);
+        // Fetch full precedent from DB if only lightweight info/ID is provided
+        let fullPrecedentData = precedentData;
+        if (precedentData && precedentData._id) {
+            const dbPrecedent = await Precedent.findById(precedentData._id);
+            if (dbPrecedent) {
+                fullPrecedentData = dbPrecedent.toObject();
+            }
+        } else if (precedentData && (precedentData.case_name || precedentData.case_identity?.case_name)) {
+            const searchName = precedentData.case_name || precedentData.case_identity?.case_name;
+            const dbPrecedent = await Precedent.findOne({
+                case_name: { $regex: new RegExp(`^${searchName.trim()}$`, 'i') }
+            });
+            if (dbPrecedent) {
+                fullPrecedentData = dbPrecedent.toObject();
+            }
+        }
+
+        const pdfBuffer = await generatePrecedentPDF(fullPrecedentData);
         
         const caseName = (precedentData.case_identity?.case_name || precedentData.case_name || "Precedent").replace(/[^a-z0-9]/gi, '_');
         const court = (precedentData.case_identity?.court || precedentData.court || "Court").replace(/[^a-z0-9]/gi, '_');

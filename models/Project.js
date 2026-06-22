@@ -61,9 +61,32 @@ const projectSchema = new mongoose.Schema({
     }],
     // --- Case Content ---
     facts: [{
-        date: Date,
-        event: String,
-        description: String
+        id: { type: String },
+        title: { type: String, trim: true, default: '' },
+        description: { type: String, trim: true, default: '' },
+        date: { type: String, default: '' },
+        displayDate: { type: String, default: '' },
+        isApproximate: { type: Boolean, default: false },
+        category: { type: String, default: 'Other' },
+        importance: { type: String, enum: ['High', 'Medium', 'Low'], default: 'Medium' },
+        source: { type: String, default: '' },
+        confidence: { type: String, default: 'High' },
+        createdBy: { type: String, enum: ['AI', 'User'], default: 'AI' }
+    }],
+    limitationWarnings: [{
+        title: { type: String, trim: true },
+        description: { type: String, trim: true },
+        date: { type: String }
+    }],
+    upcomingDeadlines: [{
+        title: { type: String, trim: true },
+        description: { type: String, trim: true },
+        date: { type: String }
+    }],
+    missingDocuments: [{
+        title: { type: String, trim: true },
+        description: { type: String, trim: true },
+        date: { type: String }
     }],
     legalIssues: [{
         type: String,
@@ -76,6 +99,7 @@ const projectSchema = new mongoose.Schema({
     },
     // --- Evidence & Documents ---
     documents: [{
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
         name: String,
         type: { type: String, enum: ['Notice', 'Agreement', 'Proof', 'Filing', 'Other'] },
         url: String,
@@ -136,15 +160,30 @@ const projectSchema = new mongoose.Schema({
         date: Date
     }],
     hearings: [{
-        date: { type: Date, required: false },
-        time: String,
-        courtName: String,
-        location: String,
-        notes: String,
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        title: { type: String, trim: true, default: '' },
+        date: { type: String, default: '' },
+        time: { type: String, default: '' },
+        courtName: { type: String, default: '' },
+        courtroom: { type: String, default: '' },
+        judge: { type: String, default: '' },
+        purpose: { type: String, default: '' },
+        notes: { type: String, default: '' },
         status: { 
             type: String, 
-            enum: ['Upcoming', 'Completed', 'Missed'], 
-            default: 'Upcoming' 
+            enum: ['Scheduled', 'Completed', 'Adjourned', 'Orders Reserved', 'Cancelled', 'Ongoing'], 
+            default: 'Scheduled' 
+        },
+        linkedDocuments: [{ type: String }],
+        orderSummary: { type: String, default: '' },
+        isAiEnriched: { type: Boolean, default: false },
+        nextHearingDate: { type: String, default: '' },
+        checklist: {
+            documents: [{ title: String, checked: { type: Boolean, default: false } }],
+            evidence: [{ title: String, checked: { type: Boolean, default: false } }],
+            witnesses: [{ title: String, checked: { type: Boolean, default: false } }],
+            compliance: [{ title: String, checked: { type: Boolean, default: false }, status: { type: String, default: 'Pending' } }]
         }
     }]
 }, { 

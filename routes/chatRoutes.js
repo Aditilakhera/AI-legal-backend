@@ -65,7 +65,38 @@ const checkGuestLimits = async (req, sessionId) => {
 
 // --- CORE CHAT ENDPOINT ---
 router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
-  const { content, history, systemInstruction, image, video, document, language, model, mode, sessionId, userMsgId, aiMsgId, aspectRatio, modelId: reqModelId, skipSession } = req.body;
+  const { content, history, systemInstruction, image, video, document, language, model, mode: reqMode, sessionId, userMsgId, aiMsgId, aspectRatio, modelId: reqModelId, skipSession } = req.body;
+
+  let mode = reqMode;
+  let resolvedToolName = req.body.activeTool || req.body.toolName;
+
+  const toolMapping = {
+    'contractAnalyzer': 'legal_contract_analyzer',
+    'strategyEngine': 'legal_strategy_engine',
+    'argumentBuilder': 'legal_argument_builder',
+    'draftMaker': 'legal_draft_maker',
+    'casePredictor': 'legal_case_predictor',
+    'evidenceAnalyst': 'legal_evidence_checker',
+    'researchAssistant': 'legal_research_assistant',
+    'legalResearch': 'legal_research',
+    'legal_contract_analyzer': 'legal_contract_analyzer',
+    'legal_strategy_engine': 'legal_strategy_engine',
+    'legal_argument_builder': 'legal_argument_builder',
+    'legal_draft_maker': 'legal_draft_maker',
+    'legal_case_predictor': 'legal_case_predictor',
+    'legal_evidence_checker': 'legal_evidence_checker',
+    'legal_research_assistant': 'legal_research_assistant',
+    'legal_my_case': 'legal_my_case',
+    'caseAssistant': 'legal_my_case'
+  };
+
+  if (req.body.activeTool && toolMapping[req.body.activeTool]) {
+    resolvedToolName = toolMapping[req.body.activeTool];
+  }
+
+  if (resolvedToolName && resolvedToolName.startsWith('legal_')) {
+    mode = 'LEGAL_TOOLKIT';
+  }
 
   try {
     // 1. LIMIT & CREDIT CHECKS
@@ -108,6 +139,9 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       const validDocs = [];
       
       for (const doc of document) {
+        if (doc.mimeType?.startsWith('audio/') || doc.name?.match(/\.(m4a|mp3|wav|ogg|aac|flac|webm)$/i)) {
+          continue;
+        }
         const isWord = doc.mimeType?.includes('word') || doc.name?.match(/\.(docx|doc)$/i);
         const isRtf = doc.mimeType?.includes('rtf') || doc.name?.match(/\.rtf$/i);
         
@@ -185,6 +219,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
           userId: req.user?.id || req.user?._id,
           model,
           history,
+          toolName: resolvedToolName,
           onChunk: streamOnChunk
         });
 
@@ -283,7 +318,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       conversationId: sessionId,
       userId: req.user?.id || req.user?._id,
       model,
-      history
+      history,
+      toolName: resolvedToolName
     });
 
     let reply = chatResponse.text || "";

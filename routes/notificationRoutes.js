@@ -38,16 +38,50 @@ router.get('/', verifyToken, async (req, res) => {
 router.post('/test', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-        const { title, desc, type, voice } = req.body;
+        const { title, desc, type, voice, data } = req.body;
 
         const notification = await createNotification(userId, {
             title: title || 'Real-time Update',
             desc: desc || 'This notification was sent via WebSockets!',
             type: type || 'info',
-            voice: voice || 'none'
+            voice: voice || 'none',
+            data: data || null
         });
 
         res.status(201).json({ success: true, notification });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST /api/notifications/register-token - Register push notification token
+router.post('/register-token', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ error: "Token is required" });
+
+        await userModel.findByIdAndUpdate(userId, {
+            $set: { pushToken: token }
+        });
+
+        res.status(200).json({ success: true, message: "Push token registered successfully" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PUT /api/notifications/read-all - Mark all as read
+router.put('/read-all', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+
+        await userModel.findOneAndUpdate(
+            { _id: userId },
+            { $set: { "notificationsInbox.$[].isRead": true } }
+        );
+
+        res.json({ success: true, message: "All notifications marked as read" });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

@@ -94,6 +94,19 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
         const isAutoMode = !language || language === 'Auto';
         const userLanguage = isAutoMode ? (detected || 'English') : language;
         
+        const isLegalMode = mode === 'LEGAL_TOOLKIT' || (toolName && toolName.startsWith('legal_'));
+
+        let langContext = "";
+        if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
+            langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
+        } else if (userLanguage === 'Hinglish') {
+            langContext = isLegalMode
+                ? "MANDATORY: Respond in formal Hinglish. Maintain strict legal precision. Keep the tone completely objective, professional, and non-conversational (e.g., 'Agreement in terms of Section 73 void hai'). Never greet or address the user."
+                : "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
+        } else {
+            langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
+        }
+
         const langSwitchRule = `### GLOBAL LANGUAGE PRIORITY SYSTEM: 
         1. Priority 1 (Explicit): If user asks for a specific language (e.g., "Hindi me", "in English"), use it.
         2. Priority 2 (UI Setting): Otherwise, use the GLOBAL UI SETTING: ${userLanguage}.
@@ -204,7 +217,7 @@ Maintain any text response outside the JSON block.`;
                 // Remove [ACTIVE TOOL: ...] header (bold markdown variant too)
                 text = text.replace(/^\*?\*?\[ACTIVE TOOL:[^\]]*\]\*?\*?\s*/i, '');
                 // Remove legal disclaimer footer
-                text = text.replace(/⚖️ \*\*Legal Disclaimer:\*\*.*$/is, '');
+                text = text.replace(/\*?\*?⚖️\s*\*?\*?Legal Disclaimer:\*?\*?\s*.*$/is, '');
                 return `${m.role}: ${text.trim()}`;
             }).join(' | ');
 
@@ -224,7 +237,7 @@ Maintain any text response outside the JSON block.`;
             ]);
 
             classification = intentResult;
-            needsRAG = ragResult.needsRAG;
+            needsRAG = toolName === 'legal_contract_analyzer' ? false : ragResult.needsRAG;
             rewrittenQuery = ragResult.rewrittenQuery;
             
             logger.info(`[RAG-Pipeline] Query Evaluation Complete:`);
@@ -282,11 +295,21 @@ Maintain any text response outside the JSON block.`;
             }
         }
 
+        let activeToolInstruction = "";
+        if (isLegalMode && toolName && toolName.startsWith('legal_') && toolName !== 'legal_contract_analyzer') {
+            activeToolInstruction = `\n\n### ACTIVE LEGAL TOOL: ${toolName}\n${getLegalPrompt(toolName)}`;
+        }
+
         // Construct dynamic instruction without legal rule (it will be added at the absolute end)
-        const dynamicSystemInstruction = (systemInstruction || "") + personaContext + toolRestrictions;
+        const dynamicSystemInstruction = toolName === 'legal_contract_analyzer'
+            ? (systemInstruction || "") + `\n\n${getLegalPrompt('legal_contract_analyzer')}\n\n${langSwitchRule}\n\n### LANGUAGE RULE:\n${langContext}`
+            : (systemInstruction || "") + personaContext + toolRestrictions;
 
         // Helper to build context-aware prompt
         const buildMemoryPrompt = (query) => {
+            if (toolName === 'legal_contract_analyzer') {
+                return query;
+            }
             if (retrievedHistory.length > 0) {
                 return memoryService.buildContext(dynamicSystemInstruction, retrievedHistory, query);
             }
@@ -336,7 +359,7 @@ Maintain any text response outside the JSON block.`;
 
             // --- NEW: Legal Context Merging ---
             let combinedContext = null;
-            if (mode === 'LEGAL_TOOLKIT') {
+            if (mode === 'LEGAL_TOOLKIT' && toolName !== 'legal_contract_analyzer') {
                 logger.info(`[LegalToolkit] Merging Case Context and RAG for Priority Rule.`);
                 const ragAnalysis = await vertexService.analyzeRAGRequirements(message).catch(() => ({ needsRAG: true, rewrittenQuery: message }));
                 const legalRewrittenQuery = ragAnalysis.rewrittenQuery || message;
@@ -352,6 +375,8 @@ Maintain any text response outside the JSON block.`;
                 images,
                 documents,
                 userName,
+                isLegalTool: isLegalMode,
+                toolName,
                 onChunk
             });
             finalResponseData = { text: vertexResponse, isRealTime: false };
@@ -398,16 +423,6 @@ Maintain any text response outside the JSON block.`;
                 // Step 4: Answer Generation (Context + Original Question)
                 const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
 
-                // --- DYNAMIC LANGUAGE INSTRUCTION ---
-                let langContext = "";
-                if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
-                    langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
-                } else if (userLanguage === 'Hinglish') {
-                    langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
-                } else {
-                    langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
-                }
-
                 // --- NEW: Unified Context Labeling for RAG-Only ---
                 const labeledRagContext = (mode === 'LEGAL_TOOLKIT')
                     ? `📄 CASE CONTEXT: No specific document uploaded. Relying on legal principles.\n\n📚 LEGAL KNOWLEDGE (RAG):\n${ragContext?.text}`
@@ -416,17 +431,26 @@ Maintain any text response outside the JSON block.`;
                 logger.info(`[RAG-Pipeline] Generating final answer using RAG context...`);
                 const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, {
                     userName,
-                    systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`,
+                    systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${activeToolInstruction}\n\n${legalInstruction}`,
                     mode: 'RAG',
+                    isLegalTool: isLegalMode,
+                    toolName,
                     onChunk
                 });
                 
                 logger.info(`[RAG-Pipeline] ✅ RAG Response Generated Successfully (${ragResponse?.length || 0} chars).`);
                 
-                // Prepend [RAG] indicator to the text so the user knows it's from knowledge base
-                const finalRagText = ragResponse?.startsWith('[RAG]') ? ragResponse : `[RAG] ${ragResponse}`;
+                // Prepend [RAG] indicator to the text so the user knows it's from knowledge base (except in legal toolkit mode)
+                const finalRagText = (mode === 'LEGAL_TOOLKIT')
+                    ? ragResponse
+                    : (ragResponse?.startsWith('[RAG]') ? ragResponse : `[RAG] ${ragResponse}`);
                 
-                finalResponseData = { text: finalRagText, isRealTime: false, sources: ragContext?.sources || [], mode: 'RAG' };
+                finalResponseData = { 
+                    text: finalRagText, 
+                    isRealTime: false, 
+                    sources: (mode === 'LEGAL_TOOLKIT') ? [] : (ragContext?.sources || []), 
+                    mode: 'RAG' 
+                };
             } else {
                 // PRIORITY 3: Multi-Model or Vertex AI General Chat
                 const promptWithMemory = buildMemoryPrompt(message);
@@ -436,17 +460,11 @@ Maintain any text response outside the JSON block.`;
 
                 if (currentModel && (currentModel.includes('gpt') || currentModel.includes('openai'))) {
                     logger.info(`[AI-Service] Routing to OpenAI (${currentModel})`);
-                    // --- DYNAMIC LANGUAGE INSTRUCTION ---
-                    let langContext = "";
-                    if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
-                        langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
-                    } else if (userLanguage === 'Hinglish') {
-                        langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
-                    } else {
-                        langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
-                    }
+                    // Outer scope langContext is used
 
-                    const finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
+                    const finalSystemInstruction = toolName === 'legal_contract_analyzer'
+                        ? dynamicSystemInstruction
+                        : `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${activeToolInstruction}\n\n${legalInstruction}`;
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
                         systemInstruction: finalSystemInstruction,
                         userName
@@ -454,16 +472,11 @@ Maintain any text response outside the JSON block.`;
                 } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
                     logger.info(`[AI-Service] Routing to Groq (${currentModel})`);
                     
-                    let langContext = "";
-                    if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
-                        langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
-                    } else if (userLanguage === 'Hinglish') {
-                        langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
-                    } else {
-                        langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
-                    }
+                    // Outer scope langContext is used
 
-                    const finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
+                    const finalSystemInstruction = toolName === 'legal_contract_analyzer'
+                        ? dynamicSystemInstruction
+                        : `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${activeToolInstruction}\n\n${legalInstruction}`;
                     
                     aiResponse = await groqService.askGroq(promptWithMemory, null, {
                         systemInstruction: finalSystemInstruction,
@@ -481,17 +494,9 @@ Maintain any text response outside the JSON block.`;
 
                     logger.info(`[AI-Service] Executing Chat (Greeting: ${isGreeting}) for: "${message}"`);
 
-                    // --- DYNAMIC LANGUAGE INSTRUCTION ---
-                    let langContext = "";
-                    if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
-                        langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
-                    } else if (userLanguage === 'Hinglish') {
-                        langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
-                    } else {
-                        langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
-                    }
-
-                    const finalSystemInstruction = `${basePersona}\n\n${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
+                    const finalSystemInstruction = toolName === 'legal_contract_analyzer'
+                        ? dynamicSystemInstruction
+                        : `${basePersona}\n\n${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${activeToolInstruction}\n\n${legalInstruction}`;
 
                     aiResponse = await vertexService.askVertex(promptWithMemory, null, {
                         userName,
@@ -499,6 +504,8 @@ Maintain any text response outside the JSON block.`;
                         mode: mode || 'GENERAL',
                         images,
                         documents,
+                        isLegalTool: isLegalMode,
+                        toolName,
                         onChunk
                     });
                 }
@@ -534,7 +541,15 @@ Maintain any text response outside the JSON block.`;
         if (finalResponseData.text && (mode === 'LEGAL_TOOLKIT' || legalInstruction)) {
             let cleanText = finalResponseData.text.trim();
 
-            // 1. Strip redundant disclaimers/hallucinated warnings anywhere in text (case-insensitive)
+            // 1. Strip standard RAG tags if they somehow got prepended
+            if (cleanText.startsWith('[RAG]')) {
+                cleanText = cleanText.replace(/^\[RAG\]\s*/i, '').trim();
+            }
+
+            // 2. Suppress source citations (empty array) so the UI doesn't show source chips
+            finalResponseData.sources = [];
+
+            // 3. Strip redundant disclaimers/hallucinated warnings anywhere in text (case-insensitive)
             // This catches "DISCLAIMER:", "NOTE:", "⚠️", etc. at start or end
             const disclaimerKeywords = [
                 "professional legal advice",
@@ -547,11 +562,11 @@ Maintain any text response outside the JSON block.`;
             // If the AI generated its own disclaimer, use that and don't append another
             const hasExistingDisclaimer = disclaimerKeywords.some(key => cleanText.toLowerCase().includes(key));
 
-            // 2. Strip standard hallucinated headers if they appear at the top
+            // 4. Strip standard hallucinated headers if they appear at the top
             const headerHallucinationRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE|WARNING):.*?\n+/i;
             cleanText = cleanText.replace(headerHallucinationRegex, '').trim();
 
-            // 3. Append centralized disclaimer ONLY if no disclaimer was found in the text
+            // 5. Append centralized disclaimer ONLY if no disclaimer was found in the text
             if (!hasExistingDisclaimer && LEGAL_DISCLAIMER) {
                 // Ensure there's a clean break
                 cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
