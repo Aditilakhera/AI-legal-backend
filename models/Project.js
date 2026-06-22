@@ -107,7 +107,25 @@ const projectSchema = new mongoose.Schema({
         extractedData: mongoose.Schema.Types.Mixed,
         uploadDate: { type: Date, default: Date.now }
     }],
-    evidence: [],
+    evidence: [{
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        name: { type: String, required: true },
+        type: { type: String, default: 'Document' },
+        description: { type: String, default: '' },
+        notes: { type: String, default: '' },
+        exhibitNumber: { type: String, default: '' },
+        status: { type: String, enum: ['Verified', 'Pending', 'Rejected', 'Disputed'], default: 'Pending' },
+        tags: [String],
+        url: { type: String, default: '' },
+        fileSize: { type: String, default: '0 KB' },
+        uploadedBy: { type: String, default: 'Advocate' },
+        uploadedDate: { type: Date, default: Date.now },
+        ocrData: { type: mongoose.Schema.Types.Mixed, default: {} },
+        aiAnalysis: { type: mongoose.Schema.Types.Mixed, default: {} },
+        relatedLinks: { type: mongoose.Schema.Types.Mixed, default: {} },
+        hash: { type: String, default: '' }
+    }],
     savedPrecedents: [],
     // --- AI Intelligence & Risk ---
     intelligence: {
@@ -185,6 +203,162 @@ const projectSchema = new mongoose.Schema({
             witnesses: [{ title: String, checked: { type: Boolean, default: false } }],
             compliance: [{ title: String, checked: { type: Boolean, default: false }, status: { type: String, default: 'Pending' } }]
         }
+    }],
+    drafts: [{
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        name: { type: String, required: true },
+        type: { type: String, default: 'Miscellaneous' },
+        content: { type: String, default: '' },
+        versions: [{
+            version: { type: Number, required: true },
+            content: { type: String, default: '' },
+            createdAt: { type: Date, default: Date.now },
+            changes: { type: String, default: 'Initial draft created' }
+        }],
+        createdBy: { type: String, default: 'Advocate' },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now },
+        status: { type: String, enum: ['Draft', 'In Progress', 'Completed', 'Reviewed'], default: 'Draft' },
+        aiSuggestions: [String],
+        exportHistory: [String]
+    }],
+    notes: [{
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        title: { type: String, required: true },
+        content: { type: String, default: '' },
+        category: { type: String, default: 'Personal' },
+        tags: [String],
+        priority: { type: String, enum: ['Low', 'Medium', 'High', 'Critical'], default: 'Medium' },
+        attachments: [{
+            name: String,
+            url: String,
+            type: { type: String }
+        }],
+        voiceRecordingUrl: { type: String, default: '' },
+        relatedHearing: { type: String, default: '' },
+        relatedTimelineEvent: { type: String, default: '' },
+        relatedEvidence: { type: String, default: '' },
+        relatedArgument: { type: String, default: '' },
+        relatedResearch: { type: String, default: '' },
+        favorite: { type: Boolean, default: false },
+        pinned: { type: Boolean, default: false },
+        archived: { type: Boolean, default: false },
+        aiSummary: {
+            shortSummary: { type: String, default: '' },
+            keyPoints: [String],
+            importantFacts: [String],
+            actionItems: [String]
+        },
+        aiEntities: [{
+            text: String,
+            type: { type: String }
+        }],
+        aiSuggestedLinks: [{
+            type: { type: String },
+            targetId: String,
+            targetName: String,
+            confirmed: { type: Boolean, default: false }
+        }],
+        aiSuggestedActions: [{
+            type: { type: String },
+            description: String,
+            accepted: { type: Boolean, default: false }
+        }],
+        versions: [{
+            version: Number,
+            content: String,
+            createdAt: { type: Date, default: Date.now }
+        }]
+    }],
+    courtOrders: [{
+        _id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        name: { type: String, required: true },
+        url: { type: String, default: '' },
+        fileSize: { type: String, default: '0 KB' },
+        ocrText: { type: String, default: '' },
+        status: { type: String, enum: ['Pending', 'Completed', 'Compliance Pending', 'AI Analyzed'], default: 'Pending' },
+        uploadedBy: { type: String, default: 'Advocate' },
+        metadata: {
+            courtName: { type: String, default: '' },
+            judgeName: { type: String, default: '' },
+            bench: { type: String, default: '' },
+            courtNumber: { type: String, default: '' },
+            caseNumber: { type: String, default: '' },
+            orderDate: { type: String, default: '' },
+            nextHearingDate: { type: String, default: '' },
+            orderType: { type: String, default: 'Interim Order' },
+            stageOfCase: { type: String, default: '' },
+            petitioner: { type: String, default: '' },
+            respondent: { type: String, default: '' },
+            advocates: { type: String, default: '' },
+            caseStatus: { type: String, default: '' }
+        },
+        aiSummary: {
+            shortSummary: { type: String, default: '' },
+            keyPoints: [String]
+        },
+        complianceItems: [{
+            description: String,
+            status: { type: String, enum: ['Pending', 'Completed', 'Overdue'], default: 'Pending' },
+            dueDate: String,
+            priority: { type: String, enum: ['Low', 'Medium', 'High', 'Critical'], default: 'Medium' },
+            responsiblePerson: { type: String, default: 'Advocate' }
+        }],
+        suggestedTasks: [{
+            title: String,
+            description: String,
+            priority: { type: String, default: 'Medium' },
+            accepted: { type: Boolean, default: false }
+        }],
+        suggestedTimeline: [{
+            title: String,
+            description: String,
+            date: String,
+            accepted: { type: Boolean, default: false }
+        }],
+        suggestedHearings: [{
+            title: String,
+            date: String,
+            courtroom: String,
+            judge: String,
+            purpose: String,
+            accepted: { type: Boolean, default: false }
+        }],
+        suggestedArguments: [{
+            title: String,
+            logic: String,
+            precedents: String,
+            accepted: { type: Boolean, default: false }
+        }],
+        suggestedResearch: [{
+            act: String,
+            section: String,
+            description: String,
+            accepted: { type: Boolean, default: false }
+        }],
+        suggestedEvidence: [{
+            title: String,
+            description: String,
+            status: { type: String, default: 'Required' },
+            accepted: { type: Boolean, default: false }
+        }],
+        riskAnalysis: {
+            proceduralDefects: [String],
+            weaknessDetails: [String],
+            limitationRisk: { type: String, default: 'Low' },
+            jurisdictionIssue: { type: Boolean, default: false },
+            objectionsProbability: { type: Number, default: 20 }
+        },
+        linkedRecords: {
+            hearingsCount: { type: Number, default: 0 },
+            tasksCount: { type: Number, default: 0 },
+            evidenceCount: { type: Number, default: 0 }
+        },
+        createdAt: { type: Date, default: Date.now },
+        updatedAt: { type: Date, default: Date.now }
     }]
 }, { 
     timestamps: true,

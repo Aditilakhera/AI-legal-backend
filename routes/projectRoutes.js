@@ -2,6 +2,9 @@ import express from 'express';
 import Project from '../models/Project.js';
 import { verifyToken } from '../middleware/authorization.js';
 import * as legalIntelligenceService from '../Tools/AI_Legal/services/legalIntelligence.service.js';
+import uploadMiddleware from '../middlewares/upload.middleware.js';
+import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
+import { uploadToCloudinary } from '../services/cloudinary.service.js';
 
 const router = express.Router();
 
@@ -112,11 +115,15 @@ const autoAnalyzeAndPopulateProject = async (project, summaryText) => {
         const incomingEvidence = evidence
             .filter(e => e && (e.title || e.name || e.description))
             .filter(e => !(project.evidence || []).some(ex => ex.name === (e.title || e.name || e.description)))
-            .map(e => ({
+            .map((e, index) => ({
+                id: `ev_${Date.now()}_${index}`,
                 name: toStr(e.title || e.name || e.description),
                 type: toStr(e.type) || 'Document',
-                status: toStr(e.strength) || 'Moderate',
-                uploadDate: new Date()
+                status: 'Pending',
+                exhibitNumber: `Exhibit A-${(project.evidence || []).length + index + 1}`,
+                uploadedBy: 'AI',
+                uploadedDate: new Date(),
+                description: `Simulated evidence from AI Case analysis. Strength: ${toStr(e.strength) || 'Moderate'}.`
             }));
         project.evidence = [...(project.evidence || []), ...incomingEvidence];
 
@@ -360,6 +367,75 @@ router.post('/:id/hearings/:hearingId/enrich', verifyToken, async (req, res) => 
     } catch (error) {
         console.error('[HearingEnrich] Error:', error);
         res.status(500).json({ error: 'Failed to enrich hearing details', details: error.message });
+    }
+});
+
+// @desc    Upload document to a case/project
+// @route   POST /api/projects/:id/documents
+// @access  Private
+router.post('/:id/documents', verifyToken, uploadMiddleware, async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
+
+        const project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        let fileUrl = null;
+
+        // Try GCS first
+        try {
+            const ext = req.file.originalname.split('.').pop() || 'pdf';
+            const gcsResult = await uploadToGCS(req.file.buffer, {
+                folder: 'case_documents',
+                filename: gcsFilename(`doc_${Date.now()}`, ext),
+                mimeType: req.file.mimetype,
+            });
+            fileUrl = gcsResult.publicUrl;
+            console.log("[DOCUMENT UPLOAD] Uploaded via GCS successfully:", fileUrl);
+        } catch (gcsError) {
+            console.warn("[DOCUMENT UPLOAD] GCS upload failed, trying Cloudinary fallback:", gcsError.message);
+
+            // Fallback to Cloudinary
+            try {
+                const cloudinaryResult = await uploadToCloudinary(req.file.buffer, {
+                    folder: 'case_documents',
+                    public_id: `doc_${req.params.id}_${Date.now()}`,
+                    resource_type: 'raw',
+                    overwrite: true,
+                });
+                fileUrl = cloudinaryResult.secure_url || cloudinaryResult.url;
+                console.log("[DOCUMENT UPLOAD] Uploaded via Cloudinary successfully:", fileUrl);
+            } catch (cloudinaryError) {
+                console.error("[DOCUMENT UPLOAD] Cloudinary fallback failed:", cloudinaryError.message);
+                return res.status(500).json({
+                    error: "Failed to upload document",
+                    details: `GCS: ${gcsError.message} | Cloudinary: ${cloudinaryError.message}`
+                });
+            }
+        }
+
+        const documentType = req.body.type || 'Other';
+        const newDoc = {
+            _id: `doc_${Date.now()}`,
+            name: req.file.originalname,
+            type: documentType,
+            url: fileUrl,
+            tags: ['Uploaded', documentType],
+            uploadDate: new Date()
+        };
+
+        project.documents = [...(project.documents || []), newDoc];
+        await project.save();
+
+        res.status(200).json({
+            success: true,
+            data: newDoc
+        });
+    } catch (error) {
+        console.error('[DOCUMENT UPLOAD ERROR]', error);
+        res.status(500).json({ error: 'Failed to upload case document', details: error.message });
     }
 });
 
