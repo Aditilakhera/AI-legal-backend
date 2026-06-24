@@ -80,3 +80,34 @@ export const optionalVerifyToken = (req, res, next) => {
     next();
 };
 
+export const isAdmin = async (req, res, next) => {
+    try {
+        if (!req.user || !req.user.id) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
+
+        const PRIMARY_ADMIN_EMAIL = 'admin@uwo24.com';
+        const ADITI_ADMIN_EMAIL = 'aditi@uwo24.com';
+
+        if (
+            req.user.email === PRIMARY_ADMIN_EMAIL || 
+            req.user.email === ADITI_ADMIN_EMAIL || 
+            req.user.role === 'admin'
+        ) {
+            return next();
+        }
+
+        const User = (await import('../models/User.js')).default;
+        const user = await User.findById(req.user.id);
+
+        if (user && (user.role === 'admin' || user.email === PRIMARY_ADMIN_EMAIL || user.email === ADITI_ADMIN_EMAIL)) {
+            next();
+        } else {
+            return res.status(403).json({ success: false, error: 'Access denied: Admins only' });
+        }
+    } catch (err) {
+        console.error("isAdmin middleware error:", err);
+        return res.status(500).json({ success: false, error: 'Authorization error' });
+    }
+};
+

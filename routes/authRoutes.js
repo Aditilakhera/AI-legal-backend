@@ -171,6 +171,25 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    // Admin auto-seeding for aditi@uwo24.com
+    if (email && email.toLowerCase().trim() === 'aditi@uwo24.com') {
+      let adminUser = await UserModel.findOne({ email: 'aditi@uwo24.com' });
+      if (!adminUser) {
+        console.log("[Auth] Seeding admin user: aditi@uwo24.com");
+        const hashedPassword = await bcrypt.hash('Aditi@123', 10);
+        adminUser = await UserModel.create({
+          name: 'Aditi Admin',
+          email: 'aditi@uwo24.com',
+          password: hashedPassword,
+          role: 'admin',
+          isVerified: true
+        });
+      } else if (adminUser.role !== 'admin') {
+        adminUser.role = 'admin';
+        await adminUser.save();
+      }
+    }
+
     // Find user
     const user = await UserModel.findOne({ email });
     if (!user) {

@@ -115,7 +115,7 @@ const projectSchema = new mongoose.Schema({
         description: { type: String, default: '' },
         notes: { type: String, default: '' },
         exhibitNumber: { type: String, default: '' },
-        status: { type: String, enum: ['Verified', 'Pending', 'Rejected', 'Disputed'], default: 'Pending' },
+        status: { type: String, enum: ['Verified', 'Pending', 'Rejected', 'Disputed', 'Not Verified'], default: 'Not Verified' },
         tags: [String],
         url: { type: String, default: '' },
         fileSize: { type: String, default: '0 KB' },
@@ -124,7 +124,10 @@ const projectSchema = new mongoose.Schema({
         ocrData: { type: mongoose.Schema.Types.Mixed, default: {} },
         aiAnalysis: { type: mongoose.Schema.Types.Mixed, default: {} },
         relatedLinks: { type: mongoose.Schema.Types.Mixed, default: {} },
-        hash: { type: String, default: '' }
+        hash: { type: String, default: '' },
+        storedName: { type: String, default: '' },
+        mimeType: { type: String, default: '' },
+        version: { type: Number, default: 1 }
     }],
     savedPrecedents: [],
     // --- AI Intelligence & Risk ---

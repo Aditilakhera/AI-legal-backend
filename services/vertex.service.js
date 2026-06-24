@@ -158,13 +158,21 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 
         for (const context of validContexts) {
             const gcsUri = context.sourceUri;
-            // Even if gcsUri is missing, still use the chunk text if present
             const doc = gcsUri ? await Knowledge.findOne({ gcsUri }) : null;
 
             console.log(`[RAG DEBUG] Chunk Source: ${gcsUri || 'N/A'} | DB Doc: ${doc ? 'FOUND' : 'NOT_IN_DB'} | DB Category: ${doc?.category || 'NONE'} | Requested: ${category}`);
 
-            // If doc not found in DB but we still have text, use it (don't skip)
-            // If doc is found, optionally filter by category (currently relaxed)
+            // Enforce Scope Restriction/Isolation for PRODUCT_GUIDE
+            if (category === 'PRODUCT_GUIDE') {
+                if (!doc || doc.category !== 'PRODUCT_GUIDE') {
+                    continue;
+                }
+            } else {
+                if (doc && doc.category === 'PRODUCT_GUIDE') {
+                    continue;
+                }
+            }
+
             if (!context.text || context.text.trim().length === 0) continue;
 
             // Build source info from doc if found, otherwise use sensible defaults

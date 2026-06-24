@@ -566,8 +566,18 @@ Maintain any text response outside the JSON block.`;
             const headerHallucinationRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE|WARNING):.*?\n+/i;
             cleanText = cleanText.replace(headerHallucinationRegex, '').trim();
 
-            // 5. Append centralized disclaimer ONLY if no disclaimer was found in the text
-            if (!hasExistingDisclaimer && LEGAL_DISCLAIMER) {
+            // 5. Append centralized disclaimer ONLY if no disclaimer was found in the text and the tool is not an exception
+            const toolLower = String(toolName || '').toLowerCase();
+            const isExceptionTool = 
+                toolLower.includes('draft') || 
+                toolLower.includes('notice') || 
+                toolLower.includes('fir') || 
+                toolLower.includes('affidavit') || 
+                toolLower.includes('precedent') || 
+                toolLower.includes('my_case') || 
+                toolLower.includes('case_assistant');
+
+            if (!hasExistingDisclaimer && LEGAL_DISCLAIMER && !isExceptionTool) {
                 // Ensure there's a clean break
                 cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
             }

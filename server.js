@@ -62,6 +62,20 @@ connectDB().then(async () => {
     const { initializeConfigs } = await import('./services/configService.js');
     await initializeConfigs();
 
+    // Self-healing migration for RAG / Product Guide files categorized incorrectly as GENERAL
+    try {
+      const Knowledge = (await import('./models/Knowledge.model.js')).default;
+      const updateResult = await Knowledge.updateMany(
+        { filename: /rag|product|guide/i, category: 'GENERAL' },
+        { $set: { category: 'PRODUCT_GUIDE' } }
+      );
+      if (updateResult.modifiedCount > 0) {
+        console.log(`✅ Self-healed ${updateResult.modifiedCount} knowledge base documents to PRODUCT_GUIDE category.`);
+      }
+    } catch (migErr) {
+      console.warn("Self-healing migration failed:", migErr.message);
+    }
+
     const { initializeFromDB } = await import('./services/ai.service.js');
     await initializeFromDB();
     console.log("✅ AI Services (Embeddings & Vector Store) pre-initialized.");
@@ -191,6 +205,9 @@ app.use('/api/users', userRoute); // Aliased users routes to same user controlle
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+
+// Knowledge Base
+app.use('/api/knowledge', knowledgeRoute);
 
 // Projects
 app.use('/api/projects', projectRoutes);

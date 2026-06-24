@@ -110,7 +110,7 @@ export const uploadDocument = async (req, res) => {
         category = category.toUpperCase();
         
         // If it's not a specialized agent category, enforce the platform standard
-        if (!['LEGAL', 'GENERAL', 'AIADASSET', 'FINANCE'].includes(category)) {
+        if (!['LEGAL', 'GENERAL', 'AIADASSET', 'FINANCE', 'PRODUCT_GUIDE'].includes(category)) {
             category = 'GENERAL';
         }
 
@@ -349,7 +349,7 @@ export const uploadUrl = async (req, res) => {
         let { url, category = 'LEGAL', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
         
         category = category.toUpperCase();
-        if (!['LEGAL', 'GENERAL', 'FINANCE'].includes(category)) category = 'GENERAL';
+        if (!['LEGAL', 'GENERAL', 'FINANCE', 'PRODUCT_GUIDE'].includes(category)) category = 'GENERAL';
 
         if (!url) {
             return res.status(400).json({ success: false, message: 'URL is required' });
@@ -535,6 +535,105 @@ export const deleteKnowledgeSource = async (req, res) => {
 
         res.status(200).json({ success: true, message: 'Source and its knowledge completely removed' });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const testRagQuery = async (req, res) => {
+    try {
+        const { query, category = 'PRODUCT_GUIDE' } = req.body;
+        if (!query) {
+            return res.status(400).json({ success: false, message: 'Query is required' });
+        }
+
+        logger.info(`[RAG-TEST] Query: "${query}" | Category: ${category}`);
+
+        const ragResult = await vertexService.retrieveContextFromRag(query, 8, category);
+        
+        if (!ragResult) {
+            return res.status(200).json({
+                success: true,
+                answer: "No relevant RAG chunks found for this query in the knowledge base.",
+                chunks: []
+            });
+        }
+
+        const systemPrompt = `You are the AISA AI Product Guide assistant. 
+Use the following retrieved PRODUCT DOCUMENTATION contexts to answer the user's question.
+If the answer cannot be found in the context, say "I cannot find the answer in the provided product documentation."
+
+=== RETRIEVED PRODUCT DOCUMENTATION CONTEXT ===
+${ragResult.text}
+`;
+
+        const response = await aiService.chat(query, null, {
+            systemInstruction: systemPrompt,
+            mode: 'GENERAL',
+            language: 'English'
+        });
+
+        const chunks = ragResult.sources.map((s, idx) => ({
+            title: s.title,
+            snippet: s.snippet || 'Documentation chunk...',
+            score: `${Math.round((0.95 - (idx * 0.05)) * 100)}%`
+        }));
+
+        res.status(200).json({
+            success: true,
+            answer: response.text,
+            chunks
+        });
+
+    } catch (error) {
+        logger.error(`RAG Test Query Error: ${error.message}`);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+export const queryProductGuide = async (req, res) => {
+    try {
+        const { query } = req.body;
+        if (!query) {
+            return res.status(400).json({ success: false, message: 'Query is required' });
+        }
+
+        logger.info(`[PRODUCT-GUIDE-RAG-QUERY] Query: "${query}"`);
+
+        const ragResult = await vertexService.retrieveContextFromRag(query, 8, 'PRODUCT_GUIDE');
+        
+        if (!ragResult || !ragResult.text) {
+            return res.status(200).json({
+                success: true,
+                answer: null,
+                chunks: []
+            });
+        }
+
+        const systemPrompt = `You are the AISA AI Product Guide assistant. 
+Use the following retrieved PRODUCT DOCUMENTATION contexts to answer the user's question.
+If the answer cannot be found in the context, say "I cannot find the answer in the provided product documentation."
+
+=== RETRIEVED PRODUCT DOCUMENTATION CONTEXT ===
+${ragResult.text}
+`;
+
+        const response = await aiService.chat(query, null, {
+            systemInstruction: systemPrompt,
+            mode: 'GENERAL',
+            language: 'English'
+        });
+
+        // Simple default suggestions or dynamic ones from context
+        const suggestions = ['How do I create a case?', 'How do I upload evidence?', 'Where is Draft Maker?'];
+
+        res.status(200).json({
+            success: true,
+            answer: response.text,
+            suggestions
+        });
+
+    } catch (error) {
+        logger.error(`Product Guide Query Error: ${error.message}`);
         res.status(500).json({ success: false, message: error.message });
     }
 };

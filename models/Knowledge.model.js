@@ -22,7 +22,7 @@ const KnowledgeSchema = new mongoose.Schema({
     },
     category: {
         type: String,
-        enum: ['LEGAL', 'GENERAL', 'FINANCE'],
+        enum: ['LEGAL', 'GENERAL', 'FINANCE', 'PRODUCT_GUIDE'],
         default: 'GENERAL'
     },
     sourceUrl: {

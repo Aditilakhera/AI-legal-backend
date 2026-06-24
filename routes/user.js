@@ -158,8 +158,9 @@ route.put("/personalizations", verifyToken, async (req, res) => {
             }
         });
 
-        // FORCE UI language to English always - UI language must stay English
-        if (user.personalizations?.general) {
+        // Allow supported mobile locales, default others to English
+        const allowedLanguages = ['English', 'Hindi', 'Bilingual', 'Gujarati', 'Marathi', 'Tamil'];
+        if (user.personalizations?.general && !allowedLanguages.includes(user.personalizations.general.language)) {
             user.personalizations.general.language = 'English';
         }
 
