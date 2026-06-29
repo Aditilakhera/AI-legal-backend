@@ -8,6 +8,7 @@ import uploadMiddleware from '../middlewares/upload.middleware.js';
 import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
 import { uploadToCloudinary } from '../services/cloudinary.service.js';
 import crypto from 'crypto';
+import { createNotification } from '../services/notificationService.js';
 
 const router = express.Router();
 
@@ -129,9 +130,59 @@ const calculateReadinessScore = (project) => {
 const autoAnalyzeAndPopulateProject = async (project, summaryText, language = 'English') => {
     if (!summaryText) return project;
     try {
-        console.log(`[AutoAnalysis] Starting Vertex AI analysis on project summary in language: ${language}...`);
-        const aiResponse = await legalIntelligenceService.analyzeCaseDetails(summaryText, project, language);
-        const aiData = typeof aiResponse === "string" ? JSON.parse(aiResponse) : aiResponse;
+        console.log(`[AutoAnalysis] Generating Unified Case Intelligence in language: ${language}...`);
+        const isGarbage = isGarbageSummary(summaryText) || summaryText.trim().length < 40;
+        
+        let ci;
+        if (isGarbage) {
+            ci = {
+                parties: { plaintiff: { name: project.clientName || 'Petitioner' }, defendant: { name: project.opponentName || 'Respondent' } },
+                caseType: project.caseType || 'Civil Case',
+                facts: [],
+                timeline: [],
+                events: [],
+                issues: ["Case summary details are insufficient or unclear to extract legal issues."],
+                evidence: [],
+                missingEvidence: ["Sufficient and clear factual summary from client"],
+                documents: [],
+                legalSections: [],
+                arguments: [],
+                counterArguments: [],
+                strategy: { trialSequence: [], avoidList: [], judicialConcerns: [], closingSubmission: "Please update the case summary with clear facts." },
+                risks: { level: "Critical", reason: "Case summary is unclear or insufficient to evaluate legal viability.", criticalVulnerabilities: ["Unclear or incomplete case facts."] },
+                winProbability: 0,
+                caseStrength: 0,
+                tasks: [],
+                hearings: [],
+                recommendations: ["Please update the Case Brief Summary with clear, detailed facts (at least 50 words) to unlock AI legal strategy and win probability."],
+                aiAssistant: {
+                    litigationStatus: "Unable to determine litigation stage.",
+                    latestAdvice: "Please provide a clear case summary to generate AI advice.",
+                    recommendedAction: "Update Case Brief Summary with detailed facts.",
+                    evidenceAlerts: "Sufficient case details unavailable.",
+                    nextDeadline: "No pending procedural deadlines.",
+                    confidence: 0,
+                    missingInformation: ["Clear case facts/summary", "Uploaded case documents", "Hearing schedule"]
+                }
+            };
+        } else {
+            ci = await legalIntelligenceService.generateUnifiedCaseIntelligence(summaryText, project, language);
+        }
+
+        // Ensure aiAssistant object is populated if LLM omitted any field
+        if (!ci.aiAssistant) {
+            ci.aiAssistant = {
+                litigationStatus: project.stage || "Pre-Litigation",
+                latestAdvice: ci.recommendations?.[0] || "Review case facts and verify evidence.",
+                recommendedAction: ci.tasks?.[0]?.title || "Upload relevant case documents.",
+                evidenceAlerts: ci.missingEvidence?.[0] ? `Missing: ${ci.missingEvidence[0]}` : "No critical evidence issues detected.",
+                nextDeadline: ci.deadlines?.[0]?.title ? `${ci.deadlines[0].title} (${ci.deadlines[0].date})` : "No pending procedural deadlines.",
+                confidence: Number(ci.caseStrength || 70),
+                missingInformation: ci.missingEvidence || []
+            };
+        }
+        
+        project.caseIntelligence = ci;
 
         const toStr = (val, fallback = '') => {
             if (!val) return fallback;
@@ -139,108 +190,95 @@ const autoAnalyzeAndPopulateProject = async (project, summaryText, language = 'E
             return JSON.stringify(val);
         };
 
-        const rawTimeline = Array.isArray(aiData.timeline) ? aiData.timeline : [];
-        const rawLimitationWarnings = Array.isArray(aiData.limitation_warnings) ? aiData.limitation_warnings : [];
-        const rawUpcomingDeadlines = Array.isArray(aiData.upcoming_deadlines) ? aiData.upcoming_deadlines : [];
-        const rawMissingDocuments = Array.isArray(aiData.missing_documents) ? aiData.missing_documents : [];
+        // Populate basic case details if not explicitly locked
+        if (ci.parties?.plaintiff?.name) project.clientName = toStr(ci.parties.plaintiff.name);
+        if (ci.parties?.defendant?.name) project.opponentName = toStr(ci.parties.defendant.name);
+        if (ci.caseType) project.caseType = toStr(ci.caseType);
 
-        const incomingTimeline = rawTimeline.map(f => {
-            const dateStr = f.date ? String(f.date) : '';
-            return {
-                id: f.id || `fact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                title: toStr(f.title || f.event),
-                description: toStr(f.description || f.title || f.event),
-                date: dateStr,
-                displayDate: toStr(f.displayDate || dateStr),
-                isApproximate: !!f.isApproximate,
-                category: toStr(f.category || 'Other'),
-                importance: ['High', 'Medium', 'Low'].includes(f.importance) ? f.importance : 'Medium',
-                source: toStr(f.source || 'AI Extraction'),
-                confidence: toStr(f.confidence || 'High'),
-                createdBy: 'AI'
-            };
-        });
+        // Populate facts & timeline
+        const rawTimeline = Array.isArray(ci.timeline) ? ci.timeline : [];
+        project.facts = rawTimeline.map(f => ({
+            id: f.id || `fact_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            title: toStr(f.title || f.event),
+            description: toStr(f.description || f.title || f.event),
+            date: f.date ? String(f.date) : '',
+            displayDate: toStr(f.displayDate || f.date || ''),
+            isApproximate: !!f.isApproximate,
+            category: toStr(f.category || 'Other'),
+            importance: ['High', 'Medium', 'Low'].includes(f.importance) ? f.importance : 'Medium',
+            source: 'AI Intelligence Engine',
+            confidence: 'High',
+            createdBy: 'AI'
+        }));
 
-        // Filter duplicates comparing Title, Date, Category
-        const mergedTimeline = [...(project.facts || [])];
-        for (const item of incomingTimeline) {
-            const hasDuplicate = (project.facts || []).some(fx => 
-                (fx.title || fx.event || '').trim().toLowerCase() === item.title.trim().toLowerCase() &&
-                (fx.date || '').trim().toLowerCase() === item.date.trim().toLowerCase() &&
-                (fx.category || '').trim().toLowerCase() === item.category.trim().toLowerCase()
-            );
-            if (!hasDuplicate) {
-                mergedTimeline.push(item);
-            }
+        // Enforce Minimum Information Verification for Win Probability and Case Strength
+        const hasSummary = summaryText && summaryText.trim().length >= 50 && !isGarbage;
+        const hasEvidenceOrDocs = (project.evidence && project.evidence.length > 0) || (project.documents && project.documents.length > 0);
+        const hasTimeline = (project.facts && project.facts.length > 0) || (rawTimeline.length > 0);
+        const isSufficientData = hasSummary && hasEvidenceOrDocs && hasTimeline;
+
+        if (!isSufficientData) {
+            ci.winProbability = 0;
+            ci.caseStrength = 0;
         }
 
-        const strength = aiData.case_strength ?? aiData.strengthScore ?? aiData.strength ?? 0;
-        const probability = aiData.win_probability ?? aiData.winProbability ?? aiData.probability ?? 0;
-        const normalizedRisk = aiData.risk_assessment || aiData.risk || {};
-        const vulnerabilities = Array.isArray(aiData.critical_vulnerabilities || aiData.weakPoints) ? (aiData.critical_vulnerabilities || aiData.weakPoints) : [];
-        const opponent = Array.isArray(aiData.opponent_strategy || aiData.opponentStrategies) ? (aiData.opponent_strategy || aiData.opponent_strategies) : [];
-        const strategy = Array.isArray(aiData.strategy_recommendation || aiData.strategyRecommendations) ? (aiData.strategy_recommendation || aiData.strategyRecommendations) : [];
-        const research = Array.isArray(aiData.legal_research || aiData.research) ? (aiData.legal_research || aiData.research) : [];
-        const steps = Array.isArray(aiData.process_steps || aiData.steps) ? (aiData.process_steps || aiData.steps) : [];
-
-        project.clientName = project.clientName || toStr(aiData.parties?.plaintiff?.name || aiData.parties?.plaintiff) || '';
-        project.opponentName = project.opponentName || toStr(aiData.parties?.defendant?.name || aiData.parties?.defendant) || '';
-        project.reliefGoals = toStr(aiData.primary_relief || aiData.reliefGoals) || project.reliefGoals;
-        
+        // Populate intelligence & risk scores (Zero if insufficient or garbage)
         project.intelligence = {
-            strengthScore: Number(strength) || 0,
-            winProbability: Number(probability) || 0,
-            riskLevel: ['Low', 'Medium', 'High', 'Critical'].includes(normalizedRisk?.level) ? normalizedRisk.level : 'Medium',
-            weakPoints: [...vulnerabilities, normalizedRisk?.reason].filter(Boolean).map(v => toStr(v)),
-            opponentStrategies: opponent.map(s => toStr(s)),
-            strategyRecommendations: strategy.map(s => toStr(s)),
-            missingEvidence: []
+            strengthScore: isSufficientData ? Number(ci.caseStrength ?? ci.winProbability ?? 0) : 0,
+            winProbability: isSufficientData ? Number(ci.winProbability ?? 0) : 0,
+            riskLevel: ci.risks?.level || (!isSufficientData ? 'Critical' : 'Medium'),
+            weakPoints: (ci.risks?.criticalVulnerabilities || []).map(v => toStr(v)),
+            missingEvidence: (ci.missingEvidence || []).map(m => toStr(m)),
+            opponentStrategies: (ci.counterArguments || []).map(c => toStr(c.title || c)),
+            strategyRecommendations: (ci.recommendations || []).map(r => toStr(r))
         };
 
-        project.facts = mergedTimeline;
-        
-        project.limitationWarnings = rawLimitationWarnings.map(w => ({
-            title: toStr(w.title),
-            description: toStr(w.description),
-            date: toStr(w.date || '')
-        }));
+        // Populate legal issues
+        if (Array.isArray(ci.issues)) {
+            project.legalIssues = ci.issues.map(i => toStr(i));
+        }
 
-        project.upcomingDeadlines = rawUpcomingDeadlines.map(d => ({
-            title: toStr(d.title),
-            description: toStr(d.description),
-            date: toStr(d.date || '')
-        }));
+        // Populate missing documents & deadlines
+        project.missingDocuments = (ci.missingEvidence || []).map(m => typeof m === 'string' ? { title: m, description: m, date: '' } : m);
+        project.upcomingDeadlines = (ci.deadlines || []).map(d => typeof d === 'string' ? { title: d, description: d, date: '' } : { title: toStr(d.title), description: toStr(d.description), date: toStr(d.date) });
 
-        project.missingDocuments = rawMissingDocuments.map(m => ({
-            title: toStr(m.title),
-            description: toStr(m.description),
-            date: toStr(m.date || '')
-        }));
-
-        // Merge process steps into tasks
-        const stepsToTasks = steps
-            .filter(p => p && (p.step || p.title))
-            .filter(p => !(project.tasks || []).some(tx => tx.title === (p.step || p.title)))
-            .map(p => ({
-                title: toStr(p.step || p.title),
-                status: 'Pending',
-                priority: toStr(p.priority) || 'Medium'
+        // Populate tasks
+        if (Array.isArray(ci.tasks)) {
+            project.tasks = ci.tasks.map(t => ({
+                title: toStr(t.title || t),
+                status: t.status || 'Pending',
+                priority: t.priority || 'Medium',
+                deadline: t.deadline ? new Date(t.deadline) : undefined
             }));
-        project.tasks = [...(project.tasks || []), ...stepsToTasks];
+        }
 
-        // Merge evidence - DISABLED (No auto-generated evidence)
-        project.evidence = project.evidence || [];
+        // Populate hearings
+        if (Array.isArray(ci.hearings)) {
+            project.hearings = ci.hearings.map(h => ({
+                _id: h.id || `h_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                title: toStr(h.title || 'Court Proceeding'),
+                date: toStr(h.date || ''),
+                courtroom: toStr(h.courtroom || ''),
+                purpose: toStr(h.purpose || ''),
+                status: h.status || 'Scheduled'
+            }));
+        }
 
-        // Merge research
-        const incomingResearch = research
-            .filter(r => r && (r.law || r.lawName))
-            .filter(r => !(project.research || []).some(rx => rx.lawName === (r.law || r.lawName) && rx.section === (r.section || '')))
-            .map(r => ({
-                lawName: toStr(r.law || r.lawName),
+        // Populate research
+        if (Array.isArray(ci.legalSections)) {
+            project.research = ci.legalSections.map(r => ({
+                lawName: toStr(r.law),
                 section: toStr(r.section),
                 description: toStr(r.description)
             }));
-        project.research = [...(project.research || []), ...incomingResearch];
+        }
+
+        // Populate arguments & strategy
+        project.arguments = {
+            petitionerArguments: ci.arguments || [],
+            respondentArguments: ci.counterArguments || []
+        };
+        project.strategy = ci.strategy || {};
 
     } catch (err) {
         console.error('[autoAnalyzeAndPopulateProject] AI analysis integration failed:', err);
@@ -298,6 +336,21 @@ router.post('/', verifyToken, async (req, res) => {
         }
 
         await project.save();
+
+        // Trigger automatic notification for Case Creation
+        try {
+            await createNotification(req.user.id, {
+                title: `New Case Created: ${project.name}`,
+                desc: `Case registered with type ${project.caseType || 'General Civil/Criminal'} and stage ${project.stage}.`,
+                category: 'Cases',
+                priority: 'Medium',
+                caseName: project.name,
+                caseId: project._id.toString()
+            });
+        } catch (nErr) {
+            console.warn('[Notification] Failed to dispatch case creation notification:', nErr.message);
+        }
+
         res.status(201).json(project);
     } catch (error) {
         console.error('Error creating project:', error);
@@ -323,11 +376,21 @@ router.get('/', verifyToken, async (req, res) => {
 router.get('/:id', verifyToken, async (req, res) => {
     try {
         console.log(`[DEBUG] Fetching project: ${req.params.id} for user: ${req.user.id}`);
-        const project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
+        let project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
         if (!project) {
             console.warn(`[DEBUG] Project NOT FOUND: ${req.params.id} for user: ${req.user.id}`);
             return res.status(404).json({ error: 'Project not found' });
         }
+
+        // If caseIntelligence is missing or empty, auto-generate it from summary/name
+        const hasCi = project.caseIntelligence && Object.keys(project.caseIntelligence).length > 0;
+        if (!hasCi) {
+            const summaryText = project.summary || project.caseSummary || project.name;
+            const userLang = req.headers['x-app-language'] || 'English';
+            project = await autoAnalyzeAndPopulateProject(project, summaryText, userLang);
+            await project.save();
+        }
+
         res.json(project);
     } catch (error) {
         console.error('Error fetching project:', error);
@@ -349,22 +412,55 @@ router.put('/:id', verifyToken, async (req, res) => {
         const existingProject = await Project.findOne({ _id: req.params.id, userId: req.user.id });
         if (!existingProject) return res.status(404).json({ error: 'Project not found' });
 
-        const summaryUpdated = updateData.summary !== undefined && updateData.summary !== existingProject.summary;
-        const caseSummaryUpdated = updateData.caseSummary !== undefined && updateData.caseSummary !== existingProject.caseSummary;
-
         // Apply changes
         Object.assign(existingProject, updateData);
 
-        // Trigger AI analysis if summary is updated
-        if (summaryUpdated || caseSummaryUpdated) {
-            const summaryText = updateData.summary || updateData.caseSummary || existingProject.summary || existingProject.caseSummary;
-            if (summaryText && summaryText.trim()) {
-                const userLang = req.headers['x-app-language'] || 'English';
-                await autoAnalyzeAndPopulateProject(existingProject, summaryText, userLang);
-            }
+        // Always trigger AI analysis to refresh caseIntelligence when summary or brief is updated or missing
+        const summaryText = updateData.summary || updateData.caseSummary || updateData.briefSummary || existingProject.summary || existingProject.caseSummary || existingProject.name;
+        if (summaryText && summaryText.trim()) {
+            const userLang = req.headers['x-app-language'] || 'English';
+            await autoAnalyzeAndPopulateProject(existingProject, summaryText, userLang);
         }
 
         const updatedProject = await existingProject.save();
+
+        // Trigger dynamic notification events based on what changed
+        try {
+            const caseIdStr = updatedProject._id.toString();
+            const caseNameStr = updatedProject.name;
+
+            if (updateData.status && updateData.status !== existingProject.status) {
+                await createNotification(req.user.id, {
+                    title: `Case Status Updated: ${caseNameStr}`,
+                    desc: `Status changed to ${updateData.status}. Stage is currently ${updatedProject.stage}.`,
+                    category: 'Cases',
+                    priority: 'Medium',
+                    caseName: caseNameStr,
+                    caseId: caseIdStr
+                });
+            } else if (updateData.hearings && Array.isArray(updateData.hearings)) {
+                await createNotification(req.user.id, {
+                    title: `Hearing Schedule Updated: ${caseNameStr}`,
+                    desc: `Court hearing schedule or courtroom forum updated for ${caseNameStr}.`,
+                    category: 'Cases',
+                    priority: 'Medium',
+                    caseName: caseNameStr,
+                    caseId: caseIdStr
+                });
+            } else if (updateData.evidence || updateData.documents) {
+                await createNotification(req.user.id, {
+                    title: `New Evidence Attached: ${caseNameStr}`,
+                    desc: `Document index and exhibit record updated for ${caseNameStr}.`,
+                    category: 'Cases',
+                    priority: 'Medium',
+                    caseName: caseNameStr,
+                    caseId: caseIdStr
+                });
+            }
+        } catch (nErr) {
+            console.warn('[Notification] Failed to dispatch update notification:', nErr.message);
+        }
+
         res.json(updatedProject);
     } catch (error) {
         console.error('Error updating project:', error);
@@ -387,6 +483,22 @@ const performCaseAnalysis = async (req, res) => {
         await autoAnalyzeAndPopulateProject(project, inputText, userLang);
         
         const updatedProject = await project.save();
+
+        // Trigger notification for AI Analysis completion
+        try {
+            await createNotification(req.user.id, {
+                title: `AI Case Analysis Completed: ${project.name}`,
+                desc: `Comprehensive AI intelligence report, strategy recommendations, and legal sections updated for ${project.name}.`,
+                module: 'AI',
+                category: 'Cases',
+                priority: 'Medium',
+                caseName: project.name,
+                caseId: project._id.toString()
+            });
+        } catch (nErr) {
+            console.warn('[Notification] Failed to dispatch AI analysis notification:', nErr.message);
+        }
+
         res.json(updatedProject);
     } catch (error) {
         console.error('[CaseAnalysis] Error:', error.message);

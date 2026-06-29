@@ -130,6 +130,11 @@ const projectSchema = new mongoose.Schema({
         version: { type: Number, default: 1 }
     }],
     savedPrecedents: [],
+    // --- Structured AI Case Intelligence ---
+    caseIntelligence: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
+    },
     // --- AI Intelligence & Risk ---
     intelligence: {
         strengthScore: { type: Number, default: 0 }, // 0-100
@@ -140,6 +145,12 @@ const projectSchema = new mongoose.Schema({
         opponentStrategies: [String],
         strategyRecommendations: [String]
     },
+    // --- Strategy & Arguments ---
+    arguments: {
+        petitionerArguments: [{ type: mongoose.Schema.Types.Mixed }],
+        respondentArguments: [{ type: mongoose.Schema.Types.Mixed }]
+    },
+    strategy: { type: mongoose.Schema.Types.Mixed, default: {} },
     // --- Tasks & Timeline ---
     tasks: [{
         title: String,

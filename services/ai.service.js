@@ -83,7 +83,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName, onChunk } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName, caseContext, onChunk } = options;
 
         const lowerMsg = message.toLowerCase().trim();
         const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web', 'what can you do', 'your features', 'your capabilities', 'who are you', 'how can you help', 'tell me about your services'];
@@ -198,6 +198,16 @@ Maintain any text response outside the JSON block.`;
 - DO NOT attempt to partially answer non-legal questions.
 - DO NOT add any conversational filler or apologies beyond the refusal message above.
 - DO NOT include any legal disclaimers, warnings, or professional advice notices in the response. The system appends these automatically.`;
+
+            if (caseContext) {
+                toolRestrictions += `\n\n${caseContext}\n
+### MANDATORY ACTIVE CASE ASSOCIATE RULES (ZERO REDUNDANCY):
+1. You are assigned as the dedicated Senior Legal Associate for the active case workspace detailed above.
+2. You ALREADY possess the complete case facts, client details, opponent details, timeline, evidence, court, and intelligence.
+3. NEVER ask the user to provide case details, name the parties, describe the dispute, or repeat existing information.
+4. When the user gives a short one-line prompt (e.g., "Prepare plaintiff arguments", "Draft reply", "Who is the defendant?", "Predict outcome", "Next hearing?"), answer directly with extreme legal precision and courtroom-ready depth using the case context above.
+5. ONLY ask clarifying questions if an essential document (like an uploaded contract) is strictly required for the specific task but completely missing from the record.`;
+            }
         } else {
 
             toolRestrictions = "\n\n### MODE: NORMAL CHAT. Strictly avoid executing magic actions. Answer questions using text only. If the user wants to generate media, tell them to use the AISA Magic Tools menu.";

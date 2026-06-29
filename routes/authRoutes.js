@@ -237,12 +237,14 @@ router.post("/login", async (req, res) => {
       ];
     }
 
-    // Add "New Login" notification
+    // Add "New Login" notification (System category)
     user.notificationsInbox.unshift({
       id: `login_${Date.now()}`,
       title: 'New Login Detected',
       desc: `Successfully logged in at ${new Date().toLocaleTimeString()}`,
-      type: 'alert', // efficient check icon
+      type: 'info',
+      category: 'System',
+      priority: 'Low',
       time: new Date(),
       isRead: false
     });

@@ -1,6 +1,14 @@
 import express from 'express';
 import { verifyToken } from '../middleware/authorization.js';
-import { createNotification } from '../services/notificationService.js';
+import { 
+    createNotification, 
+    getNotifications, 
+    markAsRead, 
+    markAllRead, 
+    deleteNotification, 
+    deleteAll, 
+    getUnreadCount 
+} from '../services/notificationService.js';
 import userModel from '../models/User.js';
 
 const router = express.Router();
@@ -9,26 +17,23 @@ const router = express.Router();
 router.get('/', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-        const user = await userModel.findById(userId).select('notificationsInbox').lean();
-        if (!user) return res.status(404).json({ error: "User not found" });
+        const category = req.query.category;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
 
-        let inbox = user.notificationsInbox || [];
-        
-        // If empty, we can return defaults or just empty
-        if (inbox.length === 0) {
-            inbox = [
-                {
-                    id: `demo_1`,
-                    title: 'Welcome to AISA!',
-                    desc: 'Start your journey with your Artificial Intelligence Super Assistant. Need help? Ask us anything!',
-                    type: 'promo',
-                    time: new Date(),
-                    isRead: false
-                }
-            ];
-        }
-
+        const inbox = await getNotifications(userId, { category, page, limit });
         res.status(200).json(inbox);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// GET /api/notifications/unread-count - Get unread notification count
+router.get('/unread-count', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const count = await getUnreadCount(userId);
+        res.status(200).json({ success: true, count });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -38,14 +43,17 @@ router.get('/', verifyToken, async (req, res) => {
 router.post('/test', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-        const { title, desc, type, voice, data } = req.body;
+        const payload = req.body;
 
         const notification = await createNotification(userId, {
-            title: title || 'Real-time Update',
-            desc: desc || 'This notification was sent via WebSockets!',
-            type: type || 'info',
-            voice: voice || 'none',
-            data: data || null
+            title: payload.title || 'Real-time Legal Alert',
+            desc: payload.desc || payload.message || 'Event triggered successfully via backend notification engine.',
+            category: payload.category || 'Cases',
+            priority: payload.priority || 'Medium',
+            caseName: payload.caseName || '',
+            caseId: payload.caseId || null,
+            type: payload.type || 'info',
+            data: payload.data || null
         });
 
         res.status(201).json({ success: true, notification });
@@ -75,12 +83,7 @@ router.post('/register-token', verifyToken, async (req, res) => {
 router.put('/read-all', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-
-        await userModel.findOneAndUpdate(
-            { _id: userId },
-            { $set: { "notificationsInbox.$[].isRead": true } }
-        );
-
+        await markAllRead(userId);
         res.json({ success: true, message: "All notifications marked as read" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -92,12 +95,7 @@ router.put('/:id/read', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
         const { id } = req.params;
-
-        await userModel.findOneAndUpdate(
-            { _id: userId, "notificationsInbox.id": id },
-            { $set: { "notificationsInbox.$.isRead": true } }
-        );
-
+        await markAsRead(userId, id);
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -109,11 +107,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
         const { id } = req.params;
-
-        await userModel.findByIdAndUpdate(userId, {
-            $pull: { notificationsInbox: { id: id } }
-        });
-
+        await deleteNotification(userId, id);
         res.json({ success: true, msg: "Notification deleted" });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -124,11 +118,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
 router.delete('/', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id || req.user._id;
-
-        await userModel.findByIdAndUpdate(userId, {
-            $set: { notificationsInbox: [] }
-        });
-
+        await deleteAll(userId);
         res.json({ success: true, msg: "All notifications cleared" });
     } catch (error) {
         res.status(500).json({ error: error.message });

@@ -3,111 +3,143 @@ import logger from '../../../utils/logger.js';
 import { safeParseLLMJson } from '../../../utils/jsonUtils.js';
 
 /**
- * analyzeCaseDetails
- * Analyzes case details using AI and returns structured legal intelligence.
+ * generateUnifiedCaseIntelligence
+ * Reads user case summary and generates a single structured Case Intelligence JSON object.
  */
-export const analyzeCaseDetails = async (rawText, currentData = {}, language = 'English') => {
+export const generateUnifiedCaseIntelligence = async (rawText, currentData = {}, language = 'English') => {
     let languageInstruction = '';
-    if (language === 'Hindi') {
-        languageInstruction = 'Please generate all description, summary, explanation, and title text values in Hindi. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers. Keep them in their original form.';
-    } else if (language === 'Bilingual') {
-        languageInstruction = 'Please generate all description, summary, explanation, and title text values in Bilingual style (English + Hindi). Use English for structural titles/terms, and Hindi for descriptions/explanations. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers.';
-    } else if (language === 'Gujarati') {
-        languageInstruction = 'Please generate all description, summary, explanation, and title text values in Gujarati. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers.';
-    } else if (language === 'Marathi') {
-        languageInstruction = 'Please generate all description, summary, explanation, and title text values in Marathi. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers.';
-    } else if (language === 'Tamil') {
-        languageInstruction = 'Please generate all description, summary, explanation, and title text values in Tamil. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers.';
+    if (language && language !== 'English') {
+        languageInstruction = `Please generate all text descriptions, summaries, titles, and explanations in ${language}. Do NOT translate client names, case numbers, evidence names, file names, phone numbers, emails, and legal section numbers. Keep them in their original form.`;
     }
 
     const prompt = [
-        'You are an advanced autonomous Legal Intelligence Engine.',
-        'Your job is to fully analyze a legal case and generate COMPLETE structured output for a legal dashboard system.',
+        'You are an elite autonomous Legal Intelligence Engine.',
+        'Your job is to read a legal case summary and generate ONE structured Case Intelligence JSON object that will power an entire legal case management system.',
         '',
         '-------------------------------------',
-        '⚠️ CRITICAL RULES (MUST FOLLOW):',
-        '1. Output ONLY valid JSON',
-        '2. Do NOT return any explanation or text outside JSON',
-        '3. Do NOT leave any field empty',
-        '4. If input data is incomplete, intelligently generate realistic legal assumptions',
-        '5. NEVER return null or empty arrays',
-        '6. Ensure all sections are filled with meaningful data',
-        '7. If analysis fails, return fallback structured data (do NOT break JSON)',
+        '⚠️ CRITICAL RULES (MUST FOLLOW STRICTLY):',
+        '1. Output ONLY valid JSON.',
+        '2. Do NOT return any markdown formatting, backticks, or explanation outside the JSON.',
+        '3. Do NOT invent fake or placeholder parties, contracts, or facts not implied by the input summary.',
+        '4. Every section MUST be derived exclusively from the actual Case Summary entered by the user.',
+        '5. ZERO SCORE RULE: If the case summary is unclear, gibberish, incomplete, or lacks factual details, set winProbability to 0 and caseStrength to 0, risks.level to "Critical", and return empty arrays for arguments and counterArguments.',
         '-------------------------------------',
         '',
-        'INPUT CASE:',
-        `Case Summary: ${rawText}`,
-        `Client: ${currentData.clientName || 'Not specified'}`,
-        `Opponent: ${currentData.opponentName || 'Not specified'}`,
-        `Case Type: ${currentData.caseType || 'Not specified'}`,
+        'INPUT CASE SUMMARY:',
+        `Case Name/Title: ${currentData.name || 'Legal Case'}`,
+        `Case Summary / Facts: ${rawText}`,
+        `Client Name: ${currentData.clientName || 'Client'}`,
+        `Opponent Name: ${currentData.opponentName || currentData.accused || 'Opponent'}`,
+        `Case Type: ${currentData.caseType || 'General Litigation'}`,
         '-------------------------------------',
         '',
-        'OUTPUT FORMAT (STRICT):',
+        'OUTPUT JSON FORMAT (STRICT):',
         JSON.stringify({
-            executive_summary: "Clear summary of the case",
-            case_strength: 0,
-            win_probability: 0,
-            timeline: [{
-                title: "Event title",
-                description: "Explanation",
-                date: "YYYY-MM-DD (e.g. 2025-01-15, estimate if approximate/relative)",
-                displayDate: "Human readable date string (e.g. 15 Jan 2025 or within 30 days)",
-                isApproximate: true,
-                category: "Agreement/Contract/Possession/...",
-                importance: "High/Medium/Low",
-                confidence: "High/Medium/Low"
-            }],
-            limitation_warnings: [{ title: "Recovery suit limitation", description: "Recovery suit limitation expires on 15 Apr 2028." }],
-            upcoming_deadlines: [{ title: "Summons Notice", description: "Defendant must appear before court within 10 days." }],
-            missing_documents: [{ title: "Sale Deed missing", description: "Sale Deed is missing from case file." }],
             parties: {
-                plaintiff: { name: "Name", role: "Role" },
-                defendant: { name: "Name", role: "Role" }
+                plaintiff: { name: "Client Name", role: "Petitioner/Plaintiff" },
+                defendant: { name: "Opponent Name", role: "Respondent/Defendant" },
+                others: []
             },
-            evidence: [{ title: "Evidence name", type: "document/email/witness", description: "Details", strength: "weak/medium/strong" }],
-            legal_research: [{ law: "Law name", section: "Section", description: "Explanation" }],
-            process_steps: [{ step: "Legal step", priority: "low/medium/high" }],
-            risk_assessment: { level: "low/medium/high", reason: "Why" },
-            critical_vulnerabilities: ["Weakness 1", "Weakness 2"],
-            opponent_strategy: ["Possible opponent move"],
-            primary_relief: "What the user wants legally",
-            strategy_recommendation: ["Step 1", "Step 2"]
+            caseType: "Civil Case / Criminal Case / Commercial Dispute / ...",
+            facts: [
+                "Fact 1 derived from summary",
+                "Fact 2 derived from summary"
+            ],
+            timeline: [
+                {
+                    title: "Event Title",
+                    description: "Details",
+                    date: "YYYY-MM-DD",
+                    displayDate: "Human readable date",
+                    category: "Agreement/Contract/Payment/Notice/Default/Court/...",
+                    importance: "High/Medium/Low"
+                }
+            ],
+            events: [
+                { title: "Key Event", date: "YYYY-MM-DD", impact: "High/Medium/Low" }
+            ],
+            issues: [
+                "Legal Issue 1 regarding breach or liability",
+                "Legal Issue 2 regarding limitation or evidence"
+            ],
+            evidence: [
+                { title: "Evidence item name", type: "Document/Financial/Witness", description: "Relevance", strength: "Strong/Medium/Weak" }
+            ],
+            missingEvidence: [
+                "Missing proof item 1 needed for court",
+                "Missing proof item 2 needed for claim"
+            ],
+            documents: [
+                { name: "Document name needed or identified", type: "Notice/Agreement/Affidavit", status: "Uploaded/Pending" }
+            ],
+            legalSections: [
+                { law: "Act Name", section: "Section Number", description: "Relevance to case" }
+            ],
+            arguments: [
+                {
+                    id: "arg_1",
+                    title: "Winning Petitioner Argument Title",
+                    description: "Detailed argument reasoning derived from facts",
+                    supportingEvidence: ["Evidence title"],
+                    supportingLaws: ["Section & Law name"],
+                    supportingTimelineEvents: ["Event date/title"],
+                    impact: "High/Critical",
+                    category: "Contract Law/Financial Liability/..."
+                }
+            ],
+            counterArguments: [
+                {
+                    id: "carg_1",
+                    title: "Opponent Counter Argument / Defense Title",
+                    description: "Possible defense claim by opponent",
+                    refutation: "Our strategic rebuttal to defeat this counter argument",
+                    impact: "High/Medium",
+                    category: "Procedure/Defense"
+                }
+            ],
+            strategy: {
+                trialSequence: [
+                    { step: 1, title: "Initial Court Step", detail: "Strategic action", status: "Primary/Crucial" }
+                ],
+                avoidList: ["Weak strategy or trap to avoid"],
+                judicialConcerns: ["Potential concern or question the Judge may raise"],
+                closingSubmission: "Summary statement for final arguments"
+            },
+            risks: {
+                level: "Low/Medium/High/Critical",
+                reason: "Summary of overall legal risks",
+                criticalVulnerabilities: ["Vulnerability 1", "Vulnerability 2"]
+            },
+            winProbability: 75,
+            caseStrength: 80,
+            tasks: [
+                { title: "Action item 1", priority: "High/Medium/Low", deadline: "YYYY-MM-DD or timeframe", status: "Pending" }
+            ],
+            hearings: [
+                { title: "Proposed Next Hearing / Proceeding", date: "YYYY-MM-DD", courtroom: "Courtroom No.", purpose: "Purpose", status: "Scheduled" }
+            ],
+            recommendations: [
+                "Immediate recommended next step 1",
+                "Immediate recommended next step 2"
+            ],
+            aiAssistant: {
+                litigationStatus: "Consultation/Pre-Litigation/Legal Notice/Negotiation/Suit Filed/Written Statement/Pleadings/Issues Framed/Evidence Stage/Cross Examination/Final Arguments/Judgment Reserved/Judgment Delivered/Appeal/Execution/Unable to determine litigation stage.",
+                latestAdvice: "Single highest-priority legal recommendation based on actual case summary/facts",
+                recommendedAction: "Immediate next legal action (e.g. Draft legal notice / File reply / Upload original agreement)",
+                evidenceAlerts: "Summary of missing/weak evidence or 'No critical evidence issues detected.'",
+                nextDeadline: "Calculated next deadline or 'No pending procedural deadlines.'",
+                confidence: 80,
+                missingInformation: ["List of missing facts or documents required for full analysis"]
+            },
+            deadlines: [
+                { title: "Limitation / Filing Deadline", description: "Explanation of deadline", date: "YYYY-MM-DD" }
+            ]
         }, null, 2),
         '',
-        '-------------------------------------',
-        '📊 QUALITY CONSTRAINTS:',
-        '- timeline MUST have at least 3 events',
-        '- timeline date field MUST be normalized to YYYY-MM-DD. Estimate the date as YYYY-MM-DD if relative or approximate (e.g. "three months later").',
-        '- if date is relative or approximate, displayDate should contain the relative/approximate string, and isApproximate must be true.',
-        '- timeline categories MUST be one of: Case Filing, Agreement, Contract, Property, Payment, Notice, Default, Police, Court, Hearing, Evidence, Registration, Possession, Communication, Reply, Judgment, Deadline, Document, AI Generated, Other.',
-        '- timeline importance MUST be one of: High, Medium, Low. Use High for Agreement Signed, Legal Notice, FIR Filed, Court Filing, Registration, Judgment, Possession; Medium for Payment, Communication, Reminder, Meeting; Low for Internal notes/misc updates.',
-        '- limitation_warnings: Identify any legal limitation warnings based on the events (e.g. recovery suit limitation, filing deadlines under relevant acts).',
-        '- upcoming_deadlines: Identify key procedural deadlines (e.g. appearance before court, response windows).',
-        '- missing_documents: Identify any documents that are legally required but missing from the case context.',
-        '- evidence MUST have at least 2 items',
-        '- legal_research MUST include real applicable laws (prefer Indian laws if relevant)',
-        '- process_steps MUST be realistic legal workflow',
-        '- risk_assessment MUST NOT be empty',
-        '- strategy_recommendation MUST be actionable',
-        '',
-        '-------------------------------------',
-        '🛑 FAILSAFE MODE:',
-        'If you cannot analyze properly, STILL return full JSON using intelligent assumptions.',
-        'Example fallback:',
-        '- Generate reasonable timeline',
-        '- Generate generic but realistic evidence',
-        '- Assign medium risk',
-        '- Provide general legal strategy',
-        '',
-        '-------------------------------------',
         languageInstruction ? `🌐 LANGUAGE INSTRUCTION:\n${languageInstruction}\n-------------------------------------` : '',
-        'FINAL INSTRUCTION:',
-        'Return ONLY JSON.',
-        'No markdown.',
-        'No explanation.',
-        'No extra text.'
+        'FINAL INSTRUCTION: Return ONLY JSON.'
     ].join('\n');
- 
+
     try {
         const response = await vertexService.AskVertexRaw(prompt, {
             maxOutputTokens: 8192,
@@ -115,51 +147,82 @@ export const analyzeCaseDetails = async (rawText, currentData = {}, language = '
             modelOverride: 'gemini-2.5-flash',
             isJson: true
         });
- 
+
         const fallback = {
-            executive_summary: `AI Analysis Error: The system could not process the request. It returned: "${response.substring(0, 200)}..."`,
-            case_strength: 0,
-            win_probability: 0,
-            timeline: [],
-            limitation_warnings: [],
-            upcoming_deadlines: [],
-            missing_documents: [],
-            parties: { plaintiff: { name: "Unknown", role: "Unknown" }, defendant: { name: "Unknown", role: "Unknown" } },
+            parties: { plaintiff: { name: currentData.clientName || "Plaintiff", role: "Plaintiff" }, defendant: { name: currentData.opponentName || "Defendant", role: "Defendant" }, others: [] },
+            caseType: currentData.caseType || "Legal Case",
+            facts: [rawText],
+            timeline: [{ title: "Case Overview Logged", description: rawText, date: new Date().toISOString().split('T')[0], displayDate: "Today", category: "Other", importance: "High" }],
+            events: [{ title: "Case Created", date: new Date().toISOString().split('T')[0], impact: "High" }],
+            issues: ["Verification of facts provided."],
             evidence: [],
-            legal_research: [],
-            process_steps: [],
-            risk_assessment: { level: "high", reason: "AI Analysis failed to return structured data." },
-            critical_vulnerabilities: ["Data parsing failed."],
-            opponent_strategy: [],
-            primary_relief: "Unknown",
-            strategy_recommendation: ["Please try running the analysis again or contact support if the issue persists."]
+            missingEvidence: [],
+            documents: [],
+            legalSections: [],
+            arguments: [{ id: "arg_1", title: "Claim for Relief based on Facts", description: rawText, supportingEvidence: [], supportingLaws: [], supportingTimelineEvents: [], impact: "High", category: "General" }],
+            counterArguments: [],
+            strategy: { trialSequence: [{ step: 1, title: "Establish Primary Claims", detail: "Present submitted facts before court.", status: "Primary" }], avoidList: [], judicialConcerns: [], closingSubmission: "Pray for relief as stated in petition." },
+            risks: { level: "Medium", reason: "Initial evaluation based on summary.", criticalVulnerabilities: [] },
+            winProbability: 50,
+            caseStrength: 50,
+            tasks: [{ title: "Review case documents and verify evidence", priority: "High", deadline: "Within 7 days", status: "Pending" }],
+            hearings: [],
+            recommendations: ["Compile all physical evidence and verify witness statements."],
+            deadlines: []
         };
- 
+
         return safeParseLLMJson(response, fallback);
     } catch (error) {
-        logger.error(`[LegalIntelligence] Analysis failed: ${error.message}`);
-        logger.error(`[LegalIntelligence] Stack trace: ${error.stack}`);
-        
-        // Return fallback instead of throwing to prevent 500 error
+        logger.error(`[LegalIntelligence] generateUnifiedCaseIntelligence failed: ${error.message}`);
         return {
-            executive_summary: `AI Request Failed: ${error.message}`,
-            case_strength: 0,
-            win_probability: 0,
+            parties: { plaintiff: { name: currentData.clientName || "Plaintiff", role: "Plaintiff" }, defendant: { name: currentData.opponentName || "Defendant", role: "Defendant" }, others: [] },
+            caseType: currentData.caseType || "Legal Case",
+            facts: [rawText],
             timeline: [],
-            limitation_warnings: [],
-            upcoming_deadlines: [],
-            missing_documents: [],
-            parties: { plaintiff: { name: "Unknown", role: "Unknown" }, defendant: { name: "Unknown", role: "Unknown" } },
+            events: [],
+            issues: [],
             evidence: [],
-            legal_research: [],
-            process_steps: [],
-            risk_assessment: { level: "high", reason: "Backend request failed." },
-            critical_vulnerabilities: [],
-            opponent_strategy: [],
-            primary_relief: "Unknown",
-            strategy_recommendation: []
+            missingEvidence: [],
+            documents: [],
+            legalSections: [],
+            arguments: [],
+            counterArguments: [],
+            strategy: { trialSequence: [], avoidList: [], judicialConcerns: [], closingSubmission: "" },
+            risks: { level: "High", reason: "AI generation request encountered an error.", criticalVulnerabilities: [error.message] },
+            winProbability: 0,
+            caseStrength: 0,
+            tasks: [],
+            hearings: [],
+            recommendations: [],
+            deadlines: []
         };
     }
+};
+
+/**
+ * analyzeCaseDetails
+ * Legacy wrapper calling generateUnifiedCaseIntelligence for backward compatibility.
+ */
+export const analyzeCaseDetails = async (rawText, currentData = {}, language = 'English') => {
+    const unified = await generateUnifiedCaseIntelligence(rawText, currentData, language);
+    return {
+        executive_summary: unified.facts ? unified.facts.join('. ') : rawText,
+        case_strength: unified.caseStrength || 50,
+        win_probability: unified.winProbability || 50,
+        timeline: unified.timeline || [],
+        limitation_warnings: unified.deadlines || [],
+        upcoming_deadlines: unified.deadlines || [],
+        missing_documents: (unified.missingEvidence || []).map(m => typeof m === 'string' ? { title: m, description: m } : m),
+        parties: unified.parties || {},
+        evidence: unified.evidence || [],
+        legal_research: (unified.legalSections || []).map(l => ({ law: l.law, section: l.section, description: l.description })),
+        process_steps: (unified.tasks || []).map(t => ({ step: t.title, priority: t.priority })),
+        risk_assessment: unified.risks || { level: "Medium", reason: "" },
+        critical_vulnerabilities: unified.risks?.criticalVulnerabilities || [],
+        opponent_strategy: (unified.counterArguments || []).map(c => c.title),
+        primary_relief: unified.issues ? unified.issues.join('; ') : "Legal Relief",
+        strategy_recommendation: unified.recommendations || []
+    };
 };
 
 /**

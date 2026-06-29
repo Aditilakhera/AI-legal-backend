@@ -190,6 +190,62 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       filteredDocuments = validDocs;
     }
 
+    // ── MASTER CASE CONTEXT EXTRACTION (SSOT) ─────────────────────────────
+    let activeProjectId = req.body.caseId || req.body.projectId || req.query?.caseId || req.query?.projectId;
+    if (!activeProjectId && sessionId) {
+      try {
+        const s = await ChatSession.findOne({ sessionId }).select('projectId').lean();
+        if (s && s.projectId) activeProjectId = s.projectId;
+      } catch (sErr) {}
+    }
+
+    let masterCaseContext = '';
+    if (activeProjectId && req.user) {
+      try {
+        const proj = await Project.findOne({ _id: activeProjectId, userId: req.user.id || req.user._id }).lean();
+        if (proj) {
+          const ci = proj.caseIntelligence || {};
+          masterCaseContext = `
+=== MASTER LEGAL CASE CONTEXT (SINGLE SOURCE OF TRUTH) ===
+Case Name/Title: ${proj.name || 'Untitled Case'}
+Case Type: ${proj.caseType || ci.caseType || 'General Litigation'}
+Stage: ${proj.stage || 'Initial Stage'} | Status: ${proj.status || 'Active'} | Priority: ${proj.priority || 'Medium'}
+Client Details: ${proj.clientName || ci.parties?.plaintiff?.name || 'Client'}
+Opponent Details: ${proj.opponentName || proj.accused || ci.parties?.defendant?.name || 'Opponent'}
+Court: ${proj.court || 'Court of Competent Jurisdiction'} | Judge: ${proj.judge || 'Honorable Judge'}
+
+PRIMARY CASE SUMMARY & FACTS (SSOT):
+${proj.summary || proj.caseSummary || 'No explicit summary recorded.'}
+
+KEY FACTS:
+${(ci.facts || []).map(f => `- ${f}`).join('\n') || 'Derived from case summary.'}
+
+PARTIES:
+- Plaintiff/Petitioner: ${ci.parties?.plaintiff?.name || proj.clientName || 'N/A'} (${ci.parties?.plaintiff?.role || 'Plaintiff'})
+- Defendant/Respondent: ${ci.parties?.defendant?.name || proj.opponentName || 'N/A'} (${ci.parties?.defendant?.role || 'Defendant'})
+
+TIMELINE & EVENTS:
+${(proj.timeline || ci.timeline || []).map(t => `- [${t.date || t.displayDate || 'Date N/A'}] ${t.title}: ${t.description || ''}`).join('\n') || 'No timeline events registered.'}
+
+HEARINGS:
+${(proj.hearings || []).map(h => `- [${h.date || 'Scheduled'}] ${h.title || 'Hearing'} @ ${h.courtroom || h.location || 'Court'}`).join('\n') || 'No upcoming hearings.'}
+
+UPLOADED EVIDENCE & DOCUMENTS:
+${(proj.evidence || ci.evidence || []).map(e => `- ${e.title || e.name}: ${e.description || e.type || ''} (Strength: ${e.strength || 'N/A'})`).join('\n') || 'No evidence uploaded.'}
+
+LEGAL SECTIONS & PRECEDENTS:
+${(ci.legalSections || []).map(s => `- ${s.law} Section ${s.section}: ${s.description}`).join('\n') || 'N/A'}
+
+PRIMARY ARGUMENTS & STRATEGY:
+${(ci.arguments || []).map(a => `- Argument: ${a.title || a.argument} (Rebuttal: ${a.rebuttal || 'N/A'})`).join('\n') || 'N/A'}
+===================================================
+`;
+        }
+      } catch (pErr) {
+        console.warn('[Chat] Failed to load master case context:', pErr.message);
+      }
+    }
+
     // ── SSE Streaming Mode ───────────────────────────────────────────────────
     if (req.body.stream === true) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -220,6 +276,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
           model,
           history,
           toolName: resolvedToolName,
+          caseContext: masterCaseContext,
           onChunk: streamOnChunk
         });
 
@@ -319,7 +376,8 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       userId: req.user?.id || req.user?._id,
       model,
       history,
-      toolName: resolvedToolName
+      toolName: resolvedToolName,
+      caseContext: masterCaseContext
     });
 
     let reply = chatResponse.text || "";
@@ -524,7 +582,7 @@ router.get('/', optionalVerifyToken, identifyGuest, async (req, res) => {
     }
 
     sessions = await ChatSession.find(query)
-      .select('sessionId title lastModified userId projectId activeTool detectedMode')
+      .select('sessionId title lastModified userId projectId activeTool detectedMode messages')
       .populate('projectId', 'name clientName')
       .sort({ lastModified: -1 });
 
